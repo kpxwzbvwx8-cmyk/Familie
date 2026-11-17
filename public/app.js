@@ -260,7 +260,7 @@ const POKEMON = [
     region: 'Kanto',
     loves: 'Essen und Schlafen',
     flavor: 'bitter',
-    statusText: '',
+    statusText: 'Am Essen',
   },
   {
     id: 'pokemon-idefix',
@@ -277,7 +277,7 @@ const POKEMON = [
     region: 'Sinnoh',
     loves: 'es zu provozieren',
     flavor: 'bitter',
-    statusText: '',
+    statusText: 'Am Putzen',
   },
 ];
 
