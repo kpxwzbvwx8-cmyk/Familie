@@ -2,7 +2,7 @@
 const CACHE = 'familie-v3';
 const SHELL = [
   './', 'index.html', 'app.css', 'app.js', 'config.js', 'vendor/supabase.js', 'manifest.webmanifest',
-  'icons/icon.svg', 'icons/icon-192.png', 'img/trainer-m.png', 'img/trainer-w.png', 'img/egg.png', 'img/speedy.png', 'fonts/pokemon-ds.woff2', 'fonts/pokemon-solid.woff2',
+  'icons/icon.svg', 'icons/icon-192.png', 'img/trainer-m.png', 'img/trainer-w.png', 'img/egg.png', 'img/speedy.png', 'img/idefix.png', 'fonts/pokemon-ds.woff2', 'fonts/pokemon-solid.woff2',
 ];
 
 self.addEventListener('install', (e) => {

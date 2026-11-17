@@ -225,8 +225,15 @@ function mix(hex, target, amount) {
   const f = (a, t) => Math.round(a + (t - a) * amount);
   return `rgb(${f(r, tr)}, ${f(g, tg)}, ${f(b, tb)})`;
 }
+function isLightColor(hex) {
+  const [r, g, b] = hexToRgb(hex);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 175;
+}
+
 function colorVars(hex) {
-  return `--c:${hex};--c-dark:${mix(hex, '#000000', 0.45)};--c-light:${mix(hex, '#ffffff', 0.55)};`;
+  const light = isLightColor(hex);
+  return `--c:${hex};--c-dark:${mix(hex, '#000000', light ? 0.3 : 0.45)};--c-light:${mix(hex, '#ffffff', 0.55)};`
+    + (light ? '--c-text:#33333d;--c-shadow:rgba(255,255,255,.8);' : '');
 }
 
 function initials(u) {
@@ -252,6 +259,23 @@ const POKEMON = [
     nature: 'Sanft',
     region: 'Kanto',
     loves: 'Essen und Schlafen',
+    flavor: 'bitter',
+    statusText: '',
+  },
+  {
+    id: 'pokemon-idefix',
+    kind: 'pokemon',
+    trainerId: '01120',
+    firstName: 'Idefix',
+    lastName: '',
+    gender: 'm',
+    sprite: 'img/idefix.png',
+    color: '#ececf0', // weiß
+    birthday: '2020-01-01',
+    strikes: 0,
+    nature: 'Frech',
+    region: 'Sinnoh',
+    loves: 'es zu provozieren',
     flavor: 'bitter',
     statusText: '',
   },

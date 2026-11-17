@@ -242,10 +242,10 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .team-tile {
   display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
   border: 0; border-radius: var(--radius); padding: 14px; text-align: left; cursor: pointer;
-  color: #fff; min-height: 110px;
+  color: var(--c-text, #fff); min-height: 110px;
   background: linear-gradient(150deg, var(--c-light), var(--c) 75%);
   box-shadow: var(--shadow);
-  text-shadow: 0 1px 2px rgba(0,0,0,.35);
+  text-shadow: 0 1px 2px var(--c-shadow, rgba(0,0,0,.35));
 }
 .team-tile .avatar .sprite { height: 80px; width: auto; align-self: start; margin-top: 2px; }
 .team-tile .avatar .sprite-m { margin-left: -18px; }
