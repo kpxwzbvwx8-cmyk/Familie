@@ -1,6 +1,6 @@
 /* Service Worker: Offline-Hülle + Push-Benachrichtigungen */
-const CACHE = 'familie-v1';
-const SHELL = ['/', '/index.html', '/app.css', '/app.js', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png'];
+const CACHE = 'familie-v2';
+const SHELL = ['/', '/index.html', '/app.css', '/app.js', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png', '/img/trainer-m.png', '/img/trainer-w.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

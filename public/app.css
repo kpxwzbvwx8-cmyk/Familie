@@ -172,6 +172,8 @@ button, input, textarea, select { font: inherit; color: inherit; }
   padding: 6px;
 }
 .tcard-avatar svg { width: 72px; height: 88px; }
+.sprite { image-rendering: pixelated; image-rendering: crisp-edges; }
+.tcard-avatar .sprite { height: 99px; width: auto; filter: drop-shadow(1px 2px 0 rgba(0,0,0,.25)); }
 .tcard-avatar .initials {
   margin-top: 2px; font-weight: 800; color: var(--c-text);
   text-shadow: 1px 1px 0 var(--c-dark); letter-spacing: .08em;
@@ -209,7 +211,10 @@ button, input, textarea, select { font: inherit; color: inherit; }
   box-shadow: var(--shadow);
   text-shadow: 0 1px 2px rgba(0,0,0,.35);
 }
+.team-tile .avatar .sprite { height: 80px; width: auto; align-self: start; margin-top: 2px; }
+.team-tile .avatar .sprite-m { margin-left: -18px; }
 .team-tile .avatar {
+  overflow: hidden;
   width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
   background: rgba(255,255,255,.3); border: 2px solid rgba(255,255,255,.7); font-weight: 800;
 }
@@ -283,6 +288,7 @@ fieldset.field { border: 0; padding: 0; margin: 0; }
 .error { color: var(--u-dringend); font-weight: 600; font-size: .88rem; min-height: 1em; margin: 0; }
 
 .segmented { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.segmented.two { grid-template-columns: 1fr 1fr; }
 .segmented label { position: relative; }
 .segmented input { position: absolute; opacity: 0; pointer-events: none; }
 .segmented span {

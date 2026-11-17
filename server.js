@@ -79,6 +79,7 @@ function publicUser(u) {
     firstName: u.firstName,
     lastName: u.lastName,
     color: u.color,
+    gender: u.gender || null,
     birthday: u.birthday,
     strikes: u.strikes || 0,
     createdAt: u.createdAt,
@@ -149,12 +150,14 @@ function validateProfile(body) {
   const lastName = cleanString(body.lastName, 40);
   const color = typeof body.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(body.color) ? body.color.toLowerCase() : null;
   const birthday = typeof body.birthday === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.birthday) ? body.birthday : null;
+  const gender = body.gender === 'm' || body.gender === 'w' ? body.gender : null;
   if (!firstName || !lastName) throw fail(400, 'Bitte Vor- und Nachnamen angeben');
+  if (!gender) throw fail(400, 'Bitte ein Geschlecht wählen');
   if (!color) throw fail(400, 'Bitte eine Lieblingsfarbe wählen');
   if (!birthday || Number.isNaN(Date.parse(birthday)) || new Date(birthday) > new Date()) {
     throw fail(400, 'Bitte ein gültiges Geburtsdatum angeben');
   }
-  return { firstName, lastName, color, birthday };
+  return { firstName, lastName, gender, color, birthday };
 }
 
 function authorName(userId) {

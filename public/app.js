@@ -173,6 +173,14 @@ const TRAINER_SVG = `
   <circle cx="26" cy="19" r="1.6" fill="#222"/><circle cx="34" cy="19" r="1.6" fill="#222"/>
 </svg>`;
 
+const SPRITES = { m: '/img/trainer-m.png', w: '/img/trainer-w.png' };
+
+function avatarHtml(u) {
+  return SPRITES[u.gender]
+    ? `<img class="sprite" src="${SPRITES[u.gender]}" alt="">`
+    : TRAINER_SVG;
+}
+
 function strikesLabel(n) {
   if (!n) return '0';
   if (n > 15) return String(n);
@@ -198,7 +206,7 @@ function trainerCardHtml(u) {
         <div class="trow strikes"><span class="k">Striche</span><span class="v">${esc(strikesLabel(u.strikes || 0))}</span></div>
       </div>
       <div class="tcard-avatar">
-        ${TRAINER_SVG}
+        ${avatarHtml(u)}
         <span class="initials">${esc(initials(u))}</span>
       </div>
     </div>
@@ -274,6 +282,13 @@ function profileFormHtml(u) {
     <label class="field"><span>Geburtsdatum</span>
       <input name="birthday" type="date" required value="${esc(u.birthday || '')}" max="${toLocalInput(new Date()).slice(0, 10)}"></label>
     <fieldset class="field">
+      <legend>Geschlecht</legend>
+      <div class="segmented two">
+        <label style="--u:var(--accent)"><input type="radio" name="gender" value="m"${u.gender === 'm' ? ' checked' : ''}><span>Männlich</span></label>
+        <label style="--u:var(--accent)"><input type="radio" name="gender" value="w"${u.gender === 'w' ? ' checked' : ''}><span>Weiblich</span></label>
+      </div>
+    </fieldset>
+    <fieldset class="field">
       <legend>Lieblingsfarbe</legend>
       <div class="swatches">
         ${COLOR_PRESETS.map((c) => `<button type="button" class="swatch${c === color ? ' active' : ''}" data-color="${c}" style="background:${c}" aria-label="Farbe ${c}"></button>`).join('')}
@@ -299,6 +314,7 @@ function mountProfileForm(modal, close, base) {
       firstName: f.get('firstName').trim(),
       lastName: f.get('lastName').trim(),
       birthday: f.get('birthday'),
+      gender: f.get('gender'),
       color: f.get('color'),
     };
   };
@@ -322,7 +338,7 @@ function mountProfileForm(modal, close, base) {
     const err = $('#profile-error', modal);
     err.textContent = '';
     try {
-      const body = { firstName: data.firstName, lastName: data.lastName, birthday: data.birthday, color: data.color };
+      const body = { firstName: data.firstName, lastName: data.lastName, birthday: data.birthday, gender: data.gender, color: data.color };
       if (base.id) {
         state.me = await api('/api/me', { method: 'PUT', body });
       } else {
@@ -599,7 +615,7 @@ function renderTeam(view) {
     .map((u) => {
       const age = ageParts(parseBirthday(u.birthday));
       return `<button class="team-tile" data-user="${esc(u.id)}" style="${colorVars(u.color)}">
-        <span class="avatar">${esc(initials(u))}</span>
+        <span class="avatar">${SPRITES[u.gender] ? `<img class="sprite sprite-${u.gender}" src="${SPRITES[u.gender]}" alt="">` : esc(initials(u))}</span>
         <span class="name">${esc(fullName(u))}${state.me && u.id === state.me.id ? '<span class="me-badge">Du</span>' : ''}</span>
         <span class="meta">ID ${esc(u.trainerId)} · Lv. ${age.years}</span>
       </button>`;
@@ -745,6 +761,7 @@ async function init() {
 
   await Promise.all([loadUsers(), loadMessages()]).catch((e) => toast(e.message));
   render();
+  if (!state.me.gender) openEditProfile(); // ältere Konten: Geschlecht nachtragen
   startStream();
   syncPushSubscription();
 }

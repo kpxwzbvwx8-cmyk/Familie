@@ -4,7 +4,7 @@ Gemeinsame Familien-App (PWA). Jedes Gerät gehört einem Nutzer, alle greifen a
 
 ## Funktionen (Stand jetzt)
 
-- **Konto einrichten** beim ersten Start: Vor- & Nachname, Geburtsdatum, Lieblingsfarbe. Die ID-Nummer wird zufällig vergeben.
+- **Konto einrichten** beim ersten Start: Vor- & Nachname, Geschlecht (bestimmt die Figur auf dem Pass), Geburtsdatum, Lieblingsfarbe. Die ID-Nummer wird zufällig vergeben.
 - **Trainerpass** (Profil oben rechts) im Stil eines Trainerpasses in der Lieblingsfarbe:
   - ID Nr., Trainer, **Striche** (kommen später vom Board der Schande)
   - **Spielzeit** = Jahre / Monate / Wochen / Tage seit Geburt
