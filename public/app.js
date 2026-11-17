@@ -811,7 +811,7 @@ function eggTileHtml() {
   return `<button class="team-tile egg-tile" data-egg>
     <span class="avatar"><img class="sprite" src="img/egg.png" alt=""></span>
     <span class="name">${esc(EGG.name)}</span>
-    <span class="meta">SSW ${esc(e.ssw)} · ${e.remaining > 0 ? `noch ${e.remaining} T` : 'jeden Moment!'}</span>
+    <span class="meta">SSW ${esc(e.ssw)} · ${e.remaining > 0 ? `${e.remaining} T` : 'bald!'}</span>
   </button>`;
 }
 
@@ -828,9 +828,8 @@ function openEggMemo() {
            <div class="memo-item"><span>Name</span><b>${esc(EGG.name)}</b></div>
          </div>
          <div class="memo-right">
-           <p>${esc(formatDate(e.due))}</p>
-           <p>Ein geheimnisvolles Ei,</p>
-           <p>erhalten von <span class="memo-red">${esc(EGG.from)}</span>.</p>
+           <p>ET ${esc(formatDate(e.due))}</p>
+           <p>Ein geheimnisvolles Ei, erhalten von <span class="memo-red">${esc(EGG.from)}</span>.</p>
            <p>&nbsp;</p>
            <p>„Die Ei-Uhr“</p>
            <p class="memo-watch">${esc(e.text)}</p>
