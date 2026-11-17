@@ -31,11 +31,44 @@ const TABS = {
 };
 
 const URGENCIES = [
-  { key: 'info', label: 'Info' },
-  { key: 'normal', label: 'Normal' },
-  { key: 'wichtig', label: 'Wichtig' },
-  { key: 'dringend', label: 'Dringend' },
+  { key: 'info', label: 'Info', ball: 'master', ballName: 'Meisterball' },
+  { key: 'normal', label: 'Normal', ball: 'poke', ballName: 'Pokéball' },
+  { key: 'wichtig', label: 'Wichtig', ball: 'super', ballName: 'Superball' },
+  { key: 'dringend', label: 'Dringend', ball: 'hyper', ballName: 'Hyperball' },
 ];
+
+// Trainer-Memo: Auswahlmöglichkeiten wie im Spiel
+const NATURES = [
+  'Robust', 'Kühn', 'Mäßig', 'Still', 'Scheu',
+  'Solo', 'Sanft', 'Mild', 'Zart', 'Hastig',
+  'Hart', 'Pfiffig', 'Zaghaft', 'Sacht', 'Froh',
+  'Frech', 'Lasch', 'Hitzig', 'Kauzig', 'Naiv',
+  'Mutig', 'Locker', 'Ruhig', 'Forsch', 'Ernst',
+].sort((a, b) => a.localeCompare(b, 'de'));
+const FLAVORS = { scharf: 'scharfes', trocken: 'trockenes', 'süß': 'süßes', bitter: 'bitteres', sauer: 'saures' };
+const REGIONS = ['Kanto', 'Johto', 'Hoenn', 'Sinnoh', 'Einall', 'Kalos', 'Alola', 'Galar', 'Hisui', 'Paldea'];
+
+/** Ball als kleines SVG (eigene Zeichnung) */
+function ballSvg(kind, size = 22) {
+  const top = { poke: '#e3350d', super: '#3b6fd8', hyper: '#2b2b2b', master: '#7a3fa0' }[kind] || '#e3350d';
+  const deco = {
+    super: '<path d="M5 11.5 9.8 6.3l2.6 2-4.6 5z M27 11.5 22.2 6.3l-2.6 2 4.6 5z" fill="#e3350d"/>',
+    hyper: '<path d="M8.6 5.4 12.4 3.5V16H8.6z M23.4 5.4 19.6 3.5V16h3.8z" fill="#f2c12e"/>',
+    master: '<circle cx="8.6" cy="10.4" r="2.7" fill="#e85d9c"/><circle cx="23.4" cy="10.4" r="2.7" fill="#e85d9c"/>'
+      + '<path d="M12.6 12.2V6.6l3.4 3.2 3.4-3.2v5.6" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/>',
+  }[kind] || '';
+  return `<svg class="ball-svg" viewBox="0 0 32 32" width="${size}" height="${size}" aria-hidden="true">
+    <circle cx="16" cy="16" r="14" fill="#fff"/>
+    <path d="M2 16a14 14 0 0 1 28 0z" fill="${top}"/>${deco}
+    <circle cx="16" cy="16" r="14" fill="none" stroke="#222" stroke-width="2"/>
+    <path d="M2 16h28" stroke="#222" stroke-width="2.4"/>
+    <circle cx="16" cy="16" r="4.4" fill="#fff" stroke="#222" stroke-width="2"/>
+  </svg>`;
+}
+
+function urgencyInfo(key) {
+  return URGENCIES.find((u) => u.key === key) || URGENCIES[1];
+}
 
 const COLOR_PRESETS = [
   '#d63b3b', '#e8772e', '#f2c12e', '#4caf50', '#1fa39a',
@@ -81,6 +114,11 @@ function mapProfile(r) {
     color: r.color,
     birthday: r.birthday,
     strikes: r.strikes || 0,
+    nature: r.nature || '',
+    loves: r.loves || '',
+    flavor: r.flavor || '',
+    region: r.region || '',
+    statusText: r.status_text || '',
   };
 }
 
@@ -348,12 +386,30 @@ function profileFormHtml(u, { familyExists = false, code = '' } = {}) {
       </div>
       <input type="hidden" name="color" value="${esc(color)}">
     </fieldset>
+    ${isNew ? '' : memoFieldsHtml(u)}
     <p class="error" id="profile-error"></p>
     <div class="modal-actions">
       ${isNew ? '' : '<button type="button" class="btn" data-close>Abbrechen</button>'}
       <button type="submit" class="btn primary">${isNew ? 'Konto einrichten' : 'Speichern'}</button>
     </div>
   </form>`;
+}
+
+function memoFieldsHtml(u) {
+  const opts = (list, cur, label = (x) => x) =>
+    `<option value="">– keine Angabe –</option>` +
+    list.map((x) => `<option value="${esc(x)}"${x === cur ? ' selected' : ''}>${esc(label(x))}</option>`).join('');
+  return `
+    <fieldset class="field memo-fields">
+      <legend>Trainer-Memo</legend>
+      <div class="row2">
+        <label class="field"><span>Wesen</span><select name="nature">${opts(NATURES, u.nature)}</select></label>
+        <label class="field"><span>Herkunft (Region)</span><select name="region">${opts(REGIONS, u.region)}</select></label>
+      </div>
+      <label class="field"><span>Liebt …</span><input name="loves" maxlength="60" placeholder="z. B. Kämpfe" value="${esc(u.loves || '')}"></label>
+      <label class="field"><span>Mag … Essen</span><select name="flavor">${opts(Object.keys(FLAVORS), u.flavor, (k) => FLAVORS[k][0].toUpperCase() + FLAVORS[k].slice(1) + ' Essen')}</select></label>
+      <label class="field"><span>Status</span><input name="statusText" maxlength="80" placeholder="z. B. Im Urlaub 🌴" value="${esc(u.statusText || '')}"></label>
+    </fieldset>`;
 }
 
 function validateProfile(d, isNew) {
@@ -379,6 +435,11 @@ function mountProfileForm(modal, close, base) {
       birthday: f.get('birthday'),
       gender: f.get('gender'),
       color: f.get('color'),
+      nature: f.get('nature') || '',
+      region: f.get('region') || '',
+      loves: (f.get('loves') || '').trim(),
+      flavor: f.get('flavor') || '',
+      statusText: (f.get('statusText') || '').trim(),
     };
   };
   const refresh = () => (preview.innerHTML = trainerCardHtml(read()));
@@ -422,7 +483,11 @@ function mountProfileForm(modal, close, base) {
         await startApp();
       } else {
         const row = must(await sb.from('profiles')
-          .update({ first_name: d.firstName, last_name: d.lastName, gender: d.gender, color: d.color, birthday: d.birthday })
+          .update({
+            first_name: d.firstName, last_name: d.lastName, gender: d.gender, color: d.color, birthday: d.birthday,
+            nature: d.nature || null, region: d.region || null, loves: d.loves || null,
+            flavor: d.flavor || null, status_text: d.statusText || null,
+          })
           .eq('id', base.id).select().single());
         state.me = mapProfile(row);
         close();
@@ -480,14 +545,54 @@ function openEditProfile() {
   );
 }
 
+function trainerMemoHtml(u) {
+  const birth = u.birthday ? parseBirthday(u.birthday) : null;
+  const level = birth ? ageParts(birth).years : '–';
+  const red = (t) => `<span class="memo-red">${esc(t)}</span>`;
+  return `
+  <article class="memo" aria-label="Trainer-Memo von ${esc(fullName(u))}">
+    <div class="memo-head">TRAINER-MEMO</div>
+    <div class="memo-body">
+      <div class="memo-left">
+        <div class="memo-name"><span class="ball"></span>${esc(u.firstName || '')}</div>
+        <div class="memo-lv">Lv. ${level}</div>
+        <div class="memo-egg memo-avatar" style="${colorVars(u.color || '#888888')}">${avatarHtml(u)}</div>
+        <div class="memo-item"><span>Status</span><b>${esc(u.statusText || 'Keiner')}</b></div>
+      </div>
+      <div class="memo-right">
+        <p>Wesen: ${u.nature ? red(u.nature) : '???'}</p>
+        <p>${birth ? esc(formatDate(birth)) : '–'}</p>
+        <p>${u.region ? red(u.region) : '???'}</p>
+        <p>Level ${level}.</p>
+        <p>&nbsp;</p>
+        <p>Liebt ${esc(u.loves || '…')}.</p>
+        <p>Mag ${u.flavor ? red(FLAVORS[u.flavor]) : '…'} Essen.</p>
+      </div>
+    </div>
+  </article>`;
+}
+
 function openTrainerCard(user) {
   const isMe = state.me && user.id === state.me.id;
   openModal(
     `<div class="modal-head"><h2>${isMe ? 'Mein Trainerpass' : 'Trainerpass'}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
-     ${trainerCardHtml(user)}
+     <div class="card-tabs" role="tablist">
+       <button type="button" role="tab" class="active" aria-selected="true" data-view="pass">Trainerpass</button>
+       <button type="button" role="tab" aria-selected="false" data-view="memo">Trainer-Memo</button>
+     </div>
+     <div data-pane="pass">${trainerCardHtml(user)}</div>
+     <div data-pane="memo" hidden>${trainerMemoHtml(user)}</div>
      ${isMe ? '<div class="modal-actions"><button class="btn" id="edit-profile">Profil bearbeiten</button></div>' : ''}`,
     {
       onMount: (modal, close) => {
+        modal.querySelectorAll('[data-view]').forEach((t) => t.addEventListener('click', () => {
+          modal.querySelectorAll('[data-view]').forEach((x) => {
+            const on = x === t;
+            x.classList.toggle('active', on);
+            x.setAttribute('aria-selected', String(on));
+          });
+          modal.querySelectorAll('[data-pane]').forEach((p) => { p.hidden = p.dataset.pane !== t.dataset.view; });
+        }));
         const btn = $('#edit-profile', modal);
         if (btn) btn.addEventListener('click', () => { close(); openEditProfile(); });
       },
@@ -553,7 +658,7 @@ async function syncPushSubscription() {
  * ---------------------------------------------------------------------- */
 
 function urgencyLabel(key) {
-  return (URGENCIES.find((u) => u.key === key) || URGENCIES[1]).label;
+  return urgencyInfo(key).label;
 }
 
 function icsUrl(m) {
@@ -566,7 +671,7 @@ function messageHtml(m) {
   const author = userById(m.authorId);
   return `
   <article class="msg u-${esc(m.urgency)}${state.highlight === m.id ? ' flash' : ''}" id="msg-${esc(m.id)}">
-    <div class="msg-head"><span class="badge">${esc(urgencyLabel(m.urgency))}</span></div>
+    <div class="msg-head">${ballSvg(urgencyInfo(m.urgency).ball, 26)}<span class="badge">${esc(urgencyLabel(m.urgency))}</span></div>
     <h3>${esc(m.title)}</h3>
     ${m.description ? `<p class="desc">${esc(m.description)}</p>` : ''}
     <div class="msg-meta">
@@ -638,7 +743,7 @@ function openNewMessage() {
        <fieldset class="field">
          <legend>Dringlichkeit</legend>
          <div class="segmented">
-           ${URGENCIES.map((u) => `<label style="--u:var(--u-${u.key})"><input type="radio" name="urgency" value="${u.key}"${u.key === 'normal' ? ' checked' : ''}><span>${u.label}</span></label>`).join('')}
+           ${URGENCIES.map((u) => `<label class="u-${u.key}" style="--u:var(--u-${u.key})" title="${u.ballName}"><input type="radio" name="urgency" value="${u.key}"${u.key === 'normal' ? ' checked' : ''}><span>${ballSvg(u.ball, 28)}<em>${u.label}</em></span></label>`).join('')}
          </div>
        </fieldset>
        <label class="field"><span>Titel</span><input name="title" required maxlength="120" placeholder="Worum geht's?"></label>

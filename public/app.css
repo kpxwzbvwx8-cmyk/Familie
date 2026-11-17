@@ -20,10 +20,12 @@
   --radius: 14px;
   --tabbar-h: 64px;
 
-  --u-info: #3e9f5b;
-  --u-normal: #3a78c9;
-  --u-wichtig: #e48a1f;
-  --u-dringend: #d63b3b;
+  --u-info: #7a3fa0;     /* Meisterball */
+  --u-normal: #e3350d;   /* Pokéball */
+  --u-wichtig: #3b6fd8;  /* Superball */
+  --u-dringend: #2b2b2b; /* Hyperball */
+  --hyper-yellow: #f2c12e;
+  --danger: #d63b3b;
   color-scheme: light;
 }
 
@@ -294,7 +296,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
   font-weight: 600; font-size: 1rem; text-decoration: none; color: var(--text);
 }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn.danger { color: var(--u-dringend); }
+.btn.danger { color: var(--danger); }
 .btn.small { padding: 6px 10px; font-size: 1rem; }
 .btn:disabled { opacity: .5; cursor: default; }
 
@@ -310,7 +312,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 fieldset.field { border: 0; padding: 0; margin: 0; }
 .hint { font-size: 1rem; color: var(--muted); margin: 0; }
-.error { color: var(--u-dringend); font-weight: 600; font-size: 1rem; min-height: 1em; margin: 0; }
+.error { color: var(--danger); font-weight: 600; font-size: 1rem; min-height: 1em; margin: 0; }
 
 .segmented { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .segmented.two { grid-template-columns: 1fr 1fr; }
@@ -440,3 +442,48 @@ fieldset.field { border: 0; padding: 0; margin: 0; }
 .msg h3 { font-size: 1.3333rem; }
 .invite .code, .tcard-head { font-size: 1.3333rem; }
 .badge { letter-spacing: .04em; }
+
+/* ---------- Bälle als Dringlichkeit ---------- */
+.ball-svg { flex: none; display: block; }
+.msg-head { gap: 10px; }
+.msg.u-dringend {
+  background: color-mix(in srgb, var(--hyper-yellow) 16%, var(--surface));
+  border-color: var(--u-dringend);
+}
+.msg.u-dringend .badge { color: var(--hyper-yellow); box-shadow: inset 0 0 0 2px var(--hyper-yellow); }
+@media (prefers-color-scheme: dark) {
+  .msg.u-dringend { border-color: var(--hyper-yellow); }
+  .segmented .u-dringend span { border-color: var(--hyper-yellow); }
+  .segmented .u-dringend input:not(:checked) + span { color: var(--hyper-yellow); }
+}
+.segmented span { display: grid; justify-items: center; gap: 4px; padding: 8px 2px 7px; }
+.segmented span em { font-style: normal; }
+.segmented .u-dringend input:checked + span { color: var(--hyper-yellow); }
+
+/* ---------- Tabs Trainerpass / Trainer-Memo ---------- */
+.card-tabs {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: -4px 0 12px;
+  background: var(--bg); padding: 4px; border-radius: 12px;
+}
+.card-tabs button {
+  border: 0; background: transparent; border-radius: 9px; padding: 8px; cursor: pointer; color: var(--muted);
+}
+.card-tabs button.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+
+.memo-lv { padding: 0 10px; font-size: 1rem; color: #303040; }
+.memo-avatar {
+  background:
+    radial-gradient(circle at 50% 70%, rgba(255,255,255,.65), transparent 70%),
+    linear-gradient(160deg, var(--c-light), var(--c));
+  padding: 10px 0;
+}
+.memo-avatar .sprite { width: auto; height: 96px; }
+.memo-avatar svg { width: 64px; height: 80px; }
+.memo-item b { overflow-wrap: anywhere; }
+select {
+  width: 100%; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+  background: var(--bg); font: inherit; color: inherit; appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 18px) 55%, calc(100% - 12px) 55%; background-size: 6px 6px; background-repeat: no-repeat;
+}
+.memo-fields { border-top: 1px dashed var(--border); padding-top: 12px; display: grid; gap: 12px; }
