@@ -45,6 +45,7 @@ const NATURES = [
   'Frech', 'Lasch', 'Hitzig', 'Kauzig', 'Naiv',
   'Mutig', 'Locker', 'Ruhig', 'Forsch', 'Ernst',
 ].sort((a, b) => a.localeCompare(b, 'de'));
+const STATUS_MAX = 60; // kurz halten, damit das Memo nicht zerfällt
 const FLAVORS = { scharf: 'scharfes', trocken: 'trockenes', 'süß': 'süßes', bitter: 'bitteres', sauer: 'saures' };
 const REGIONS = ['Kanto', 'Johto', 'Hoenn', 'Sinnoh', 'Einall', 'Kalos', 'Alola', 'Galar', 'Hisui', 'Paldea'];
 
@@ -306,11 +307,11 @@ function trainerCardHtml(u) {
  * Modal & Toast
  * ---------------------------------------------------------------------- */
 
-function openModal(html, { dismissible = true, onMount } = {}) {
+function openModal(html, { dismissible = true, onMount, full = false } = {}) {
   const root = $('#modal-root');
   const backdrop = document.createElement('div');
   backdrop.className = 'modal-backdrop';
-  backdrop.innerHTML = `<div class="modal" role="dialog" aria-modal="true">${html}</div>`;
+  backdrop.innerHTML = `<div class="modal${full ? ' full' : ''}" role="dialog" aria-modal="true">${html}</div>`;
   root.appendChild(backdrop);
   const close = () => {
     backdrop.remove();
@@ -408,7 +409,7 @@ function memoFieldsHtml(u) {
       </div>
       <label class="field"><span>Liebt …</span><input name="loves" maxlength="60" placeholder="z. B. Kämpfe" value="${esc(u.loves || '')}"></label>
       <label class="field"><span>Mag … Essen</span><select name="flavor">${opts(Object.keys(FLAVORS), u.flavor, (k) => FLAVORS[k][0].toUpperCase() + FLAVORS[k].slice(1) + ' Essen')}</select></label>
-      <label class="field"><span>Status</span><input name="statusText" maxlength="80" placeholder="z. B. Im Urlaub 🌴" value="${esc(u.statusText || '')}"></label>
+      <label class="field"><span>Status</span><input name="statusText" maxlength="${STATUS_MAX}" placeholder="z. B. Im Urlaub 🌴" value="${esc(u.statusText || '')}"></label>
     </fieldset>`;
 }
 
@@ -547,7 +548,6 @@ function openEditProfile() {
 
 function trainerMemoHtml(u) {
   const birth = u.birthday ? parseBirthday(u.birthday) : null;
-  const level = birth ? ageParts(birth).years : '–';
   const red = (t) => `<span class="memo-red">${esc(t)}</span>`;
   return `
   <article class="memo" aria-label="Trainer-Memo von ${esc(fullName(u))}">
@@ -555,18 +555,17 @@ function trainerMemoHtml(u) {
     <div class="memo-body">
       <div class="memo-left">
         <div class="memo-name"><span class="ball"></span>${esc(u.firstName || '')}</div>
-        <div class="memo-lv">Lv. ${level}</div>
         <div class="memo-egg memo-avatar" style="${colorVars(u.color || '#888888')}">${avatarHtml(u)}</div>
-        <div class="memo-item"><span>Status</span><b>${esc(u.statusText || 'Keiner')}</b></div>
       </div>
       <div class="memo-right">
         <p>Wesen: ${u.nature ? red(u.nature) : '???'}</p>
         <p>${birth ? esc(formatDate(birth)) : '–'}</p>
         <p>${u.region ? red(u.region) : '???'}</p>
-        <p>Level ${level}.</p>
-        <p>&nbsp;</p>
         <p>Liebt ${esc(u.loves || '…')}.</p>
         <p>Mag ${u.flavor ? red(FLAVORS[u.flavor]) : '…'} Essen.</p>
+        <p>&nbsp;</p>
+        <p>Status:</p>
+        <p class="memo-status-text">${esc(u.statusText || '–')}</p>
       </div>
     </div>
   </article>`;
@@ -576,23 +575,14 @@ function openTrainerCard(user) {
   const isMe = state.me && user.id === state.me.id;
   openModal(
     `<div class="modal-head"><h2>${isMe ? 'Mein Trainerpass' : 'Trainerpass'}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
-     <div class="card-tabs" role="tablist">
-       <button type="button" role="tab" class="active" aria-selected="true" data-view="pass">Trainerpass</button>
-       <button type="button" role="tab" aria-selected="false" data-view="memo">Trainer-Memo</button>
+     <div class="card-stack">
+       ${trainerCardHtml(user)}
+       ${trainerMemoHtml(user)}
      </div>
-     <div data-pane="pass">${trainerCardHtml(user)}</div>
-     <div data-pane="memo" hidden>${trainerMemoHtml(user)}</div>
      ${isMe ? '<div class="modal-actions"><button class="btn" id="edit-profile">Profil bearbeiten</button></div>' : ''}`,
     {
+      full: true,
       onMount: (modal, close) => {
-        modal.querySelectorAll('[data-view]').forEach((t) => t.addEventListener('click', () => {
-          modal.querySelectorAll('[data-view]').forEach((x) => {
-            const on = x === t;
-            x.classList.toggle('active', on);
-            x.setAttribute('aria-selected', String(on));
-          });
-          modal.querySelectorAll('[data-pane]').forEach((p) => { p.hidden = p.dataset.pane !== t.dataset.view; });
-        }));
         const btn = $('#edit-profile', modal);
         if (btn) btn.addEventListener('click', () => { close(); openEditProfile(); });
       },
@@ -950,6 +940,33 @@ function openEggMemo() {
 }
 
 /* -------------------------------------------------------------------------
+ * Hell / Dunkel
+ * ---------------------------------------------------------------------- */
+
+const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+function isDark() {
+  const t = document.documentElement.dataset.theme;
+  return t ? t === 'dark' : darkQuery.matches;
+}
+
+function syncThemeToggle() {
+  const dark = isDark();
+  const btn = $('#theme-toggle');
+  btn.setAttribute('aria-checked', String(dark));
+  btn.title = dark ? 'Dunkel – tippen für hell' : 'Hell – tippen für dunkel';
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = dark ? '#212128' : '#ffffff';
+}
+
+function toggleTheme() {
+  const next = isDark() ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem('familie.theme', next); } catch { /* privat */ }
+  syncThemeToggle();
+}
+
+/* -------------------------------------------------------------------------
  * Update-Prüfung
  * ---------------------------------------------------------------------- */
 
@@ -1116,6 +1133,9 @@ async function init() {
   $('#profile-btn').addEventListener('click', () => state.me && openTrainerCard(state.me));
   $('#fab').addEventListener('click', openNewMessage);
   $('#update-btn').addEventListener('click', checkForUpdate);
+  $('#theme-toggle').addEventListener('click', toggleTheme);
+  darkQuery.addEventListener('change', syncThemeToggle);
+  syncThemeToggle();
 
   const params = new URLSearchParams(location.search);
   if (TABS[params.get('tab')]) state.tab = params.get('tab');
