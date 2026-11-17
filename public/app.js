@@ -550,7 +550,6 @@ function trainerMemoHtml(u) {
   <article class="memo memo-trainer" aria-label="Trainer-Memo von ${esc(fullName(u))}">
     <div class="memo-head">TRAINER-MEMO</div>
     <div class="memo-body">
-      <div class="memo-name"><span class="ball"></span>${esc(fullName(u))}</div>
       <div class="memo-right">
         <p>Wesen: ${u.nature ? red(u.nature) : '???'}</p>
         <p>${u.region ? red(u.region) : '???'}</p>
