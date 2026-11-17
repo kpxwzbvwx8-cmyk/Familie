@@ -1,16 +1,13 @@
 {
   "name": "familie",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Familien-App mit Trainerpass, Austausch, Notizen, Kalender, Board der Schande und Team",
-  "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node scripts/serve.js"
   },
-  "engines": {
-    "node": ">=18"
-  },
-  "dependencies": {
-    "web-push": "3.6.7"
+  "devDependencies": {
+    "@supabase/supabase-js": "2.119.0",
+    "supabase": "2.62.10"
   }
 }

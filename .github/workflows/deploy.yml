@@ -1,0 +1,82 @@
+# Veröffentlicht die Familien-App:
+#  1. Supabase: Datenbank-Migrationen + Edge Functions (push, ics)
+#  2. GitHub Pages: die Web-App aus ./public
+#
+# Benötigte Einstellungen im Repository (Settings → Secrets and variables → Actions):
+#   Variables: SUPABASE_PROJECT_REF, SUPABASE_KEY (Publishable/anon key)
+#   Secrets:   SUPABASE_ACCESS_TOKEN, SUPABASE_DB_PASSWORD
+name: Veröffentlichen
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  supabase:
+    name: Supabase aktualisieren
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Einstellungen prüfen
+        run: |
+          missing=""
+          [ -n "$PROJECT_REF" ] || missing="$missing SUPABASE_PROJECT_REF(Variable)"
+          [ -n "$SUPABASE_ACCESS_TOKEN" ] || missing="$missing SUPABASE_ACCESS_TOKEN(Secret)"
+          [ -n "$SUPABASE_DB_PASSWORD" ] || missing="$missing SUPABASE_DB_PASSWORD(Secret)"
+          if [ -n "$missing" ]; then echo "::error::Es fehlen:$missing – siehe README"; exit 1; fi
+      - run: npm ci
+      - name: Mit Supabase-Projekt verbinden
+        run: npx supabase link --project-ref "$PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+      - name: Datenbank aktualisieren
+        run: npx supabase db push --password "$SUPABASE_DB_PASSWORD" --include-all
+      - name: Edge Functions veröffentlichen
+        run: npx supabase functions deploy push ics --project-ref "$PROJECT_REF" --use-api
+
+  pages:
+    name: Web-App veröffentlichen
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: config.js erzeugen
+        env:
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          SUPABASE_KEY: ${{ vars.SUPABASE_KEY }}
+        run: |
+          if [ -z "$PROJECT_REF" ] || [ -z "$SUPABASE_KEY" ]; then
+            echo "::error::Variablen SUPABASE_PROJECT_REF und SUPABASE_KEY fehlen – siehe README"; exit 1
+          fi
+          cat > public/config.js <<JS
+          window.FAMILIE_CONFIG = {
+            supabaseUrl: 'https://${PROJECT_REF}.supabase.co',
+            supabaseKey: '${SUPABASE_KEY}',
+          };
+          JS
+          # Cache-Version des Service Workers pro Veröffentlichung erneuern
+          sed -i "s/const CACHE = 'familie-[^']*'/const CACHE = 'familie-${GITHUB_SHA::8}'/" public/sw.js
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - id: deploy
+        uses: actions/deploy-pages@v4

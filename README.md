@@ -1,35 +1,78 @@
 # Familie
 
-Gemeinsame Familien-App (PWA). Jedes Gerät gehört einem Nutzer, alle greifen auf denselben Server zu.
+Familien-App fürs iPhone (und jedes andere Smartphone), die im Browser läuft. Man braucht **keinen Mac und keinen App Store**:
+Die App wird über Safari zum Home-Bildschirm hinzugefügt und verhält sich dann wie eine normale App, inklusive Benachrichtigungen.
 
-## Funktionen (Stand jetzt)
+- **Oberfläche:** statische Web-App in `public/`, kostenlos gehostet auf **GitHub Pages**
+- **Daten, Anmeldung, Live-Updates, Benachrichtigungen:** **Supabase** (kostenloser Tarif)
 
-- **Konto einrichten** beim ersten Start: Vor- & Nachname, Geschlecht (bestimmt die Figur auf dem Pass), Geburtsdatum, Lieblingsfarbe. Die ID-Nummer wird zufällig vergeben.
-- **Trainerpass** (Profil oben rechts) im Stil eines Trainerpasses in der Lieblingsfarbe:
-  - ID Nr., Trainer, **Striche** (kommen später vom Board der Schande)
-  - **Spielzeit** = Jahre / Monate / Wochen / Tage seit Geburt
-  - **Abenteuer gestartet** = Geburtsdatum
-  - **XP-Balken**: 1 XP pro Tag seit dem letzten Geburtstag, 365 bzw. 366 XP bis zum nächsten Level (= Alter)
-- **Austausch**: Nachrichten mit Dringlichkeit (Info / Normal / Wichtig / Dringend → Farbe der Kachel), Titel, Beschreibung, automatisch ausgefülltem Urheber, Zeitpunkt und automatischem Löschen zu einem Datum/Uhrzeit.
-  - Alle anderen bekommen eine **Push-Benachrichtigung** (bei offener App zusätzlich live).
-  - **„In Kalender übernehmen“** lädt eine `.ics`-Datei → wird vom Smartphone-Kalender (iOS/Android) übernommen.
-- **Team**: alle Konten der App, antippen zeigt deren Trainerpass.
-- **Notizen**, **Kalender**, **Board der Schande**: Platzhalter für die nächsten Schritte.
+## Funktionen
 
-## Starten
+- **Konto einrichten** beim ersten Start: Familien-Code, Vor- & Nachname, Geburtsdatum, Geschlecht (bestimmt die Figur), Lieblingsfarbe.
+  Wer zuerst beitritt, legt den Familien-Code fest. Alle anderen brauchen ihn, damit Fremde nicht mitlesen können.
+- **Trainerpass** (oben rechts) in der Lieblingsfarbe: ID Nr. (zufällig), Trainer, Striche, Spielzeit (J/M/W/T seit Geburt),
+  Abenteuer gestartet (= Geburtsdatum), XP-Balken (1 XP pro Tag, 365/366 bis zum nächsten Geburtstag, Level = Alter).
+- **Austausch:** Nachrichten mit Dringlichkeit (Farbe der Kachel), Titel, Beschreibung, Urheber, Zeitpunkt und automatischem Löschen.
+  Alle anderen bekommen eine **Push-Benachrichtigung**. **„In Kalender übernehmen“** öffnet eine Kalenderdatei für den iPhone-Kalender.
+- **Team:** alle Familienmitglieder mit ihrem Trainerpass, dazu Familien-Code und „Einladen“-Knopf.
+- **Notizen, Kalender, Board der Schande:** folgen.
+
+## Einrichtung (einmalig, geht komplett am iPhone im Browser)
+
+### 1. Supabase-Projekt anlegen
+
+1. Auf **supabase.com** kostenlos registrieren und **New project** anlegen.
+   Name z. B. `familie`, Region **Frankfurt (eu-central-1)**. Das **Datenbank-Passwort notieren**.
+2. **Authentication → Sign In / Providers**: **„Allow anonymous sign-ins“** einschalten und speichern.
+3. Diese Werte notieren:
+   - **Project ID / Reference:** steht in **Project Settings → General** (auch in der Adresse: `supabase.com/dashboard/project/<ID>`)
+   - **Publishable key:** unter **Project Settings → API Keys** (alternativ der „anon public“-Schlüssel)
+   - **Access Token:** unter **Account → Access Tokens** (supabase.com/dashboard/account/tokens) einen neuen Token erstellen
+
+### 2. GitHub einstellen
+
+Im Repository unter **Settings → Secrets and variables → Actions**:
+
+| Art | Name | Wert |
+|---|---|---|
+| Variable | `SUPABASE_PROJECT_REF` | Project ID |
+| Variable | `SUPABASE_KEY` | Publishable key |
+| Secret | `SUPABASE_ACCESS_TOKEN` | Access Token |
+| Secret | `SUPABASE_DB_PASSWORD` | Datenbank-Passwort |
+
+Dann unter **Settings → Pages** bei **Source** die Option **GitHub Actions** wählen.
+(GitHub Pages ist für **öffentliche** Repositories kostenlos. Für private Repositories braucht man GitHub Pro.)
+
+### 3. Veröffentlichen
+
+**Actions → Veröffentlichen → Run workflow** starten. Danach läuft das bei jeder Änderung am Standard-Branch automatisch.
+Der Workflow richtet die Datenbank ein, veröffentlicht die Supabase-Funktionen und stellt die App auf GitHub Pages.
+Die Adresse der App steht danach unter **Settings → Pages**, z. B. `https://<benutzer>.github.io/Familie/`.
+
+### 4. Aufs iPhone holen (ab iOS 16.4)
+
+1. Die Adresse in **Safari** öffnen.
+2. **Teilen** → **„Zum Home-Bildschirm“** → **Hinzufügen**.
+3. Die App über das neue Symbol öffnen, Konto einrichten und **Benachrichtigungen aktivieren**.
+
+Weitere Familienmitglieder: Im Reiter **Team** auf **Einladen** tippen. Der Link enthält den Familien-Code.
+
+> Hinweis: Kostenlose Supabase-Projekte werden nach 7 Tagen ganz ohne Nutzung pausiert und lassen sich im Dashboard wieder starten.
+
+## Aufbau
+
+```
+public/                 Web-App (HTML/CSS/JS, Service Worker, Icons, Figuren)
+supabase/migrations/    Datenbankschema inkl. Zugriffsregeln (RLS) und Auto-Löschen (pg_cron)
+supabase/functions/     Edge Functions: push (Web-Push), ics (Kalender-Export)
+.github/workflows/      Automatisches Veröffentlichen
+```
+
+## Lokal entwickeln
 
 ```bash
 npm install
-npm start          # http://localhost:3000
+npx supabase start            # benötigt Docker
+# public/config.js mit lokaler URL und Publishable key füllen (siehe `npx supabase status`)
+npm start                     # http://localhost:8080
 ```
-
-Umgebungsvariablen: `PORT` (Standard 3000), `DATA_DIR` (Standard `./data`), `VAPID_SUBJECT` (z. B. `mailto:du@example.org`).
-
-Daten liegen in `data/db.json` (inkl. der beim ersten Start erzeugten Push-Schlüssel).
-
-## Auf dem Smartphone nutzen
-
-Push-Benachrichtigungen funktionieren nur über **HTTPS** (z. B. hinter einem Reverse-Proxy wie Caddy oder über einen Tunnel).
-
-- **iPhone (ab iOS 16.4)**: Seite in Safari öffnen → Teilen → *Zum Home-Bildschirm*. Danach die App vom Home-Bildschirm starten und Benachrichtigungen aktivieren.
-- **Android**: In Chrome öffnen → *App installieren* bzw. *Zum Startbildschirm hinzufügen*.

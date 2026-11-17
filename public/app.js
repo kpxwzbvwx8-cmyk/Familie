@@ -1,16 +1,23 @@
 'use strict';
 
 /* =========================================================================
- * Familie – Client
+ * Familie – Client (statische Web-App, Daten & Benachrichtigungen über Supabase)
  * ======================================================================= */
 
-const TOKEN_KEY = 'familie.token';
+const CFG = window.FAMILIE_CONFIG || {};
+const configured = Boolean(CFG.supabaseUrl && CFG.supabaseKey && window.supabase);
+const sb = configured
+  ? window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, {
+      auth: { persistSession: true, autoRefreshToken: true, storageKey: 'familie.auth' },
+    })
+  : null;
 
 const state = {
-  token: localStorage.getItem(TOKEN_KEY),
+  session: null,
   me: null,
   users: [],
   messages: [],
+  familyCode: null,
   tab: 'austausch',
   highlight: null,
 };
@@ -37,6 +44,10 @@ const COLOR_PRESETS = [
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
+const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+
 /* -------------------------------------------------------------------------
  * Hilfsfunktionen
  * ---------------------------------------------------------------------- */
@@ -45,20 +56,49 @@ function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    ...opts,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
-      ...(opts.headers || {}),
-    },
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-  });
-  if (res.status === 204) return null;
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || `Fehler ${res.status}`), { status: res.status });
+/** Supabase-Antwort auswerten: Fehler werfen, sonst Daten zurückgeben. */
+function must({ data, error }) {
+  if (error) throw new Error(friendlyError(error));
   return data;
+}
+
+function friendlyError(error) {
+  const msg = error && (error.message || String(error));
+  if (!msg) return 'Unbekannter Fehler';
+  if (/Failed to fetch|NetworkError|Load failed/i.test(msg)) return 'Keine Verbindung zum Server. Bist du online?';
+  if (/anonymous/i.test(msg) && /disabled/i.test(msg)) return 'Anonyme Anmeldung ist in Supabase noch nicht aktiviert (siehe Anleitung).';
+  if (/row-level security/i.test(msg)) return 'Keine Berechtigung.';
+  return msg;
+}
+
+function mapProfile(r) {
+  return {
+    id: r.id,
+    trainerId: r.trainer_id,
+    firstName: r.first_name,
+    lastName: r.last_name,
+    gender: r.gender,
+    color: r.color,
+    birthday: r.birthday,
+    strikes: r.strikes || 0,
+  };
+}
+
+function mapMessage(r) {
+  return {
+    id: r.id,
+    authorId: r.author_id,
+    urgency: r.urgency,
+    title: r.title,
+    description: r.description || '',
+    eventAt: r.event_at,
+    deleteAt: r.delete_at,
+    createdAt: r.created_at,
+  };
+}
+
+function userById(id) {
+  return state.users.find((u) => u.id === id);
 }
 
 function parseBirthday(iso) {
@@ -173,7 +213,7 @@ const TRAINER_SVG = `
   <circle cx="26" cy="19" r="1.6" fill="#222"/><circle cx="34" cy="19" r="1.6" fill="#222"/>
 </svg>`;
 
-const SPRITES = { m: '/img/trainer-m.png', w: '/img/trainer-w.png' };
+const SPRITES = { m: 'img/trainer-m.png', w: 'img/trainer-w.png' };
 
 function avatarHtml(u) {
   return SPRITES[u.gender]
@@ -267,12 +307,24 @@ function toast(text, onClick) {
 /* -------------------------------------------------------------------------
  * Profil (Einrichten & Bearbeiten)
  * ---------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------
+ * Profil (Einrichten & Bearbeiten)
+ * ---------------------------------------------------------------------- */
 
-function profileFormHtml(u) {
+function profileFormHtml(u, { familyExists = false, code = '' } = {}) {
   const color = u.color || COLOR_PRESETS[0];
+  const isNew = !u.id;
   return `
   <form class="form" id="profile-form" novalidate>
     <div class="preview-wrap" id="card-preview">${trainerCardHtml({ ...u, color })}</div>
+    ${isNew ? `
+    <label class="field"><span>${familyExists ? 'Familien-Code' : 'Familien-Code festlegen'}</span>
+      <input name="code" required minlength="4" maxlength="40" autocapitalize="characters" autocomplete="off" value="${esc(code)}"
+        placeholder="${familyExists ? 'Bekommst du von deiner Familie' : 'z. B. MUELLER2026'}">
+      <p class="hint">${familyExists
+        ? 'Den Code findet jedes Familienmitglied im Reiter „Team“.'
+        : 'Du bist die erste Person. Alle weiteren brauchen diesen Code, um beizutreten.'}</p>
+    </label>` : ''}
     <div class="row2">
       <label class="field"><span>Vorname</span>
         <input name="firstName" autocomplete="given-name" required maxlength="40" value="${esc(u.firstName || '')}"></label>
@@ -298,19 +350,30 @@ function profileFormHtml(u) {
     </fieldset>
     <p class="error" id="profile-error"></p>
     <div class="modal-actions">
-      ${u.id ? '<button type="button" class="btn" data-close>Abbrechen</button>' : ''}
-      <button type="submit" class="btn primary">${u.id ? 'Speichern' : 'Konto einrichten'}</button>
+      ${isNew ? '' : '<button type="button" class="btn" data-close>Abbrechen</button>'}
+      <button type="submit" class="btn primary">${isNew ? 'Konto einrichten' : 'Speichern'}</button>
     </div>
   </form>`;
+}
+
+function validateProfile(d, isNew) {
+  if (isNew && (d.code || '').trim().length < 4) return 'Der Familien-Code muss mindestens 4 Zeichen haben.';
+  if (!d.firstName || !d.lastName) return 'Bitte Vor- und Nachnamen angeben.';
+  if (!d.birthday) return 'Bitte das Geburtsdatum angeben.';
+  if (parseBirthday(d.birthday) > new Date()) return 'Das Geburtsdatum liegt in der Zukunft.';
+  if (!d.gender) return 'Bitte ein Geschlecht wählen.';
+  return null;
 }
 
 function mountProfileForm(modal, close, base) {
   const form = $('#profile-form', modal);
   const preview = $('#card-preview', modal);
+  const isNew = !base.id;
   const read = () => {
     const f = new FormData(form);
     return {
       ...base,
+      code: (f.get('code') || '').trim().toUpperCase(),
       firstName: f.get('firstName').trim(),
       lastName: f.get('lastName').trim(),
       birthday: f.get('birthday'),
@@ -326,7 +389,7 @@ function mountProfileForm(modal, close, base) {
   };
   form.addEventListener('input', (e) => {
     if (e.target.name === 'customColor') setColor(e.target.value);
-    else refresh();
+    else if (e.target.name !== 'code') refresh();
   });
   form.addEventListener('click', (e) => {
     const sw = e.target.closest('.swatch');
@@ -334,36 +397,78 @@ function mountProfileForm(modal, close, base) {
   });
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const data = read();
+    const d = read();
     const err = $('#profile-error', modal);
-    err.textContent = '';
+    const btn = form.querySelector('[type=submit]');
+    err.textContent = validateProfile(d, isNew) || '';
+    if (err.textContent) return;
+    btn.disabled = true;
     try {
-      const body = { firstName: data.firstName, lastName: data.lastName, birthday: data.birthday, gender: data.gender, color: data.color };
-      if (base.id) {
-        state.me = await api('/api/me', { method: 'PUT', body });
+      if (isNew) {
+        if (!state.session) {
+          const { session } = must(await sb.auth.signInAnonymously());
+          state.session = session;
+        }
+        const row = must(await sb.rpc('join_family', {
+          p_code: d.code,
+          p_first_name: d.firstName,
+          p_last_name: d.lastName,
+          p_gender: d.gender,
+          p_color: d.color,
+          p_birthday: d.birthday,
+        }));
+        state.me = mapProfile(row);
+        close();
+        await startApp();
       } else {
-        const res = await api('/api/users', { method: 'POST', body });
-        state.token = res.token;
-        localStorage.setItem(TOKEN_KEY, res.token);
-        state.me = res.user;
-        startStream();
+        const row = must(await sb.from('profiles')
+          .update({ first_name: d.firstName, last_name: d.lastName, gender: d.gender, color: d.color, birthday: d.birthday })
+          .eq('id', base.id).select().single());
+        state.me = mapProfile(row);
+        close();
+        await loadUsers();
+        renderProfileButton();
+        render();
       }
-      close();
-      await loadUsers();
-      renderProfileButton();
-      render();
     } catch (ex) {
       err.textContent = ex.message;
+      btn.disabled = false;
     }
   });
 }
 
-function openSetup() {
+async function openSetup() {
+  let familyExists = false;
+  try {
+    familyExists = Boolean(must(await sb.rpc('family_exists')));
+  } catch (e) {
+    toast(e.message);
+  }
+  const code = new URLSearchParams(location.search).get('code') || '';
   openModal(
     `<div class="modal-head"><h2>Willkommen! 👋</h2></div>
      <p class="setup-intro">Richte dein Konto ein. Daraus entsteht dein persönlicher Trainerpass – die Lieblingsfarbe wird zur Farbe deines Passes.</p>
-     ${profileFormHtml({})}`,
+     ${profileFormHtml({}, { familyExists, code })}`,
     { dismissible: false, onMount: (m, c) => mountProfileForm(m, c, {}) }
+  );
+}
+
+function openInstallGuide() {
+  openModal(
+    `<div class="modal-head"><h2>Familie aufs iPhone holen</h2></div>
+     <ol class="steps">
+       <li>Unten in Safari auf <b>Teilen</b> <span aria-hidden="true">⬆︎</span> tippen.</li>
+       <li><b>„Zum Home-Bildschirm“</b> wählen und <b>Hinzufügen</b> tippen.</li>
+       <li>Die App über das neue Symbol auf dem Home-Bildschirm öffnen und dort das Konto einrichten.</li>
+     </ol>
+     <p class="hint">Nur die installierte App kann Benachrichtigungen empfangen (ab iOS 16.4). Ein Konto, das hier im Browser eingerichtet wird, ist in der installierten App nicht vorhanden.</p>
+     <div class="modal-actions"><button class="btn" id="continue-browser">Trotzdem im Browser nutzen</button></div>`,
+    {
+      dismissible: false,
+      onMount: (modal, close) => {
+        $('#continue-browser', modal).addEventListener('click', () => { close(); openSetup(); });
+      },
+    }
   );
 }
 
@@ -402,11 +507,6 @@ function renderProfileButton() {
  * Benachrichtigungen
  * ---------------------------------------------------------------------- */
 
-const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-
-const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
-
 function urlBase64ToUint8Array(base64) {
   const padding = '='.repeat((4 - (base64.length % 4)) % 4);
   const raw = atob((base64 + padding).replace(/-/g, '+').replace(/_/g, '/'));
@@ -426,23 +526,25 @@ async function enablePush() {
     render();
     return;
   }
-  await syncPushSubscription();
-  toast('Benachrichtigungen sind aktiv 🔔');
+  const ok = await syncPushSubscription();
+  toast(ok ? 'Benachrichtigungen sind aktiv 🔔' : 'Benachrichtigungen konnten nicht eingerichtet werden.');
   render();
 }
 
 async function syncPushSubscription() {
-  if (!pushSupported || Notification.permission !== 'granted' || !state.token) return;
+  if (!pushSupported || Notification.permission !== 'granted' || !state.me) return false;
   try {
     const reg = await navigator.serviceWorker.ready;
     let sub = await reg.pushManager.getSubscription();
     if (!sub) {
-      const { publicKey } = await api('/api/push/key');
+      const { publicKey } = must(await sb.functions.invoke('push', { body: { action: 'key' } }));
       sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
     }
-    await api('/api/push/subscribe', { method: 'POST', body: { subscription: sub.toJSON() } });
+    must(await sb.rpc('save_push_subscription', { p_subscription: sub.toJSON() }));
+    return true;
   } catch (e) {
     console.warn('Push-Anmeldung fehlgeschlagen', e);
+    return false;
   }
 }
 
@@ -454,36 +556,42 @@ function urgencyLabel(key) {
   return (URGENCIES.find((u) => u.key === key) || URGENCIES[1]).label;
 }
 
+function icsUrl(m) {
+  const token = state.session ? state.session.access_token : '';
+  return `${CFG.supabaseUrl}/functions/v1/ics?id=${encodeURIComponent(m.id)}&t=${encodeURIComponent(token)}`;
+}
+
 function messageHtml(m) {
   const mine = state.me && m.authorId === state.me.id;
-  const ics = `/api/messages/${encodeURIComponent(m.id)}.ics?t=${encodeURIComponent(state.token)}`;
+  const author = userById(m.authorId);
   return `
   <article class="msg u-${esc(m.urgency)}${state.highlight === m.id ? ' flash' : ''}" id="msg-${esc(m.id)}">
     <div class="msg-head"><span class="badge">${esc(urgencyLabel(m.urgency))}</span></div>
     <h3>${esc(m.title)}</h3>
     ${m.description ? `<p class="desc">${esc(m.description)}</p>` : ''}
     <div class="msg-meta">
-      <span class="author"><span class="dot" style="--c:${esc(m.authorColor)}"></span>${esc(m.authorName)} · ${esc(relative(m.createdAt))}</span>
+      <span class="author"><span class="dot" style="--c:${esc(author ? author.color : '#888888')}"></span>${esc(author ? fullName(author) : 'Unbekannt')} · ${esc(relative(m.createdAt))}</span>
       ${m.eventAt ? `<span>🕒 Zeitpunkt: ${esc(formatDateTime(m.eventAt))}</span>` : ''}
       ${m.deleteAt ? `<span>🗑️ Löscht sich ${esc(relative(m.deleteAt))} (${esc(formatDateTime(m.deleteAt))})</span>` : ''}
     </div>
     <div class="msg-actions">
-      <a class="btn small" href="${ics}" target="_blank" rel="noopener">📅 In Kalender übernehmen</a>
+      <a class="btn small" href="${esc(icsUrl(m))}" target="_blank" rel="noopener">📅 In Kalender übernehmen</a>
       ${mine ? `<button class="btn small danger" data-delete="${esc(m.id)}">Löschen</button>` : ''}
     </div>
   </article>`;
 }
 
 function renderAustausch(view) {
-  const showBanner = pushSupported ? Notification.permission === 'default' : false;
+  const showBanner = pushSupported && state.me ? Notification.permission === 'default' : false;
   const installHint = isIos && !isStandalone
     ? `<div class="notify-banner install"><p>📲 <b>Auf dem iPhone installieren:</b> Unten in Safari auf <b>Teilen</b> <span class="share-icon" aria-hidden="true">⬆︎</span> tippen → <b>„Zum Home-Bildschirm“</b>. Danach die App über das neue Symbol öffnen – nur so funktionieren Benachrichtigungen.</p></div>`
     : '';
   const banner = installHint + (showBanner
     ? `<div class="notify-banner"><p>🔔 Benachrichtigungen aktivieren, damit du neue Nachrichten sofort mitbekommst.</p><button class="btn primary small" id="enable-push">Aktivieren</button></div>`
     : '');
-  const list = state.messages.length
-    ? `<div class="msg-list">${state.messages.map(messageHtml).join('')}</div>`
+  const visible = state.messages.filter((m) => !m.deleteAt || Date.parse(m.deleteAt) > Date.now());
+  const list = visible.length
+    ? `<div class="msg-list">${visible.map(messageHtml).join('')}</div>`
     : `<div class="empty"><div class="big">💬</div><h2>Noch nichts im Austausch</h2><p>Tippe auf <b>+</b>, um eine Nachricht an alle zu schicken.</p></div>`;
   view.innerHTML = banner + list;
 
@@ -494,7 +602,7 @@ function renderAustausch(view) {
     b.addEventListener('click', async () => {
       if (!confirm('Nachricht wirklich löschen?')) return;
       try {
-        await api(`/api/messages/${encodeURIComponent(b.dataset.delete)}`, { method: 'DELETE' });
+        must(await sb.from('messages').delete().eq('id', b.dataset.delete));
         removeMessage(b.dataset.delete);
       } catch (e) {
         toast(e.message);
@@ -564,28 +672,31 @@ function openNewMessage() {
           setActive(i);
         });
         form.elements.deleteAt.addEventListener('input', () => setActive(form.elements.deleteAt.value ? -1 : 0));
-        form.elements.title.focus();
+        if (!isIos) form.elements.title.focus();
         form.addEventListener('submit', async (e) => {
           e.preventDefault();
           const f = new FormData(form);
           const err = $('#msg-error', modal);
-          err.textContent = '';
           const toIso = (v) => (v ? new Date(v).toISOString() : null);
+          const title = f.get('title').trim();
+          const deleteAt = toIso(f.get('deleteAt'));
+          err.textContent = '';
+          if (!title) { err.textContent = 'Bitte einen Titel angeben.'; return; }
+          if (deleteAt && Date.parse(deleteAt) <= Date.now()) { err.textContent = 'Das Löschdatum muss in der Zukunft liegen.'; return; }
           const btn = form.querySelector('[type=submit]');
           btn.disabled = true;
           try {
-            const msg = await api('/api/messages', {
-              method: 'POST',
-              body: {
-                urgency: f.get('urgency'),
-                title: f.get('title').trim(),
-                description: f.get('description').trim(),
-                eventAt: toIso(f.get('eventAt')),
-                deleteAt: toIso(f.get('deleteAt')),
-              },
-            });
-            upsertMessage(msg);
+            const row = must(await sb.from('messages').insert({
+              urgency: f.get('urgency'),
+              title,
+              description: f.get('description').trim(),
+              event_at: toIso(f.get('eventAt')),
+              delete_at: deleteAt,
+            }).select().single());
+            upsertMessage(mapMessage(row));
             close();
+            sb.functions.invoke('push', { body: { action: 'notify', messageId: row.id } })
+              .then((r) => r.error && console.warn('Benachrichtigung fehlgeschlagen', r.error));
             if (pushSupported && Notification.permission === 'default') enablePush();
           } catch (ex) {
             err.textContent = ex.message;
@@ -601,6 +712,7 @@ function upsertMessage(m) {
   const i = state.messages.findIndex((x) => x.id === m.id);
   if (i >= 0) state.messages[i] = m;
   else state.messages.unshift(m);
+  state.messages.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
   if (state.tab === 'austausch') render();
 }
 
@@ -613,13 +725,17 @@ function removeMessage(id) {
  * Team
  * ---------------------------------------------------------------------- */
 
+function inviteLink() {
+  const url = new URL(location.href);
+  url.search = '';
+  url.hash = '';
+  url.searchParams.set('code', state.familyCode || '');
+  return url.toString();
+}
+
 function renderTeam(view) {
-  if (!state.users.length) {
-    view.innerHTML = `<div class="empty"><div class="big">👨‍👩‍👧‍👦</div><h2>Noch kein Team</h2></div>`;
-    return;
-  }
   const users = state.users.slice().sort((a, b) => fullName(a).localeCompare(fullName(b), 'de'));
-  view.innerHTML = `<div class="team-grid">${users
+  const grid = `<div class="team-grid">${users
     .map((u) => {
       const age = ageParts(parseBirthday(u.birthday));
       return `<button class="team-tile" data-user="${esc(u.id)}" style="${colorVars(u.color)}">
@@ -629,9 +745,25 @@ function renderTeam(view) {
       </button>`;
     })
     .join('')}</div>`;
+  const invite = state.familyCode
+    ? `<div class="invite">
+        <div><span class="hint">Familien-Code zum Einladen</span><div class="code">${esc(state.familyCode)}</div></div>
+        <button class="btn small" id="share-invite">Einladen</button>
+      </div>`
+    : '';
+  view.innerHTML = grid + invite;
   view.querySelectorAll('[data-user]').forEach((b) =>
-    b.addEventListener('click', () => openTrainerCard(state.users.find((u) => u.id === b.dataset.user)))
+    b.addEventListener('click', () => openTrainerCard(userById(b.dataset.user)))
   );
+  const share = $('#share-invite', view);
+  if (share) share.addEventListener('click', async () => {
+    const text = `Komm in unsere Familien-App! Familien-Code: ${state.familyCode}`;
+    const url = inviteLink();
+    try {
+      if (navigator.share) await navigator.share({ title: 'Familie', text, url });
+      else { await navigator.clipboard.writeText(`${text}\n${url}`); toast('Einladung kopiert 📋'); }
+    } catch { /* abgebrochen */ }
+  });
 }
 
 /* -------------------------------------------------------------------------
@@ -657,6 +789,11 @@ function render() {
   });
   $('#fab').hidden = !(state.tab === 'austausch' && state.me);
 
+  if (!configured) {
+    view.innerHTML = `<div class="empty"><div class="big">🛠️</div><h2>Noch nicht eingerichtet</h2><p>In <code>config.js</code> fehlen die Supabase-Zugangsdaten. Siehe Anleitung in der README.</p></div>`;
+    return;
+  }
+
   switch (state.tab) {
     case 'austausch': return renderAustausch(view);
     case 'notizen': return renderPlaceholder(view, '📝', 'Notizen', 'Dieser Bereich kommt im nächsten Schritt.');
@@ -672,6 +809,7 @@ function setTab(tab) {
   const url = new URL(location.href);
   url.searchParams.set('tab', tab);
   url.searchParams.delete('msg');
+  url.searchParams.delete('code');
   history.replaceState(null, '', url);
   render();
   window.scrollTo(0, 0);
@@ -682,52 +820,80 @@ function setTab(tab) {
  * ---------------------------------------------------------------------- */
 
 async function loadUsers() {
-  state.users = await api('/api/users');
+  state.users = must(await sb.from('profiles').select('*')).map(mapProfile);
+  const me = state.me && userById(state.me.id);
+  if (me) state.me = me;
 }
 
 async function loadMessages() {
-  state.messages = await api('/api/messages');
+  state.messages = must(await sb.from('messages').select('*').order('created_at', { ascending: false })).map(mapMessage);
 }
 
-let stream;
-function startStream() {
-  if (stream || !state.token) return;
-  stream = new EventSource(`/api/stream?t=${encodeURIComponent(state.token)}`);
-  stream.addEventListener('message-created', (e) => {
-    const m = JSON.parse(e.data);
-    const fromOther = !state.me || m.authorId !== state.me.id;
-    upsertMessage(m);
-    if (fromOther && document.visibilityState === 'visible') {
-      toast(`💬 ${m.authorName}: ${m.title}`, () => {
-        state.highlight = m.id;
-        setTab('austausch');
-      });
-    }
-  });
-  stream.addEventListener('message-deleted', (e) => removeMessage(JSON.parse(e.data).id));
-  stream.addEventListener('users-changed', async () => {
-    await loadUsers();
-    const me = state.users.find((u) => state.me && u.id === state.me.id);
-    if (me) { state.me = me; renderProfileButton(); }
-    if (state.tab === 'team') render();
-  });
-  stream.addEventListener('open', () => {
-    // Nach Verbindungsabbruch alles neu laden
-    Promise.all([loadUsers(), loadMessages()]).then(render).catch(() => {});
-  });
+async function loadFamilyCode() {
+  state.familyCode = must(await sb.rpc('get_family_code'));
 }
 
-// Countdown-Anzeigen aktualisieren & abgelaufene lokal ausblenden
+async function refreshAll() {
+  try {
+    await Promise.all([loadUsers(), loadMessages()]);
+    renderProfileButton();
+    render();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+let channel;
+function startRealtime() {
+  if (channel) return;
+  channel = sb
+    .channel('familie')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, ({ new: row }) => {
+      const m = mapMessage(row);
+      const known = state.messages.some((x) => x.id === m.id);
+      upsertMessage(m);
+      const author = userById(m.authorId);
+      if (!known && state.me && m.authorId !== state.me.id && document.visibilityState === 'visible') {
+        toast(`💬 ${author ? fullName(author) : 'Neu'}: ${m.title}`, () => {
+          state.highlight = m.id;
+          setTab('austausch');
+        });
+      }
+    })
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, ({ old }) => removeMessage(old.id))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, async () => {
+      await loadUsers().catch(() => {});
+      renderProfileButton();
+      if (state.tab === 'team' || state.tab === 'austausch') render();
+    })
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') refreshAll();
+    });
+}
+
+// Countdown-Anzeigen aktualisieren & abgelaufene Nachrichten lokal ausblenden
 setInterval(() => {
-  const before = state.messages.length;
-  state.messages = state.messages.filter((m) => !m.deleteAt || Date.parse(m.deleteAt) > Date.now());
-  if (state.tab === 'austausch' && !$('.modal-backdrop')) render();
-  else if (before !== state.messages.length && state.tab === 'austausch') render();
+  if (state.me && state.tab === 'austausch' && !$('.modal-backdrop')) render();
 }, 30_000);
+
+// iOS beendet Verbindungen im Hintergrund – beim Zurückkehren neu laden
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && state.me) refreshAll();
+});
 
 /* -------------------------------------------------------------------------
  * Start
  * ---------------------------------------------------------------------- */
+
+async function startApp() {
+  renderProfileButton();
+  await Promise.all([loadUsers(), loadMessages(), loadFamilyCode()]).catch((e) => toast(e.message));
+  renderProfileButton();
+  render();
+  startRealtime();
+  syncPushSubscription();
+  if (!state.me.gender) openEditProfile();
+}
 
 async function init() {
   document.querySelectorAll('.tabbar button').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
@@ -739,7 +905,7 @@ async function init() {
   if (params.get('msg')) state.highlight = params.get('msg');
 
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js').catch((e) => console.warn('SW-Registrierung fehlgeschlagen', e));
+    navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW-Registrierung fehlgeschlagen', e));
     navigator.serviceWorker.addEventListener('message', (e) => {
       if (e.data && e.data.type === 'open-message') {
         state.highlight = e.data.id;
@@ -748,30 +914,28 @@ async function init() {
     });
   }
 
-  if (state.token) {
+  if (!configured) { render(); return; }
+
+  sb.auth.onAuthStateChange((_event, session) => { state.session = session; });
+  state.session = (await sb.auth.getSession()).data.session;
+
+  if (state.session) {
     try {
-      state.me = await api('/api/me');
+      const row = must(await sb.from('profiles').select('*').eq('id', state.session.user.id).maybeSingle());
+      if (row) state.me = mapProfile(row);
     } catch (e) {
-      if (e.status === 401) {
-        localStorage.removeItem(TOKEN_KEY);
-        state.token = null;
-      }
+      toast(e.message);
     }
   }
 
-  renderProfileButton();
-
   if (!state.me) {
     render();
-    openSetup();
+    if (isIos && !isStandalone) openInstallGuide();
+    else openSetup();
     return;
   }
 
-  await Promise.all([loadUsers(), loadMessages()]).catch((e) => toast(e.message));
-  render();
-  if (!state.me.gender) openEditProfile(); // ältere Konten: Geschlecht nachtragen
-  startStream();
-  syncPushSubscription();
+  await startApp();
 }
 
 init();
