@@ -70,6 +70,7 @@ jobs:
           window.FAMILIE_CONFIG = {
             supabaseUrl: 'https://${PROJECT_REF}.supabase.co',
             supabaseKey: '${SUPABASE_KEY}',
+            version: '${GITHUB_SHA::8}',
           };
           JS
           # Cache-Version des Service Workers pro Veröffentlichung erneuern

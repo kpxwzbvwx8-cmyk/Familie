@@ -4,4 +4,5 @@
 window.FAMILIE_CONFIG = {
   supabaseUrl: '',
   supabaseKey: '',
+  version: 'dev',
 };

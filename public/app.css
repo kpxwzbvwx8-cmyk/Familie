@@ -63,6 +63,15 @@ button, input, textarea, select { font: inherit; color: inherit; }
   width: 7px; height: 7px; border-radius: 50%; background: #fff; border: 2px solid #222;
 }
 
+.topbar-actions { display: flex; align-items: center; gap: 10px; }
+.update-btn {
+  width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); cursor: pointer; display: grid; place-items: center;
+}
+.update-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.update-btn.spinning svg { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
 .profile-btn {
   width: 42px; height: 42px; border-radius: 50%;
   border: 3px solid var(--surface);
@@ -361,3 +370,43 @@ fieldset.field { border: 0; padding: 0; margin: 0; }
   background: var(--text); color: var(--bg); border-radius: 12px; padding: 10px 14px;
   box-shadow: var(--shadow); font-size: .9rem; animation: slide .2s ease; cursor: pointer;
 }
+
+/* ---------- Ei & Trainer-Memo ---------- */
+.egg-tile {
+  --c: #9ccd83; --c-light: #fff6de;
+  color: #2d3b22; text-shadow: none;
+}
+.egg-tile .avatar { background: #fff; border-color: #9ccd83; overflow: hidden; }
+.egg-tile .avatar .sprite { height: 30px; width: auto; }
+
+.memo {
+  border-radius: 12px; overflow: hidden;
+  background: #cfe0f0; border: 3px solid #3d6aa8;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: #303040;
+}
+.memo-head {
+  background: linear-gradient(#5d97e0, #3d74c4); color: #fff; font-weight: 800; letter-spacing: .1em;
+  padding: 8px 14px; text-shadow: 1px 1px 0 #284f8a; border-bottom: 3px solid #284f8a;
+}
+.memo-body { display: grid; grid-template-columns: 38% 1fr; gap: 8px; padding: 10px; }
+.memo-left { display: grid; gap: 8px; align-content: start; }
+.memo-name {
+  display: flex; align-items: center; gap: 8px; background: #3d4a5c; color: #fff; font-weight: 800;
+  border-radius: 0 10px 10px 0; padding: 5px 10px; border: 2px solid #1f2733;
+}
+.memo-name .ball { width: 16px; height: 16px; }
+.memo-name .ball::after { width: 4px; height: 4px; border-width: 1.5px; }
+.memo-egg { display: grid; place-items: center; background: #e0e8e8; border-radius: 10px; padding: 18px 0; }
+.memo-egg .sprite { width: 64px; height: auto; }
+.memo-item { display: grid; background: #f2f6f8; border-radius: 8px; padding: 4px 8px; font-size: .78rem; text-align: center; }
+.memo-item b { font-size: .95rem; }
+.memo-right {
+  background: #e8f0f4; border: 3px solid #3d74c4; border-radius: 12px; padding: 6px 10px;
+  font-size: .82rem; line-height: 1.75;
+  background-image: repeating-linear-gradient(transparent 0 calc(1.75em - 1px), #b8c8d4 calc(1.75em - 1px) 1.75em);
+  background-origin: content-box; background-clip: padding-box;
+}
+.memo-right p { margin: 0; }
+.memo-red { color: #e03030; }
+.memo-xp { margin: 0 10px 10px; }
+.egg-fill { background: linear-gradient(#c6ec9c, #7cb85e); }

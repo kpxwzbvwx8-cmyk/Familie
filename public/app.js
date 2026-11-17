@@ -744,7 +744,7 @@ function renderTeam(view) {
         <span class="meta">ID ${esc(u.trainerId)} · Lv. ${age.years}</span>
       </button>`;
     })
-    .join('')}</div>`;
+    .join('')}${eggTileHtml()}</div>`;
   const invite = state.familyCode
     ? `<div class="invite">
         <div><span class="hint">Familien-Code zum Einladen</span><div class="code">${esc(state.familyCode)}</div></div>
@@ -755,6 +755,8 @@ function renderTeam(view) {
   view.querySelectorAll('[data-user]').forEach((b) =>
     b.addEventListener('click', () => openTrainerCard(userById(b.dataset.user)))
   );
+  const egg = view.querySelector('[data-egg]');
+  if (egg) egg.addEventListener('click', openEggMemo);
   const share = $('#share-invite', view);
   if (share) share.addEventListener('click', async () => {
     const text = `Komm in unsere Familien-App! Familien-Code: ${state.familyCode}`;
@@ -764,6 +766,115 @@ function renderTeam(view) {
       else { await navigator.clipboard.writeText(`${text}\n${url}`); toast('Einladung kopiert 📋'); }
     } catch { /* abgebrochen */ }
   });
+}
+
+/* -------------------------------------------------------------------------
+ * Das Ei (Platzhalter-Konto für die kommende Tochter)
+ * ---------------------------------------------------------------------- */
+
+const EGG = {
+  name: '???',
+  due: '2027-03-14', // errechneter Entbindungstermin
+  from: 'Mama & Papa',
+};
+
+// Die vier Stufen der „Ei-Uhr“ aus dem Spiel (Gen. III/IV), auf die Schwangerschaft gelegt:
+//  bis 27+6 SSW  → „wird noch lange dauern“          (Spiel: > 40 Ei-Zyklen übrig)
+//  ab 28+0 SSW   → „scheint noch nicht so weit“      (3. Trimester;   11–40 Zyklen)
+//  ab 37+0 SSW   → „bewegt sich ab und zu“           (ab termingerecht; 6–10 Zyklen)
+//  ab 39+0 SSW   → „Geräusche … schlüpft bald!“      (letzte Woche;   ≤ 5 Zyklen)
+const EGG_STAGES = [
+  { week: 0, text: 'Es sieht so aus, als würde es noch sehr lange dauern, bis dieses Ei schlüpft.' },
+  { week: 28, text: 'Was wohl daraus schlüpfen wird? Es scheint noch nicht kurz vorm Schlüpfen zu sein.' },
+  { week: 37, text: 'Es bewegt sich ab und zu. Vielleicht schlüpft es bald.' },
+  { week: 39, text: 'Aus dem Inneren sind Geräusche zu hören! Es schlüpft bald!' },
+];
+
+function eggInfo(now = new Date()) {
+  const due = parseBirthday(EGG.due);
+  const start = new Date(due.getFullYear(), due.getMonth(), due.getDate() - 280); // 40 Wochen vor ET
+  const days = Math.max(0, daysBetween(start, now));
+  const week = Math.floor(days / 7);
+  const stage = EGG_STAGES.filter((s) => week >= s.week).pop();
+  return {
+    due,
+    days,
+    ssw: `${week}+${days % 7}`,
+    remaining: daysBetween(now, due),
+    pct: Math.min(100, (days / 280) * 100),
+    text: stage.text,
+  };
+}
+
+function eggTileHtml() {
+  const e = eggInfo();
+  return `<button class="team-tile egg-tile" data-egg>
+    <span class="avatar"><img class="sprite" src="img/egg.png" alt=""></span>
+    <span class="name">${esc(EGG.name)}</span>
+    <span class="meta">SSW ${esc(e.ssw)} · ${e.remaining > 0 ? `noch ${e.remaining} T` : 'jeden Moment!'}</span>
+  </button>`;
+}
+
+function openEggMemo() {
+  const e = eggInfo();
+  openModal(
+    `<div class="modal-head"><h2>Trainer-Memo</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+     <article class="memo" aria-label="Trainer-Memo des Eies">
+       <div class="memo-head">TRAINER-MEMO</div>
+       <div class="memo-body">
+         <div class="memo-left">
+           <div class="memo-name"><span class="ball"></span>Ei</div>
+           <div class="memo-egg"><img class="sprite" src="img/egg.png" alt="Ei"></div>
+           <div class="memo-item"><span>Name</span><b>${esc(EGG.name)}</b></div>
+         </div>
+         <div class="memo-right">
+           <p>${esc(formatDate(e.due))}</p>
+           <p>Ein geheimnisvolles Ei,</p>
+           <p>erhalten von <span class="memo-red">${esc(EGG.from)}</span>.</p>
+           <p>&nbsp;</p>
+           <p>„Die Ei-Uhr“</p>
+           <p class="memo-watch">${esc(e.text)}</p>
+         </div>
+       </div>
+       <div class="xp memo-xp">
+         <div class="xp-line"><span>SSW ${esc(e.ssw)}</span><span>${Math.min(e.days, 280)} / 280 Tage</span></div>
+         <div class="xp-bar"><div class="xp-fill egg-fill" style="width:${e.pct.toFixed(1)}%"></div></div>
+         <div class="xp-sub">${e.remaining > 0 ? `Noch ${e.remaining} Tage bis zum Schlupftermin` : 'Der Schlupftermin ist erreicht! 🐣'}</div>
+       </div>
+     </article>`
+  );
+}
+
+/* -------------------------------------------------------------------------
+ * Update-Prüfung
+ * ---------------------------------------------------------------------- */
+
+async function checkForUpdate() {
+  const btn = $('#update-btn');
+  if (btn.classList.contains('spinning')) return;
+  btn.classList.add('spinning');
+  try {
+    const res = await fetch(`config.js?check=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) throw new Error('offline');
+    const m = (await res.text()).match(/version:\s*'([^']*)'/);
+    const remote = m ? m[1] : null;
+    if (remote && remote !== CFG.version) {
+      toast('Neue Version gefunden – wird installiert …');
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (reg) await reg.update().catch(() => {});
+      }
+      if (window.caches) await Promise.all((await caches.keys()).map((k) => caches.delete(k)));
+      setTimeout(() => location.reload(), 600);
+      return;
+    }
+    if (state.me) await refreshAll();
+    toast('Alles aktuell ✓');
+  } catch {
+    toast('Update-Prüfung fehlgeschlagen – bist du online?');
+  } finally {
+    btn.classList.remove('spinning');
+  }
 }
 
 /* -------------------------------------------------------------------------
@@ -788,6 +899,7 @@ function render() {
     else b.removeAttribute('aria-current');
   });
   $('#fab').hidden = !(state.tab === 'austausch' && state.me);
+  $('#update-btn').hidden = state.tab !== 'austausch';
 
   if (!configured) {
     view.innerHTML = `<div class="empty"><div class="big">🛠️</div><h2>Noch nicht eingerichtet</h2><p>In <code>config.js</code> fehlen die Supabase-Zugangsdaten. Siehe Anleitung in der README.</p></div>`;
@@ -899,6 +1011,7 @@ async function init() {
   document.querySelectorAll('.tabbar button').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
   $('#profile-btn').addEventListener('click', () => state.me && openTrainerCard(state.me));
   $('#fab').addEventListener('click', openNewMessage);
+  $('#update-btn').addEventListener('click', checkForUpdate);
 
   const params = new URLSearchParams(location.search);
   if (TABS[params.get('tab')]) state.tab = params.get('tab');

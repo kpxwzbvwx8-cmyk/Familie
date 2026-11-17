@@ -2,7 +2,7 @@
 const CACHE = 'familie-v3';
 const SHELL = [
   './', 'index.html', 'app.css', 'app.js', 'config.js', 'vendor/supabase.js', 'manifest.webmanifest',
-  'icons/icon.svg', 'icons/icon-192.png', 'img/trainer-m.png', 'img/trainer-w.png',
+  'icons/icon.svg', 'icons/icon-192.png', 'img/trainer-m.png', 'img/trainer-w.png', 'img/egg.png',
 ];
 
 self.addEventListener('install', (e) => {
