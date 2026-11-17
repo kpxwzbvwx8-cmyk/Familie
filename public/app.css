@@ -543,3 +543,8 @@ select {
 /* Trainer-Memo ohne Figur: eine Spalte, Status mit mehr Platz */
 .memo-trainer .memo-body { grid-template-columns: 1fr; }
 .memo-trainer .memo-name { border-radius: 0 10px 10px 0; justify-self: start; min-width: 60%; }
+
+/* ---------- Pokémon-Konten ---------- */
+.gender-svg { display: inline-block; vertical-align: -2px; filter: drop-shadow(0 0 1px #fff); }
+.pokemon-tile .avatar { background: rgba(255,255,255,.55); }
+.pokemon-tile .avatar .sprite { height: 38px; width: auto; align-self: center; margin: 0; }

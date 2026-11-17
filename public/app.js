@@ -230,7 +230,43 @@ function colorVars(hex) {
 }
 
 function initials(u) {
-  return ((u.firstName || '?')[0] + (u.lastName || '')[0]).toUpperCase();
+  return ((u.firstName || '?')[0] + ((u.lastName || '')[0] || '')).toUpperCase();
+}
+
+/* -------------------------------------------------------------------------
+ * Pokémon-Konten (fest hinterlegt, ohne Anmeldung)
+ * ---------------------------------------------------------------------- */
+
+const POKEMON = [
+  {
+    id: 'pokemon-speedy',
+    kind: 'pokemon',
+    trainerId: '15616',
+    firstName: 'Speedy',
+    lastName: '',
+    gender: 'm',
+    sprite: 'img/speedy.png',
+    color: '#8d6e63', // braun
+    birthday: '2016-06-15',
+    strikes: 0,
+    nature: 'Sanft',
+    region: 'Kanto',
+    loves: 'Essen und Schlafen',
+    flavor: 'bitter',
+    statusText: '',
+  },
+];
+
+function pokemonById(id) {
+  return POKEMON.find((p) => p.id === id);
+}
+
+/** Geschlechtssymbol wie im Spiel: blaues ♂ bzw. rotes ♀ */
+function genderSvg(g) {
+  if (g === 'm') {
+    return '<svg class="gender-svg" viewBox="0 0 16 16" width="14" height="14" aria-label="männlich"><circle cx="6.5" cy="9.5" r="4" fill="none" stroke="#3b7dd8" stroke-width="2.2"/><path d="M9.5 6.5 14 2M9.6 2H14v4.4" fill="none" stroke="#3b7dd8" stroke-width="2.2" stroke-linecap="square"/></svg>';
+  }
+  return '<svg class="gender-svg" viewBox="0 0 16 16" width="14" height="14" aria-label="weiblich"><circle cx="8" cy="6" r="4" fill="none" stroke="#e0457b" stroke-width="2.2"/><path d="M8 10v5M5 12.7h6" fill="none" stroke="#e0457b" stroke-width="2.2"/></svg>';
 }
 
 function fullName(u) {
@@ -254,6 +290,7 @@ const TRAINER_SVG = `
 const SPRITES = { m: 'img/trainer-m.png', w: 'img/trainer-w.png' };
 
 function avatarHtml(u) {
+  if (u.sprite) return `<img class="sprite" src="${esc(u.sprite)}" alt="">`;
   return SPRITES[u.gender]
     ? `<img class="sprite" src="${SPRITES[u.gender]}" alt="">`
     : TRAINER_SVG;
@@ -273,19 +310,20 @@ function trainerCardHtml(u) {
   const pct = xp ? Math.min(100, (xp.xp / xp.total) * 100) : 0;
   const spielzeit = age ? `${age.years} J ${age.months} M ${age.weeks} W ${age.days} T` : '–';
   const name = fullName(u) || '–';
+  const isPokemon = u.kind === 'pokemon';
 
   return `
   <article class="tcard" style="${colorVars(u.color || '#d63b3b')}" aria-label="Trainerpass von ${esc(name)}">
-    <div class="tcard-head"><span class="ball"></span>TRAINERPASS<span class="ball"></span></div>
+    <div class="tcard-head"><span class="ball"></span>${isPokemon ? 'POKÉMON-PASS' : 'TRAINERPASS'}<span class="ball"></span></div>
     <div class="tcard-top">
       <div class="tcard-rows">
         <div class="trow"><span class="k">ID Nr.</span><span class="v">${esc(u.trainerId || '?????')}</span></div>
-        <div class="trow"><span class="k">Trainer</span><span class="v">${esc(name)}</span></div>
+        <div class="trow"><span class="k">${isPokemon ? 'Name' : 'Trainer'}</span><span class="v">${esc(name)}${isPokemon ? ' ' + genderSvg(u.gender) : ''}</span></div>
         <div class="trow strikes"><span class="k">Striche</span><span class="v">${esc(strikesLabel(u.strikes || 0))}</span></div>
       </div>
       <div class="tcard-avatar">
         ${avatarHtml(u)}
-        <span class="initials">${esc(initials(u))}</span>
+        ${isPokemon ? '' : `<span class="initials">${esc(initials(u))}</span>`}
       </div>
     </div>
     <div class="tcard-bottom">
@@ -565,8 +603,9 @@ function trainerMemoHtml(u) {
 
 function openTrainerCard(user) {
   const isMe = state.me && user.id === state.me.id;
+  const title = user.kind === 'pokemon' ? 'Pokémon' : isMe ? 'Mein Trainerpass' : 'Trainerpass';
   openModal(
-    `<div class="modal-head"><h2>${isMe ? 'Mein Trainerpass' : 'Trainerpass'}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+    `<div class="modal-head"><h2>${title}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
      <div class="card-stack">
        ${trainerCardHtml(user)}
        ${trainerMemoHtml(user)}
@@ -820,6 +859,15 @@ function inviteLink() {
   return url.toString();
 }
 
+function pokemonTileHtml(p) {
+  const age = ageParts(parseBirthday(p.birthday));
+  return `<button class="team-tile pokemon-tile" data-pokemon="${esc(p.id)}" style="${colorVars(p.color)}">
+    <span class="avatar"><img class="sprite" src="${esc(p.sprite)}" alt=""></span>
+    <span class="name">${esc(p.firstName)} ${genderSvg(p.gender)}</span>
+    <span class="meta">Pokémon · Lv. ${age.years}</span>
+  </button>`;
+}
+
 function renderTeam(view) {
   const users = state.users.slice().sort((a, b) => fullName(a).localeCompare(fullName(b), 'de'));
   const grid = `<div class="team-grid">${users
@@ -831,7 +879,7 @@ function renderTeam(view) {
         <span class="meta">ID ${esc(u.trainerId)} · Lv. ${age.years}</span>
       </button>`;
     })
-    .join('')}${eggTileHtml()}</div>`;
+    .join('')}${POKEMON.map(pokemonTileHtml).join('')}${eggTileHtml()}</div>`;
   const invite = state.familyCode
     ? `<div class="invite">
         <div><span class="hint">Familien-Code zum Einladen</span><div class="code">${esc(state.familyCode)}</div></div>
@@ -841,6 +889,9 @@ function renderTeam(view) {
   view.innerHTML = grid + invite;
   view.querySelectorAll('[data-user]').forEach((b) =>
     b.addEventListener('click', () => openTrainerCard(userById(b.dataset.user)))
+  );
+  view.querySelectorAll('[data-pokemon]').forEach((b) =>
+    b.addEventListener('click', () => openTrainerCard(pokemonById(b.dataset.pokemon)))
   );
   const egg = view.querySelector('[data-egg]');
   if (egg) egg.addEventListener('click', openEggMemo);
