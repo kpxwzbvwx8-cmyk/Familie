@@ -402,6 +402,9 @@ function renderProfileButton() {
  * Benachrichtigungen
  * ---------------------------------------------------------------------- */
 
+const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+
 const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 
 function urlBase64ToUint8Array(base64) {
@@ -412,7 +415,9 @@ function urlBase64ToUint8Array(base64) {
 
 async function enablePush() {
   if (!pushSupported) {
-    toast('Dieses Gerät/dieser Browser unterstützt keine Push-Benachrichtigungen. Auf dem iPhone: App zuerst zum Home-Bildschirm hinzufügen.');
+    toast(isIos
+      ? 'Auf dem iPhone gehen Benachrichtigungen nur, wenn die App über „Zum Home-Bildschirm“ installiert wurde (ab iOS 16.4).'
+      : 'Dieses Gerät/dieser Browser unterstützt keine Push-Benachrichtigungen.');
     return;
   }
   const perm = await Notification.requestPermission();
@@ -471,9 +476,12 @@ function messageHtml(m) {
 
 function renderAustausch(view) {
   const showBanner = pushSupported ? Notification.permission === 'default' : false;
-  const banner = showBanner
-    ? `<div class="notify-banner"><p>🔔 Benachrichtigungen aktivieren, damit du neue Nachrichten sofort mitbekommst.</p><button class="btn primary small" id="enable-push">Aktivieren</button></div>`
+  const installHint = isIos && !isStandalone
+    ? `<div class="notify-banner install"><p>📲 <b>Auf dem iPhone installieren:</b> Unten in Safari auf <b>Teilen</b> <span class="share-icon" aria-hidden="true">⬆︎</span> tippen → <b>„Zum Home-Bildschirm“</b>. Danach die App über das neue Symbol öffnen – nur so funktionieren Benachrichtigungen.</p></div>`
     : '';
+  const banner = installHint + (showBanner
+    ? `<div class="notify-banner"><p>🔔 Benachrichtigungen aktivieren, damit du neue Nachrichten sofort mitbekommst.</p><button class="btn primary small" id="enable-push">Aktivieren</button></div>`
+    : '');
   const list = state.messages.length
     ? `<div class="msg-list">${state.messages.map(messageHtml).join('')}</div>`
     : `<div class="empty"><div class="big">💬</div><h2>Noch nichts im Austausch</h2><p>Tippe auf <b>+</b>, um eine Nachricht an alle zu schicken.</p></div>`;
