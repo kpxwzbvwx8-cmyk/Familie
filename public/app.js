@@ -47,7 +47,6 @@ const NATURES = [
 ].sort((a, b) => a.localeCompare(b, 'de'));
 const STATUS_MAX = 60; // kurz halten, damit das Memo nicht zerfällt
 const FLAVORS = { scharf: 'scharfes', trocken: 'trockenes', 'süß': 'süßes', bitter: 'bitteres', sauer: 'saures' };
-const REGIONS = ['Kanto', 'Johto', 'Hoenn', 'Sinnoh', 'Einall', 'Kalos', 'Alola', 'Galar', 'Hisui', 'Paldea'];
 
 /** Ball als kleines SVG (eigene Zeichnung) */
 function ballSvg(kind, size = 22) {
@@ -403,10 +402,9 @@ function memoFieldsHtml(u) {
   return `
     <fieldset class="field memo-fields">
       <legend>Trainer-Memo</legend>
-      <div class="row2">
-        <label class="field"><span>Wesen</span><select name="nature">${opts(NATURES, u.nature)}</select></label>
-        <label class="field"><span>Herkunft (Region)</span><select name="region">${opts(REGIONS, u.region)}</select></label>
-      </div>
+      <label class="field"><span>Wesen</span><select name="nature">${opts(NATURES, u.nature)}</select></label>
+      <label class="field"><span>Geburtsort</span><input name="region" maxlength="40" placeholder="z. B. Hamburg" value="${esc(u.region || '')}">
+        <p class="hint">Frei eintragbar – steht im Memo an der Stelle der Region (wie „Kanto“ im Spiel).</p></label>
       <label class="field"><span>Liebt …</span><input name="loves" maxlength="60" placeholder="z. B. Kämpfe" value="${esc(u.loves || '')}"></label>
       <label class="field"><span>Mag … Essen</span><select name="flavor">${opts(Object.keys(FLAVORS), u.flavor, (k) => FLAVORS[k][0].toUpperCase() + FLAVORS[k].slice(1) + ' Essen')}</select></label>
       <label class="field"><span>Status</span><input name="statusText" maxlength="${STATUS_MAX}" placeholder="z. B. Im Urlaub 🌴" value="${esc(u.statusText || '')}"></label>
@@ -437,7 +435,7 @@ function mountProfileForm(modal, close, base) {
       gender: f.get('gender'),
       color: f.get('color'),
       nature: f.get('nature') || '',
-      region: f.get('region') || '',
+      region: (f.get('region') || '').trim(),
       loves: (f.get('loves') || '').trim(),
       flavor: f.get('flavor') || '',
       statusText: (f.get('statusText') || '').trim(),
@@ -561,8 +559,8 @@ function trainerMemoHtml(u) {
         <p>Wesen: ${u.nature ? red(u.nature) : '???'}</p>
         <p>${birth ? esc(formatDate(birth)) : '–'}</p>
         <p>${u.region ? red(u.region) : '???'}</p>
-        <p>Liebt ${esc(u.loves || '…')}.</p>
-        <p>Mag ${u.flavor ? red(FLAVORS[u.flavor]) : '…'} Essen.</p>
+        <p>${u.loves ? `Liebt ${esc(u.loves)}.` : 'Liebt …'}</p>
+        <p>${u.flavor ? `Mag ${red(FLAVORS[u.flavor])} Essen.` : 'Mag … Essen.'}</p>
         <p>&nbsp;</p>
         <p>Status:</p>
         <p class="memo-status-text">${esc(u.statusText || '–')}</p>
