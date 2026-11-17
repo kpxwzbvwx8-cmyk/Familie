@@ -535,7 +535,11 @@ select {
 /* Memo: Status rechts */
 .memo-status { display: block; }
 .memo-status-text {
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
   overflow-wrap: anywhere;
 }
 .memo-avatar .sprite { height: 112px; }
+
+/* Trainer-Memo ohne Figur: eine Spalte, Status mit mehr Platz */
+.memo-trainer .memo-body { grid-template-columns: 1fr; }
+.memo-trainer .memo-name { border-radius: 0 10px 10px 0; justify-self: start; min-width: 60%; }

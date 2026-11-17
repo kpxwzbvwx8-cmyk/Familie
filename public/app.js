@@ -45,7 +45,7 @@ const NATURES = [
   'Frech', 'Lasch', 'Hitzig', 'Kauzig', 'Naiv',
   'Mutig', 'Locker', 'Ruhig', 'Forsch', 'Ernst',
 ].sort((a, b) => a.localeCompare(b, 'de'));
-const STATUS_MAX = 60; // kurz halten, damit das Memo nicht zerfällt
+const STATUS_MAX = 120; // kurz halten, damit das Memo nicht zerfällt
 const FLAVORS = { scharf: 'scharfes', trocken: 'trockenes', 'süß': 'süßes', bitter: 'bitteres', sauer: 'saures' };
 
 /** Ball als kleines SVG (eigene Zeichnung) */
@@ -545,19 +545,14 @@ function openEditProfile() {
 }
 
 function trainerMemoHtml(u) {
-  const birth = u.birthday ? parseBirthday(u.birthday) : null;
   const red = (t) => `<span class="memo-red">${esc(t)}</span>`;
   return `
-  <article class="memo" aria-label="Trainer-Memo von ${esc(fullName(u))}">
+  <article class="memo memo-trainer" aria-label="Trainer-Memo von ${esc(fullName(u))}">
     <div class="memo-head">TRAINER-MEMO</div>
     <div class="memo-body">
-      <div class="memo-left">
-        <div class="memo-name"><span class="ball"></span>${esc(u.firstName || '')}</div>
-        <div class="memo-egg memo-avatar" style="${colorVars(u.color || '#888888')}">${avatarHtml(u)}</div>
-      </div>
+      <div class="memo-name"><span class="ball"></span>${esc(fullName(u))}</div>
       <div class="memo-right">
         <p>Wesen: ${u.nature ? red(u.nature) : '???'}</p>
-        <p>${birth ? esc(formatDate(birth)) : '–'}</p>
         <p>${u.region ? red(u.region) : '???'}</p>
         <p>${u.loves ? `Liebt ${esc(u.loves)}.` : 'Liebt …'}</p>
         <p>${u.flavor ? `Mag ${red(FLAVORS[u.flavor])} Essen.` : 'Mag … Essen.'}</p>
