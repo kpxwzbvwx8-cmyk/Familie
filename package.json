@@ -1,0 +1,16 @@
+{
+  "name": "familie",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Familien-App mit Trainerpass, Austausch, Notizen, Kalender, Board der Schande und Team",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "web-push": "3.6.7"
+  }
+}
