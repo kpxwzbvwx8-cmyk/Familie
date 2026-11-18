@@ -21,17 +21,19 @@ const state = {
   users: [],
   messages: [],
   familyCode: null,
-  tab: 'austausch',
+  tab: 'start',
   highlight: null,
 };
 
 const TABS = {
-  austausch: 'Austausch',
+  start: 'Start',
+  team: 'Team',
   notizen: 'Notizen',
   kalender: 'Kalender',
+  einstellungen: 'Einstellungen',
   schande: 'Board der Schande',
-  team: 'Team',
 };
+const TAB_ALIASES = { austausch: 'start' }; // alte Links (z. B. aus Benachrichtigungen)
 
 const URGENCIES = [
   { key: 'info', label: 'Info', ball: 'master', ballName: 'Meisterball' },
@@ -651,11 +653,8 @@ function openTrainerCard(user) {
 }
 
 function renderProfileButton() {
-  const btn = $('#profile-btn');
-  if (!state.me) { btn.hidden = true; return; }
-  btn.hidden = false;
-  btn.textContent = initials(state.me);
-  btn.style.setProperty('--user-color', state.me.color);
+  const label = $('#menu-me');
+  if (label) label.textContent = state.me ? state.me.firstName : 'Profil';
 }
 
 /* -------------------------------------------------------------------------
@@ -726,9 +725,9 @@ function messageHtml(m) {
     <h3>${esc(m.title)}</h3>
     ${m.description ? `<p class="desc">${esc(m.description)}</p>` : ''}
     <div class="msg-meta">
-      <span class="author"><span class="dot" style="--c:${esc(author ? author.color : '#888888')}"></span>${esc(author ? fullName(author) : 'Unbekannt')} · ${esc(relative(m.createdAt))}</span>
+      <span class="author"><span class="dot" style="--c:${esc(author ? author.color : '#888888')}"></span>${esc(author ? fullName(author) : 'Unbekannt')} · <span data-rel="${esc(m.createdAt)}">${esc(relative(m.createdAt))}</span></span>
       ${m.eventAt ? `<span>🕒 Zeitpunkt: ${esc(formatDateTime(m.eventAt))}</span>` : ''}
-      ${m.deleteAt ? `<span>🗑️ Löscht sich ${esc(relative(m.deleteAt))} (${esc(formatDateTime(m.deleteAt))})</span>` : ''}
+      ${m.deleteAt ? `<span>🗑️ Löscht sich <span data-rel="${esc(m.deleteAt)}">${esc(relative(m.deleteAt))}</span> (${esc(formatDateTime(m.deleteAt))})</span>` : ''}
     </div>
     <div class="msg-actions">
       <a class="btn small" href="${esc(icsUrl(m))}" target="_blank" rel="noopener" title="In Kalender übernehmen">📅 In Kalender</a>
@@ -871,12 +870,12 @@ function upsertMessage(m) {
   if (i >= 0) state.messages[i] = m;
   else state.messages.unshift(m);
   state.messages.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-  if (state.tab === 'austausch') render();
+  if (state.tab === 'start') render();
 }
 
 function removeMessage(id) {
   state.messages = state.messages.filter((m) => m.id !== id);
-  if (state.tab === 'austausch') render();
+  if (state.tab === 'start') render();
 }
 
 /* -------------------------------------------------------------------------
@@ -1029,8 +1028,10 @@ function isDark() {
 function syncThemeToggle() {
   const dark = isDark();
   const btn = $('#theme-toggle');
-  btn.setAttribute('aria-checked', String(dark));
-  btn.title = dark ? 'Dunkel – tippen für hell' : 'Hell – tippen für dunkel';
+  if (btn) {
+    btn.setAttribute('aria-checked', String(dark));
+    btn.title = dark ? 'Dunkel – tippen für hell' : 'Hell – tippen für dunkel';
+  }
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = dark ? '#212128' : '#ffffff';
 }
@@ -1040,6 +1041,102 @@ function toggleTheme() {
   document.documentElement.dataset.theme = next;
   try { localStorage.setItem('familie.theme', next); } catch { /* privat */ }
   syncThemeToggle();
+}
+
+/* -------------------------------------------------------------------------
+ * Menü (X-Knopf)
+ * ---------------------------------------------------------------------- */
+
+function openMenu() {
+  const menu = $('#menu');
+  if (!menu.hidden && !menu.classList.contains('closing')) return;
+  renderProfileButton();
+  menu.classList.remove('closing');
+  $('#menu-backdrop').hidden = false;
+  menu.hidden = false;
+  // Startpunkt der Animation: der X-Knopf
+  const b = $('#menu-btn').getBoundingClientRect();
+  const m = menu.getBoundingClientRect();
+  menu.style.setProperty('--ox', `${b.left + b.width / 2 - m.left}px`);
+  menu.style.setProperty('--oy', `${b.top + b.height / 2 - m.top}px`);
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    menu.classList.add('open');
+    $('#menu-backdrop').classList.add('open');
+  }));
+  $('#menu-btn').setAttribute('aria-expanded', 'true');
+  document.body.classList.add('menu-open');
+}
+
+function closeMenu(after) {
+  const menu = $('#menu');
+  if (menu.hidden) { if (after) after(); return; }
+  menu.classList.remove('open');
+  menu.classList.add('closing');
+  $('#menu-backdrop').classList.remove('open');
+  $('#menu-btn').setAttribute('aria-expanded', 'false');
+  document.body.classList.remove('menu-open');
+  setTimeout(() => {
+    if (menu.classList.contains('closing')) {
+      menu.hidden = true;
+      menu.classList.remove('closing');
+      $('#menu-backdrop').hidden = true;
+    }
+  }, 280);
+  if (after) setTimeout(after, 140);
+}
+
+function setupMenu() {
+  $('#menu-btn').addEventListener('click', () => ($('#menu').hidden || $('#menu').classList.contains('closing') ? openMenu() : closeMenu()));
+  $('#menu-back').addEventListener('click', () => closeMenu());
+  $('#menu-backdrop').addEventListener('click', () => closeMenu());
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('#menu').hidden) closeMenu();
+  });
+  $('#menu').querySelectorAll('[data-go]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const go = b.dataset.go;
+      closeMenu(() => {
+        if (go === 'profil') { if (state.me) openTrainerCard(state.me); }
+        else setTab(go);
+      });
+    })
+  );
+}
+
+/* -------------------------------------------------------------------------
+ * Einstellungen
+ * ---------------------------------------------------------------------- */
+
+function renderSettings(view) {
+  const dark = isDark();
+  const pushState = !pushSupported ? 'nicht verfügbar' : Notification.permission === 'granted' ? 'aktiv' : Notification.permission === 'denied' ? 'blockiert' : 'aus';
+  view.innerHTML = `
+    <div class="settings">
+      <div class="setting-row">
+        <div><b>Anzeigemodus</b><p class="hint">${dark ? 'Dunkel' : 'Hell'}</p></div>
+        <button id="theme-toggle" class="theme-toggle" type="button" role="switch" aria-checked="${dark}" aria-label="Dunkelmodus">
+          <svg class="tt-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="currentColor"/><g stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 1.5v2.5M12 20v2.5M1.5 12h2.5M20 12h2.5M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M4.6 19.4l1.8-1.8M17.6 6.4l1.8-1.8"/></g></svg>
+          <svg class="tt-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z" fill="currentColor"/></svg>
+          <span class="tt-knob"></span>
+        </button>
+      </div>
+      <div class="setting-row">
+        <div><b>Benachrichtigungen</b><p class="hint">${pushState}</p></div>
+        ${pushSupported && Notification.permission === 'default' ? '<button class="btn small primary" id="set-push">Aktivieren</button>' : ''}
+      </div>
+      ${state.me ? `<div class="setting-row">
+        <div><b>Profil</b><p class="hint">${esc(fullName(state.me))}</p></div>
+        <button class="btn small" id="set-profile">Bearbeiten</button>
+      </div>` : ''}
+      <div class="setting-row">
+        <div><b>App-Version</b><p class="hint">${esc(CFG.version || 'dev')}</p></div>
+        <button class="btn small" id="set-update">Nach Updates suchen</button>
+      </div>
+    </div>`;
+  $('#theme-toggle', view).addEventListener('click', () => { toggleTheme(); render(); });
+  const push = $('#set-push', view); if (push) push.addEventListener('click', enablePush);
+  const prof = $('#set-profile', view); if (prof) prof.addEventListener('click', openEditProfile);
+  $('#set-update', view).addEventListener('click', checkForUpdate);
 }
 
 /* -------------------------------------------------------------------------
@@ -1060,15 +1157,31 @@ async function hardRefresh(version) {
   setTimeout(() => location.replace(url.toString()), 400);
 }
 
+async function fetchRemoteVersion() {
+  const res = await fetch(`config.js?check=${Date.now()}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error('offline');
+  const m = (await res.text()).match(/version:\s*'([^']*)'/);
+  return m ? m[1] : null;
+}
+
+/** Leise im Hintergrund prüfen: Gibt es eine neue Version, wackelt der Pokéball. */
+async function pollForUpdate() {
+  try {
+    const remote = await fetchRemoteVersion();
+    const available = Boolean(remote && CFG.version && remote !== CFG.version);
+    const btn = $('#update-btn');
+    btn.classList.toggle('has-update', available);
+    btn.title = available ? 'Neues Update – antippen zum Installieren' : 'App ist aktuell';
+    btn.setAttribute('aria-label', btn.title);
+  } catch { /* offline – später erneut */ }
+}
+
 async function checkForUpdate() {
   const btn = $('#update-btn');
-  if (btn.classList.contains('spinning')) return;
-  btn.classList.add('spinning');
+  if (btn.classList.contains('busy')) return;
+  btn.classList.add('busy');
   try {
-    const res = await fetch(`config.js?check=${Date.now()}`, { cache: 'no-store' });
-    if (!res.ok) throw new Error('offline');
-    const m = (await res.text()).match(/version:\s*'([^']*)'/);
-    const remote = m ? m[1] : null;
+    const remote = await fetchRemoteVersion();
     if (remote && remote !== CFG.version) {
       toast('Neue Version gefunden – wird installiert …');
       await hardRefresh(remote);
@@ -1079,7 +1192,7 @@ async function checkForUpdate() {
   } catch {
     toast('Update-Prüfung fehlgeschlagen – bist du online?');
   } finally {
-    btn.classList.remove('spinning');
+    btn.classList.remove('busy');
   }
 }
 
@@ -1098,14 +1211,8 @@ function renderPlaceholder(view, icon, title, text) {
 function render() {
   const view = $('#view');
   $('#tab-title').textContent = TABS[state.tab];
-  document.querySelectorAll('.tabbar button').forEach((b) => {
-    const active = b.dataset.tab === state.tab;
-    b.classList.toggle('active', active);
-    if (active) b.setAttribute('aria-current', 'page');
-    else b.removeAttribute('aria-current');
-  });
-  $('#fab').hidden = !(state.tab === 'austausch' && state.me);
-  $('#update-btn').hidden = state.tab !== 'austausch';
+  document.title = state.tab === 'start' ? 'Familie' : `${TABS[state.tab]} · Familie`;
+  $('#fab').hidden = !(state.tab === 'start' && state.me);
 
   if (!configured) {
     view.innerHTML = `<div class="empty"><div class="big">🛠️</div><h2>Noch nicht eingerichtet</h2><p>In <code>config.js</code> fehlen die Supabase-Zugangsdaten. Siehe Anleitung in der README.</p></div>`;
@@ -1113,7 +1220,8 @@ function render() {
   }
 
   switch (state.tab) {
-    case 'austausch': return renderAustausch(view);
+    case 'start': return renderAustausch(view);
+    case 'einstellungen': return renderSettings(view);
     case 'notizen': return renderPlaceholder(view, '📝', 'Notizen', 'Dieser Bereich kommt im nächsten Schritt.');
     case 'kalender': return renderPlaceholder(view, '📅', 'Kalender', 'Dieser Bereich kommt im nächsten Schritt.');
     case 'schande': return renderPlaceholder(view, '😈', 'Board der Schande', 'Hier werden bald Striche verteilt – sie landen dann auf dem Trainerpass.');
@@ -1122,6 +1230,7 @@ function render() {
 }
 
 function setTab(tab) {
+  tab = TAB_ALIASES[tab] || tab;
   if (!TABS[tab]) return;
   state.tab = tab;
   const url = new URL(location.href);
@@ -1174,7 +1283,7 @@ function startRealtime() {
       if (!known && state.me && m.authorId !== state.me.id && document.visibilityState === 'visible') {
         toast(`💬 ${author ? fullName(author) : 'Neu'}: ${m.title}`, () => {
           state.highlight = m.id;
-          setTab('austausch');
+          setTab('start');
         });
       }
     })
@@ -1182,7 +1291,7 @@ function startRealtime() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, async () => {
       await loadUsers().catch(() => {});
       renderProfileButton();
-      if (state.tab === 'team' || state.tab === 'austausch') render();
+      if (state.tab === 'team' || state.tab === 'start') render();
     })
     .subscribe((status) => {
       if (status === 'SUBSCRIBED') refreshAll();
@@ -1190,12 +1299,20 @@ function startRealtime() {
 }
 
 // Countdown-Anzeigen aktualisieren & abgelaufene Nachrichten lokal ausblenden
+// Nur Zeitangaben aktualisieren statt alles neu zu zeichnen – sonst springen die Meldungen
 setInterval(() => {
-  if (state.me && state.tab === 'austausch' && !$('.modal-backdrop')) render();
+  if (!state.me || state.tab !== 'start') return;
+  const expired = state.messages.some((m) => m.deleteAt && Date.parse(m.deleteAt) <= Date.now() && document.getElementById(`msg-${m.id}`));
+  if (expired && !$('.modal-backdrop')) { render(); return; }
+  document.querySelectorAll('#view [data-rel]').forEach((el) => {
+    const t = relative(el.dataset.rel);
+    if (el.textContent !== t) el.textContent = t;
+  });
 }, 30_000);
 
 // iOS beendet Verbindungen im Hintergrund – beim Zurückkehren neu laden
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') pollForUpdate();
   if (document.visibilityState === 'visible' && state.me) refreshAll();
 });
 
@@ -1214,16 +1331,17 @@ async function startApp() {
 }
 
 async function init() {
-  document.querySelectorAll('.tabbar button').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
-  $('#profile-btn').addEventListener('click', () => state.me && openTrainerCard(state.me));
   $('#fab').addEventListener('click', openNewMessage);
   $('#update-btn').addEventListener('click', checkForUpdate);
-  $('#theme-toggle').addEventListener('click', toggleTheme);
+  setupMenu();
   darkQuery.addEventListener('change', syncThemeToggle);
   syncThemeToggle();
+  pollForUpdate();
+  setInterval(pollForUpdate, 5 * 60_000);
 
   const params = new URLSearchParams(location.search);
-  if (TABS[params.get('tab')]) state.tab = params.get('tab');
+  const startTab = TAB_ALIASES[params.get('tab')] || params.get('tab');
+  if (TABS[startTab]) state.tab = startTab;
   if (params.get('msg')) state.highlight = params.get('msg');
 
   if ('serviceWorker' in navigator) {
@@ -1231,7 +1349,7 @@ async function init() {
     navigator.serviceWorker.addEventListener('message', (e) => {
       if (e.data && e.data.type === 'open-message') {
         state.highlight = e.data.id;
-        setTab('austausch');
+        setTab('start');
       }
     });
   }

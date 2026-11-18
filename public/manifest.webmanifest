@@ -2,7 +2,7 @@
   "name": "Familie",
   "short_name": "Familie",
   "description": "Austausch, Notizen, Kalender und Trainerpässe für die Familie",
-  "start_url": "./?tab=austausch",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#f3f1ec",

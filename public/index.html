@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#d63b3b">
+  <meta name="theme-color" content="#ffffff">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -22,49 +22,43 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="topbar-title">
-      <span class="logo-ball" aria-hidden="true"></span>
-      <h1 id="tab-title">Austausch</h1>
-    </div>
-    <div class="topbar-actions">
-      <button id="theme-toggle" class="theme-toggle" type="button" role="switch" aria-checked="false" aria-label="Dunkelmodus" title="Hell / Dunkel">
-        <svg class="tt-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="currentColor"/><g stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 1.5v2.5M12 20v2.5M1.5 12h2.5M20 12h2.5M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M4.6 19.4l1.8-1.8M17.6 6.4l1.8-1.8"/></g></svg>
-        <svg class="tt-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z" fill="currentColor"/></svg>
-        <span class="tt-knob"></span>
-      </button>
-      <button id="update-btn" class="update-btn" type="button" aria-label="Nach Updates suchen" title="Nach Updates suchen" hidden>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>
-      </button>
-      <button id="profile-btn" class="profile-btn" type="button" aria-label="Mein Trainerpass" hidden></button>
-    </div>
+    <h1 id="tab-title">Start</h1>
+    <button id="update-btn" class="update-ball" type="button" aria-label="Nach Updates suchen" title="Nach Updates suchen">
+      <span class="ball-sprite" aria-hidden="true"></span>
+    </button>
   </header>
 
   <main id="view" class="view" tabindex="-1"></main>
 
   <button id="fab" class="fab" type="button" aria-label="Neue Nachricht" hidden>+</button>
 
-  <nav class="tabbar" aria-label="Bereiche">
-    <button type="button" data-tab="austausch">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v10H8l-4 4z"/></svg>
-      <span>Austausch</span>
-    </button>
-    <button type="button" data-tab="notizen">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M9 11h7M9 15h7M9 7h4"/></svg>
-      <span>Notizen</span>
-    </button>
-    <button type="button" data-tab="kalender">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>
-      <span>Kalender</span>
-    </button>
-    <button type="button" data-tab="schande">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 8v8M11 8v8M14 8v8M7 15l10-6"/></svg>
-      <span>Schande</span>
-    </button>
-    <button type="button" data-tab="team">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 20c0-3.5 2.7-6 6-6s6 2.5 6 6M14.5 14.5c.8-.3 1.6-.5 2.5-.5 2.5 0 4 1.8 4 4.5"/></svg>
-      <span>Team</span>
-    </button>
-  </nav>
+  <!-- X-Knopf wie beim Nintendo DS: öffnet das Menü -->
+  <button id="menu-btn" class="x-btn" type="button" aria-label="Menü öffnen" aria-expanded="false" aria-controls="menu">
+    <span>X</span>
+  </button>
+
+  <div id="menu-backdrop" class="menu-backdrop" hidden></div>
+  <div id="menu" class="ds-menu" role="dialog" aria-modal="true" aria-label="Menü" hidden>
+    <section class="ds-panel">
+      <div class="ds-panel-head"><span class="x-mini" aria-hidden="true">X</span>Menü</div>
+      <div class="ds-grid">
+        <button type="button" class="ds-item" data-go="start" style="--i:0"><img src="img/menu/dex.png" alt=""><span>Austausch</span></button>
+        <button type="button" class="ds-item" data-go="profil" style="--i:1"><img src="img/menu/card.png" alt=""><span id="menu-me">Profil</span></button>
+        <button type="button" class="ds-item" data-go="team" style="--i:2"><img src="img/menu/ball.png" alt=""><span>Team</span></button>
+        <button type="button" class="ds-item" data-go="notizen" style="--i:3"><img src="img/menu/save.png" alt=""><span>Notizen</span></button>
+        <button type="button" class="ds-item" data-go="kalender" style="--i:4"><img src="img/menu/cal.png" alt=""><span>Kalender</span></button>
+        <button type="button" class="ds-item" data-go="einstellungen" style="--i:5"><img src="img/menu/opt.png" alt=""><span>Einstellungen</span></button>
+        <button type="button" class="ds-item" data-go="schande" style="--i:6"><img src="img/menu/gear.png" alt=""><span>Board der Schande</span></button>
+        <div class="ds-item ds-free" style="--i:7" aria-hidden="true"></div>
+      </div>
+    </section>
+    <section class="ds-side">
+      <div class="ds-box ds-blue" style="--i:8" aria-hidden="true"><span class="ds-key">Y</span><img src="img/menu/bike.png" alt=""></div>
+      <div class="ds-box ds-blue" style="--i:9" aria-hidden="true"><img src="img/menu/item.png" alt=""></div>
+      <div class="ds-box ds-free" style="--i:10" aria-hidden="true"></div>
+      <button type="button" id="menu-back" class="ds-box ds-red" style="--i:11"><span class="ds-key ds-key-a">A</span><span>Zurück</span></button>
+    </section>
+  </div>
 
   <div id="modal-root"></div>
   <div id="toast-root" aria-live="polite"></div>
