@@ -312,6 +312,8 @@ const TRAINER_SVG = `
 </svg>`;
 
 const SPRITES = { m: 'img/trainer-m.png', w: 'img/trainer-w.png' };
+// Porträts des Urhebers an Meldungen im Austausch
+const PORTRAITS = { m: 'img/portrait-m.png', w: 'img/portrait-w.png' };
 
 function avatarHtml(u) {
   if (u.sprite) return `<img class="sprite" src="${esc(u.sprite)}" alt="">`;
@@ -715,7 +717,8 @@ function messageHtml(m) {
   const mine = state.me && m.authorId === state.me.id;
   const author = userById(m.authorId);
   return `
-  <article class="msg u-${esc(m.urgency)}${state.highlight === m.id ? ' flash' : ''}" id="msg-${esc(m.id)}">
+  <article class="msg u-${esc(m.urgency)}${state.highlight === m.id ? ' flash' : ''}${author && PORTRAITS[author.gender] ? ' has-portrait' : ''}" id="msg-${esc(m.id)}">
+    <div class="msg-body">
     <div class="msg-head">${ballSvg(urgencyInfo(m.urgency).ball, 26)}<span class="badge">${esc(urgencyLabel(m.urgency))}</span></div>
     <h3>${esc(m.title)}</h3>
     ${m.description ? `<p class="desc">${esc(m.description)}</p>` : ''}
@@ -725,9 +728,11 @@ function messageHtml(m) {
       ${m.deleteAt ? `<span>🗑️ Löscht sich ${esc(relative(m.deleteAt))} (${esc(formatDateTime(m.deleteAt))})</span>` : ''}
     </div>
     <div class="msg-actions">
-      <a class="btn small" href="${esc(icsUrl(m))}" target="_blank" rel="noopener">📅 In Kalender übernehmen</a>
+      <a class="btn small" href="${esc(icsUrl(m))}" target="_blank" rel="noopener" title="In Kalender übernehmen">📅 In Kalender</a>
       ${mine ? `<button class="btn small danger" data-delete="${esc(m.id)}">Löschen</button>` : ''}
     </div>
+    </div>
+    ${author && PORTRAITS[author.gender] ? `<img class="msg-portrait" src="${PORTRAITS[author.gender]}" alt="${esc(fullName(author))}">` : ''}
   </article>`;
 }
 

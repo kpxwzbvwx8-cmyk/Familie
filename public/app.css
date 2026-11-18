@@ -548,3 +548,19 @@ select {
 .gender-svg { display: inline-block; vertical-align: -2px; filter: drop-shadow(0 0 1px #fff); }
 .pokemon-tile .avatar { background: rgba(255,255,255,.55); }
 .pokemon-tile .avatar .sprite { height: 38px; width: auto; align-self: center; margin: 0; }
+
+/* ---------- Porträt des Urhebers an Meldungen (rechts) ---------- */
+.msg.has-portrait {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 6px;
+  padding-bottom: 0; overflow: hidden; position: relative;
+}
+.msg.has-portrait .msg-body { padding-bottom: 12px; min-width: 0; }
+.msg-portrait {
+  align-self: end; justify-self: end;
+  height: 104px; width: auto; max-width: 30vw;
+  margin-right: -14px;            /* bündig an der rechten Kachelkante */
+  object-fit: cover; object-position: left bottom;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+@media (max-width: 380px) { .msg-portrait { height: 88px; } }
