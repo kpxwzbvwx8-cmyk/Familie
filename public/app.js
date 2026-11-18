@@ -24,6 +24,8 @@ const state = {
   tab: 'start',
   highlight: null,
   expanded: new Set(),
+  responses: new Map(), // messageId -> [{ userId, option, createdAt }]
+  comments: new Map(),  // messageId -> [{ id, authorId, body, createdAt }]
 };
 
 const TABS = {
@@ -144,11 +146,21 @@ function mapMessage(r) {
     deleteOnDone: Boolean(r.delete_on_done),
     doneBy: r.done_by || null,
     doneAt: r.done_at || null,
+    ackOptions: Array.isArray(r.ack_options) && r.ack_options.length ? r.ack_options : null,
   };
 }
 
+let usersReloading = null;
 function userById(id) {
-  return state.users.find((u) => u.id === id);
+  const u = state.users.find((x) => x.id === id);
+  // Unbekanntes Konto (z. B. gerade beigetreten) → Profile einmal nachladen und neu zeichnen
+  if (!u && id && sb && state.me && !usersReloading) {
+    usersReloading = loadUsers()
+      .then(() => { if (state.users.some((x) => x.id === id)) render(); })
+      .catch(() => {})
+      .finally(() => { setTimeout(() => { usersReloading = null; }, 5000); });
+  }
+  return u;
 }
 
 function parseBirthday(iso) {
@@ -727,8 +739,8 @@ const HELP = {
     + 'Ist sie aus, wird beim Absenden niemand benachrichtigt – spätere Benachrichtigungen (Erinnerung zum Beginn, Rückmeldungen) kommen trotzdem.',
   remind: 'Wenn die Glocke an ist, bekommen alle zum Beginn des Ereignisses eine Benachrichtigung – das Handy vibriert bzw. klingelt (je nach Einstellungen des Handys). '
     + 'Das funktioniert auch, wenn die App geschlossen ist.',
-  ack: 'Die anderen sehen in der aufgeklappten Meldung den Knopf „Erledigt“. Tippt jemand darauf, bekommst du eine Benachrichtigung. '
-    + 'Die Meldung bleibt stehen (mit Haken) – löschen kannst danach nur du.',
+  ack: 'Die anderen sehen in der aufgeklappten Meldung Antwort-Knöpfe – standardmäßig „Erledigt“, oder was du vorgibst (z. B. „Ja“ und „Nein“). '
+    + 'Antwortet jemand, bekommst du eine Benachrichtigung. Die Meldung bleibt stehen – löschen kannst sie nur du.',
   doneDelete: 'Die anderen können die Meldung in der aufgeklappten Ansicht als erledigt markieren. '
     + 'Sie wird dann für alle gelöscht und du bekommst eine Benachrichtigung, dass sie geschlossen wurde.',
 };
@@ -746,6 +758,13 @@ function bellToggle(name, checked, label) {
 
 function switchToggle(name, checked = false) {
   return `<label class="switch"><input type="checkbox" role="switch" name="${name}"${checked ? ' checked' : ''}><span aria-hidden="true"></span></label>`;
+}
+
+function ackOptionRow(value) {
+  return `<div class="ack-opt">
+    <input name="ackOpt" maxlength="40" value="${esc(value)}" placeholder="Antwort, z. B. Ja" aria-label="Antwortmöglichkeit">
+    <button type="button" class="ack-del" aria-label="Antwortmöglichkeit entfernen">✕</button>
+  </div>`;
 }
 
 function showHelp(key) {
@@ -773,7 +792,11 @@ function messageHtml(m) {
   const author = userById(m.authorId);
   const doneBy = m.doneBy ? userById(m.doneBy) : null;
   const expanded = state.expanded.has(m.id);
-  const canMarkDone = !mine && (m.needsAck || m.deleteOnDone) && !m.doneBy;
+  const canMarkDone = !mine && m.deleteOnDone && !m.doneBy;
+  const options = m.needsAck ? (m.ackOptions || ['Erledigt']) : [];
+  const resps = state.responses.get(m.id) || [];
+  const myResp = state.me ? resps.find((r) => r.userId === state.me.id) : null;
+  const comments = state.comments.get(m.id) || [];
   const portrait = author && PORTRAITS[author.gender]
     ? `<img class="msg-portrait" src="${PORTRAITS[author.gender]}" alt="${esc(fullName(author))}">` : '';
   return `
@@ -790,7 +813,8 @@ function messageHtml(m) {
         <span class="author"><span class="dot" style="--c:${esc(author ? author.color : '#888888')}"></span>${esc(author ? fullName(author) : 'Unbekannt')} · <span data-rel="${esc(m.createdAt)}">${esc(relative(m.createdAt))}</span></span>
         ${m.eventAt ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt))}${m.remindAtStart ? ' <span title="Erinnerung zum Beginn">🔔</span>' : ''}</span>` : ''}
         ${m.doneBy ? `<span class="done-line">✓ Erledigt von ${esc(doneBy ? doneBy.firstName : 'jemandem')}</span>` : ''}
-        ${!m.doneBy && m.needsAck ? '<span class="flag">✉️ Rückmeldung erbeten</span>' : ''}
+        ${m.needsAck ? `<span class="count">✉️ ${resps.length ? `${resps.length} Antwort${resps.length === 1 ? '' : 'en'}` : 'Rückmeldung erbeten'}</span>` : ''}
+        ${comments.length ? `<span class="count">💬 ${comments.length} Kommentar${comments.length === 1 ? '' : 'e'}</span>` : ''}
         ${!m.doneBy && m.deleteOnDone ? '<span class="flag">🧹 Wird gelöscht, wenn erledigt</span>' : ''}
         ${m.deleteAt ? `<span class="more">🗑️ Löscht sich <span data-rel="${esc(m.deleteAt)}">${esc(relative(m.deleteAt))}</span> (${esc(formatDateTime(m.deleteAt))})</span>` : ''}
       </div>
@@ -799,9 +823,153 @@ function messageHtml(m) {
         <a class="btn small" href="${esc(icsUrl(m))}" target="_blank" rel="noopener" title="In Kalender übernehmen">📅 In Kalender</a>
         ${mine ? `<button class="btn small danger" data-delete="${esc(m.id)}">Löschen</button>` : ''}
       </div>
+      ${m.needsAck ? `<div class="msg-replies msg-extra">
+        ${!mine ? `<div class="reply-btns">${options.map((o) => `<button class="btn small${myResp && myResp.option === o ? ' primary' : ''}" data-reply="${esc(m.id)}" data-option="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
+        ${resps.length
+          ? `<ul class="reply-list">${resps.map((r) => { const u = userById(r.userId); return `<li><b>${esc(u ? u.firstName : '?')}:</b> ${esc(r.option)}</li>`; }).join('')}</ul>`
+          : `<p class="hint">${mine ? 'Noch keine Antwort.' : 'Tippe auf eine Antwort.'}</p>`}
+      </div>` : ''}
+      <div class="msg-comments msg-extra">
+        ${comments.map((c) => {
+          const u = userById(c.authorId); const own = state.me && c.authorId === state.me.id;
+          return `<div class="comment${own ? ' own' : ''}">
+            <span class="c-head"><b>${esc(u ? u.firstName : '?')}</b> · <span data-rel="${esc(c.createdAt)}">${esc(relative(c.createdAt))}</span>${own ? ` <button class="c-del" data-del-comment="${esc(c.id)}" aria-label="Kommentar löschen">✕</button>` : ''}</span>
+            <p>${esc(c.body)}</p>
+          </div>`;
+        }).join('')}
+        <form class="comment-form" data-comment-form="${esc(m.id)}">
+          <input name="body" maxlength="1000" placeholder="Kommentar schreiben …" autocomplete="off" aria-label="Kommentar">
+          <button class="btn small primary" type="submit">Senden</button>
+        </form>
+      </div>
       <span class="msg-chevron" aria-hidden="true">▾</span>
     </div>
   </article>`;
+}
+
+function bindMessage(el) {
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('a, button, input, textarea, form')) return;
+    toggleMessage(el);
+  });
+  el.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); toggleMessage(el); }
+  });
+  el.querySelectorAll('[data-done]').forEach((b) => b.addEventListener('click', () => markDone(b.dataset.done, b)));
+  el.querySelectorAll('[data-reply]').forEach((b) => b.addEventListener('click', () => sendReply(b.dataset.reply, b.dataset.option, b)));
+  el.querySelectorAll('[data-del-comment]').forEach((b) => b.addEventListener('click', () => deleteComment(b.dataset.delComment, el.dataset.msg)));
+  el.querySelectorAll('[data-comment-form]').forEach((f) => f.addEventListener('submit', (e) => { e.preventDefault(); sendComment(f); }));
+  el.querySelectorAll('[data-delete]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('Nachricht wirklich löschen?')) return;
+      try {
+        must(await sb.from('messages').delete().eq('id', b.dataset.delete));
+        removeMessage(b.dataset.delete);
+      } catch (e) {
+        toast(e.message);
+      }
+    })
+  );
+}
+
+/** Nur eine Karte neu zeichnen – ein angefangener Kommentar bleibt erhalten. */
+function rerenderMessage(id) {
+  if (state.tab !== 'start') return;
+  const el = document.getElementById(`msg-${id}`);
+  const m = state.messages.find((x) => x.id === id);
+  if (!el || !m) { render(); return; }
+  const input = el.querySelector('.comment-form input');
+  const draft = input ? input.value : '';
+  const focused = input && document.activeElement === input;
+  const tpl = document.createElement('template');
+  tpl.innerHTML = messageHtml(m).trim();
+  const fresh = tpl.content.firstElementChild;
+  fresh.classList.remove('flash');
+  el.replaceWith(fresh);
+  bindMessage(fresh);
+  const ni = fresh.querySelector('.comment-form input');
+  if (ni) { ni.value = draft; if (focused) ni.focus({ preventScroll: true }); }
+}
+
+async function invokeOrThrow(body) {
+  const r = await sb.functions.invoke('push', { body });
+  if (r.error) {
+    let msg = 'Das hat nicht geklappt.';
+    try { msg = (await r.error.context.json()).error || msg; } catch { /* egal */ }
+    throw new Error(msg);
+  }
+  return r.data;
+}
+
+async function sendReply(id, option, btn) {
+  btn.disabled = true;
+  try {
+    await invokeOrThrow({ action: 'respond', messageId: id, option });
+    const list = (state.responses.get(id) || []).filter((r) => r.userId !== state.me.id);
+    list.push({ userId: state.me.id, option, createdAt: new Date().toISOString() });
+    state.responses.set(id, list);
+    rerenderMessage(id);
+    toast(`Antwort gesendet: ${option}`);
+  } catch (e) {
+    toast(e.message);
+    btn.disabled = false;
+  }
+}
+
+async function sendComment(form) {
+  const id = form.dataset.commentForm;
+  const input = form.elements.body;
+  const body = input.value.trim();
+  if (!body) return;
+  const btn = form.querySelector('button');
+  btn.disabled = true;
+  try {
+    const row = must(await sb.from('message_comments').insert({ message_id: id, body }).select().single());
+    addComment(mapComment(row));
+    input.value = '';
+    rerenderMessage(id);
+    sb.functions.invoke('push', { body: { action: 'comment', commentId: row.id } })
+      .then((r) => r.error && console.warn('Benachrichtigung fehlgeschlagen', r.error));
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteComment(commentId, messageId) {
+  if (!confirm('Kommentar löschen?')) return;
+  try {
+    must(await sb.from('message_comments').delete().eq('id', commentId));
+    removeComment(commentId, messageId);
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+function mapComment(r) {
+  return { id: r.id, messageId: r.message_id, authorId: r.author_id, body: r.body, createdAt: r.created_at };
+}
+
+function addComment(c) {
+  const list = state.comments.get(c.messageId) || [];
+  if (!list.some((x) => x.id === c.id)) list.push(c);
+  list.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  state.comments.set(c.messageId, list);
+}
+
+function removeComment(id, messageId) {
+  for (const [mid, list] of state.comments) {
+    if (messageId && mid !== messageId) continue;
+    const next = list.filter((c) => c.id !== id);
+    if (next.length !== list.length) { state.comments.set(mid, next); rerenderMessage(mid); }
+  }
+}
+
+function setResponse(r) {
+  const list = (state.responses.get(r.message_id) || []).filter((x) => x.userId !== r.user_id);
+  list.push({ userId: r.user_id, option: r.option, createdAt: r.created_at });
+  state.responses.set(r.message_id, list);
 }
 
 function toggleMessage(el) {
@@ -850,28 +1018,7 @@ function renderAustausch(view) {
   const pushBtn = $('#enable-push', view);
   if (pushBtn) pushBtn.addEventListener('click', enablePush);
 
-  view.querySelectorAll('[data-msg]').forEach((el) => {
-    el.addEventListener('click', (e) => {
-      if (e.target.closest('a, button')) return;
-      toggleMessage(el);
-    });
-    el.addEventListener('keydown', (e) => {
-      if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); toggleMessage(el); }
-    });
-  });
-  view.querySelectorAll('[data-done]').forEach((b) => b.addEventListener('click', () => markDone(b.dataset.done, b)));
-
-  view.querySelectorAll('[data-delete]').forEach((b) =>
-    b.addEventListener('click', async () => {
-      if (!confirm('Nachricht wirklich löschen?')) return;
-      try {
-        must(await sb.from('messages').delete().eq('id', b.dataset.delete));
-        removeMessage(b.dataset.delete);
-      } catch (e) {
-        toast(e.message);
-      }
-    })
-  );
+  view.querySelectorAll('[data-msg]').forEach(bindMessage);
 
   if (state.highlight) {
     const el = document.getElementById(`msg-${state.highlight}`);
@@ -921,6 +1068,10 @@ function openNewMessage() {
          <p class="hint">Die Nachricht verschwindet zu diesem Zeitpunkt für alle.</p>
        </div>
        <div class="toggle-row"><span>Rückmeldung?</span>${helpBtn('ack')}${switchToggle('needsAck')}</div>
+       <div class="field" id="ack-box" hidden>
+         <div class="ack-list" id="ack-list">${ackOptionRow('Erledigt')}</div>
+         <button type="button" class="btn small ack-add" id="ack-add" aria-label="Weitere Antwortmöglichkeit">＋</button>
+       </div>
        <div class="toggle-row"><span>Löschen, wenn erledigt?</span>${helpBtn('doneDelete')}${switchToggle('deleteOnDone')}</div>
        <p class="error" id="msg-error"></p>
        <div class="modal-actions">
@@ -945,12 +1096,37 @@ function openNewMessage() {
           setActive(i);
         });
         form.elements.deleteAt.addEventListener('input', () => setActive(-1));
-        form.elements.autoDelete.addEventListener('change', () => {
+        // Nur einer der drei Regler darf an sein
+        const exclusive = ['autoDelete', 'needsAck', 'deleteOnDone'];
+        const syncBoxes = () => {
           $('#auto-delete-box', modal).hidden = !form.elements.autoDelete.checked;
-          if (form.elements.autoDelete.checked && !form.elements.deleteAt.value) {
+          $('#ack-box', modal).hidden = !form.elements.needsAck.checked;
+        };
+        exclusive.forEach((name) => form.elements[name].addEventListener('change', () => {
+          if (form.elements[name].checked) exclusive.filter((n) => n !== name).forEach((n) => { form.elements[n].checked = false; });
+          if (name === 'autoDelete' && form.elements.autoDelete.checked && !form.elements.deleteAt.value) {
             form.elements.deleteAt.value = presets[2].fn(form); setActive(2);
           }
+          syncBoxes();
+        }));
+        const ackList = $('#ack-list', modal);
+        const syncAck = () => {
+          const rows = ackList.querySelectorAll('.ack-opt');
+          rows.forEach((r) => { r.querySelector('.ack-del').hidden = rows.length <= 1; });
+          $('#ack-add', modal).hidden = rows.length >= 6;
+        };
+        $('#ack-add', modal).addEventListener('click', () => {
+          ackList.insertAdjacentHTML('beforeend', ackOptionRow(''));
+          ackList.lastElementChild.querySelector('input').focus();
+          syncAck();
         });
+        ackList.addEventListener('click', (e) => {
+          const del = e.target.closest('.ack-del');
+          if (!del) return;
+          del.closest('.ack-opt').remove();
+          syncAck();
+        });
+        syncAck();
         if (!isIos) form.elements.title.focus();
         form.addEventListener('submit', async (e) => {
           e.preventDefault();
@@ -968,6 +1144,10 @@ function openNewMessage() {
           if (endAt && Date.parse(endAt) < Date.parse(eventAt)) { err.textContent = 'Das Ende liegt vor dem Beginn.'; return; }
           if (remind && !eventAt) { err.textContent = 'Für die Erinnerung bitte einen Zeitpunkt angeben.'; return; }
           if (form.elements.autoDelete.checked && !deleteAt) { err.textContent = 'Bitte ein Löschdatum wählen.'; return; }
+          const ackOptions = form.elements.needsAck.checked
+            ? [...new Set([...modal.querySelectorAll('#ack-list input')].map((i) => i.value.trim()).filter(Boolean))]
+            : null;
+          if (ackOptions && !ackOptions.length) { err.textContent = 'Bitte mindestens eine Antwortmöglichkeit angeben.'; return; }
           if (deleteAt && Date.parse(deleteAt) <= Date.now()) { err.textContent = 'Das Löschdatum muss in der Zukunft liegen.'; return; }
           const btn = form.querySelector('[type=submit]');
           btn.disabled = true;
@@ -981,6 +1161,7 @@ function openNewMessage() {
               delete_at: deleteAt,
               remind_at_start: remind,
               needs_ack: form.elements.needsAck.checked,
+              ack_options: ackOptions,
               delete_on_done: form.elements.deleteOnDone.checked,
             }).select().single());
             upsertMessage(mapMessage(row));
@@ -1005,7 +1186,9 @@ function upsertMessage(m) {
   if (i >= 0) state.messages[i] = m;
   else state.messages.unshift(m);
   state.messages.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-  if (state.tab === 'start') render();
+  if (state.tab !== 'start') return;
+  if (i >= 0 && document.getElementById(`msg-${m.id}`)) rerenderMessage(m.id);
+  else render();
 }
 
 function removeMessage(id) {
@@ -1388,7 +1571,16 @@ async function loadUsers() {
 }
 
 async function loadMessages() {
-  state.messages = must(await sb.from('messages').select('*').order('created_at', { ascending: false })).map(mapMessage);
+  const [msgs, resps, comments] = await Promise.all([
+    sb.from('messages').select('*').order('created_at', { ascending: false }),
+    sb.from('message_responses').select('*'),
+    sb.from('message_comments').select('*').order('created_at', { ascending: true }),
+  ]);
+  state.messages = must(msgs).map(mapMessage);
+  state.responses = new Map();
+  for (const r of must(resps)) setResponse(r);
+  state.comments = new Map();
+  for (const c of must(comments)) addComment(mapComment(c));
 }
 
 async function loadFamilyCode() {
@@ -1432,6 +1624,25 @@ function startRealtime() {
       }
     })
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, ({ old }) => removeMessage(old.id))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'message_responses' }, ({ eventType, new: row, old }) => {
+      if (eventType === 'DELETE') {
+        for (const [mid, list] of state.responses) state.responses.set(mid, list.filter((x) => !(x.userId === old.user_id && mid === old.message_id)));
+        if (old.message_id) rerenderMessage(old.message_id);
+        return;
+      }
+      setResponse(row);
+      rerenderMessage(row.message_id);
+      const m = state.messages.find((x) => x.id === row.message_id);
+      if (m && state.me && m.authorId === state.me.id && row.user_id !== state.me.id && document.visibilityState === 'visible') {
+        const u = userById(row.user_id);
+        toast(`✉️ ${u ? u.firstName : 'Jemand'}: ${row.option} – „${m.title}“`);
+      }
+    })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_comments' }, ({ new: row }) => {
+      addComment(mapComment(row));
+      rerenderMessage(row.message_id);
+    })
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'message_comments' }, ({ old }) => removeComment(old.id))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, async () => {
       await loadUsers().catch(() => {});
       renderProfileButton();
