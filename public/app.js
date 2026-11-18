@@ -149,6 +149,9 @@ function mapMessage(r) {
     ackOptions: Array.isArray(r.ack_options) && r.ack_options.length ? r.ack_options : null,
     deadlineAt: r.deadline_at || null,
     threatStrike: Boolean(r.threat_strike),
+    closedAt: r.closed_at || null,
+    reviewStatus: r.review_status || null,
+    strikeNote: r.strike_note || null,
     respondBy: r.respond_by || null,
   };
 }
@@ -803,7 +806,14 @@ function messageHtml(m) {
   if (expanded) markCommentsSeen(m.id);
   const unread = expanded ? 0 : unreadComments(m);
   const pin = prefs.pins[m.id] && Date.parse(prefs.pins[m.id]) > Date.now() ? prefs.pins[m.id] : null;
-  const canMarkDone = !mine && m.deleteOnDone && !m.doneBy;
+  const canMarkDone = !mine && !m.doneBy && !m.closedAt && !m.needsAck && (m.deleteOnDone || m.deadlineAt);
+  const awaitingReview = m.threatStrike && !m.closedAt && isFrozen(m);
+  const statusLine = m.closedAt
+    ? (m.reviewStatus === 'accepted' ? '👍 Abgenommen – geschlossen'
+      : m.reviewStatus === 'rejected' ? `😈 Strich vergeben: ${m.strikeNote || ''}`
+      : m.reviewStatus === 'missed' ? '😈 Deadline verpasst – Strich vergeben'
+      : '🔒 Geschlossen – Deadline abgelaufen')
+    : awaitingReview ? `⏸️ Timer eingefroren – ${mine ? 'bitte abnehmen' : 'wartet auf Abnahme'}` : '';
   const options = m.needsAck ? (m.ackOptions || ['Erledigt']) : [];
   const resps = state.responses.get(m.id) || [];
   const myResp = state.me ? resps.find((r) => r.userId === state.me.id) : null;
@@ -811,7 +821,7 @@ function messageHtml(m) {
   const portrait = author && PORTRAITS[author.gender]
     ? `<img class="msg-portrait" src="${PORTRAITS[author.gender]}" alt="${esc(fullName(author))}">` : '';
   return `
-  <article class="msg u-${esc(m.urgency)}${expanded ? ' expanded' : ''}${unread ? ' has-unread' : ''}${m.doneBy ? ' is-done' : ''}${state.highlight === m.id ? ' flash' : ''}"
+  <article class="msg u-${esc(m.urgency)}${m.closedAt ? ' is-closed' : ''}${expanded ? ' expanded' : ''}${unread ? ' has-unread' : ''}${m.doneBy && !awaitingReview ? ' is-done' : ''}${state.highlight === m.id ? ' flash' : ''}"
     id="msg-${esc(m.id)}" data-msg="${esc(m.id)}" tabindex="0" aria-expanded="${expanded}">
     <div class="msg-side">
       <div class="msg-urg">${ballSvg(urgencyInfo(m.urgency).ball, 26)}<span class="badge">${esc(urgencyLabel(m.urgency))}</span></div>
@@ -823,7 +833,8 @@ function messageHtml(m) {
       <div class="msg-meta">
         <span class="author"><span class="dot" style="--c:${esc(author ? author.color : '#888888')}"></span>${esc(author ? fullName(author) : 'Unbekannt')} · <span data-rel="${esc(m.createdAt)}">${esc(relative(m.createdAt))}</span></span>
         ${m.eventAt ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt))}${m.remindAtStart ? ' <span title="Erinnerung zum Beginn">🔔</span>' : ''}</span>` : ''}
-        ${m.threatStrike ? '<span class="strike-threat">😈 Strich auf dem Board der Schande bei Nichterfüllung</span>' : ''}
+        ${statusLine ? `<span class="status-line${m.reviewStatus === 'rejected' || m.reviewStatus === 'missed' ? ' bad' : ''}">${esc(statusLine)}</span>` : ''}
+        ${m.threatStrike && !m.closedAt ? '<span class="strike-threat">😈 Strich auf dem Board der Schande bei Nichterfüllung</span>' : ''}
         ${m.deadlineAt ? `<span class="deadline${Date.parse(m.deadlineAt) < Date.now() ? ' over' : ''}">⏳ Deadline: ${esc(formatDateTime(m.deadlineAt))}</span>` : ''}
         ${m.needsAck && m.respondBy ? `<span class="more">✉️ Antworten bis ${esc(formatDateTime(m.respondBy))}</span>` : ''}
         ${m.doneBy ? `<span class="done-line">✓ Erledigt von ${esc(doneBy ? doneBy.firstName : 'jemandem')}</span>` : ''}
@@ -839,10 +850,17 @@ function messageHtml(m) {
         ${mine ? `<button class="btn small danger" data-delete="${esc(m.id)}">Löschen</button>` : ''}
       </div>
       ${m.needsAck ? `<div class="msg-replies msg-extra">
-        ${!mine ? `<div class="reply-btns">${options.map((o) => `<button class="btn small${myResp && myResp.option === o ? ' primary' : ''}" data-reply="${esc(m.id)}" data-option="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
+        ${!mine && !m.closedAt ? `<div class="reply-btns">${options.map((o) => `<button class="btn small${myResp && myResp.option === o ? ' primary' : ''}" data-reply="${esc(m.id)}" data-option="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
         ${resps.length
           ? `<ul class="reply-list">${resps.map((r) => { const u = userById(r.userId); return `<li><b>${esc(u ? u.firstName : '?')}:</b> ${esc(r.option)}</li>`; }).join('')}</ul>`
           : `<p class="hint">${mine ? 'Noch keine Antwort.' : 'Tippe auf eine Antwort.'}</p>`}
+      </div>` : ''}
+      ${mine && awaitingReview ? `<div class="msg-review msg-extra">
+        <span class="hint">Rückmeldung ist da – nimm das Ergebnis ab:</span>
+        <div class="reply-btns">
+          <button type="button" class="btn small primary" data-review="${esc(m.id)}" data-verdict="accept">👍 Abnehmen</button>
+          <button type="button" class="btn small danger" data-review="${esc(m.id)}" data-verdict="strike">😈 Strich vergeben</button>
+        </div>
       </div>` : ''}
       ${m.urgency === 'info' ? `<div class="msg-pin msg-extra">
         <span class="hint">📌 In „Laufend“ behalten (nur für dich):</span>
@@ -878,6 +896,7 @@ function bindMessage(el) {
     if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); toggleMessage(el); }
   });
   el.querySelectorAll('[data-done]').forEach((b) => b.addEventListener('click', () => markDone(b.dataset.done, b)));
+  el.querySelectorAll('[data-review]').forEach((b) => b.addEventListener('click', () => reviewMessage(b.dataset.review, b.dataset.verdict, b)));
   el.querySelectorAll('[data-pin]').forEach((b) => b.addEventListener('click', () => {
     const days = Number(b.dataset.days);
     setPin(b.dataset.pin, days ? new Date(Date.now() + days * 86400e3).toISOString() : null);
@@ -1054,6 +1073,52 @@ function setPin(id, until) {
   render();
 }
 
+async function reviewMessage(id, verdict, btn) {
+  const send = async (reason) => {
+    btn.disabled = true;
+    try {
+      await invokeOrThrow({ action: 'review', messageId: id, verdict, reason });
+      const m = state.messages.find((x) => x.id === id);
+      if (m) {
+        m.closedAt = new Date().toISOString();
+        m.reviewStatus = verdict === 'accept' ? 'accepted' : 'rejected';
+        m.strikeNote = verdict === 'accept' ? null : reason;
+        render();
+      }
+      toast(verdict === 'accept' ? '👍 Abgenommen – die Meldung ist geschlossen.' : '😈 Strich vergeben und protokolliert.');
+    } catch (e) {
+      toast(e.message);
+      btn.disabled = false;
+    }
+  };
+  if (verdict === 'accept') { send(); return; }
+  openModal(
+    `<div class="modal-head"><h2>Strich vergeben</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+     <form class="form" id="strike-form">
+       <label class="field"><span>Grund (wird protokolliert)</span>
+         <textarea name="reason" maxlength="200" required placeholder="z. B. Zimmer nur halb aufgeräumt"></textarea></label>
+       <p class="error" id="strike-error"></p>
+       <div class="modal-actions">
+         <button type="button" class="btn" data-close>Abbrechen</button>
+         <button type="submit" class="btn primary">😈 Strich vergeben</button>
+       </div>
+     </form>`,
+    {
+      onMount: (modal, close) => {
+        const form = $('#strike-form', modal);
+        form.elements.reason.focus();
+        form.addEventListener('submit', (e) => {
+          e.preventDefault();
+          const reason = form.elements.reason.value.trim();
+          if (!reason) { $('#strike-error', modal).textContent = 'Bitte einen Grund angeben.'; return; }
+          close();
+          send(reason);
+        });
+      },
+    }
+  );
+}
+
 async function markDone(id, btn) {
   btn.disabled = true;
   try {
@@ -1062,6 +1127,12 @@ async function markDone(id, btn) {
       let msg = 'Das hat nicht geklappt.';
       try { msg = (await r.error.context.json()).error || msg; } catch { /* egal */ }
       throw new Error(msg);
+    }
+    if (r.data && r.data.review) {
+      const m = state.messages.find((x) => x.id === id);
+      if (m) { m.doneBy = state.me.id; m.doneAt = new Date().toISOString(); rerenderMessage(id); }
+      toast('⏸️ Gemeldet – der Timer ist eingefroren, der Urheber nimmt ab.');
+      return;
     }
     if (r.data && r.data.deleted) { removeMessage(id); toast('Erledigt – die Meldung wurde geschlossen ✓'); }
     else {
@@ -1086,6 +1157,11 @@ const SECTIONS = [
 ];
 const URGENCY_RANK = { dringend: 0, wichtig: 1, normal: 2, info: 3 };
 
+/** Strich angedroht und jemand hat reagiert → Timer eingefroren, der Urheber nimmt ab */
+function isFrozen(m) {
+  return Boolean(m.doneBy) || (state.responses.get(m.id) || []).length > 0;
+}
+
 function sectionOpen(sec) {
   return sec.key in prefs.sections ? Boolean(prefs.sections[sec.key]) : sec.open;
 }
@@ -1108,7 +1184,9 @@ function sectionOf(m, now = new Date()) {
   const deadline = m.deadlineAt ? Date.parse(m.deadlineAt) : null;
   const pin = prefs.pins[m.id] ? Date.parse(prefs.pins[m.id]) : null;
 
+  if (m.closedAt) return 'vergangen';
   if (pin && pin > t) return 'laufend';
+  if (m.threatStrike && deadline && deadline <= t && isFrozen(m)) return 'laufend';   // wartet auf Abnahme
   if (start <= t && end && end > t && end >= tomorrow.getTime()) return 'laufend';   // läuft über mehrere Tage
   if (start < today.getTime() && ((end && end > t) || (deadline && deadline > t))) return 'laufend'; // seit gestern o. früher, noch aktiv
   if (start >= today.getTime() && start < tomorrow.getTime()) return 'heute';
@@ -1935,8 +2013,12 @@ function startRealtime() {
       rerenderMessage(row.message_id);
     })
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'message_comments' }, ({ old }) => removeComment(old.id))
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, async () => {
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, async ({ new: row }) => {
+      const before = state.me ? state.me.strikes : 0;
       await loadUsers().catch(() => {});
+      if (row && state.me && row.id === state.me.id && (row.strikes || 0) > before) {
+        toast(`😈 Du hast einen Strich bekommen (jetzt ${row.strikes}).`);
+      }
       renderProfileButton();
       if (state.tab === 'team' || state.tab === 'start') render();
     })

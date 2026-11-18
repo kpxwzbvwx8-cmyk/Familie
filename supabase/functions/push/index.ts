@@ -4,6 +4,7 @@
 //  done    – Meldung erledigen (bei „Löschen, wenn erledigt“) und den Urheber benachrichtigen
 //  respond – auf eine Meldung mit Rückmeldung antworten (eine der Optionen), Urheber wird benachrichtigt
 //  comment – nach einem neuen Kommentar die anderen Beteiligten benachrichtigen
+//  review  – Urheber nimmt eine Meldung mit Strich-Androhung ab (accept) oder vergibt den Strich (strike + Grund)
 import { admin, bearer, cors, json, memberFromToken, URGENCY_LABELS } from '../_shared/common.ts';
 import { ensureTickConfig, publicKey, sendPush } from '../_shared/webpush.ts';
 
@@ -40,8 +41,22 @@ Deno.serve(async (req) => {
       const { data: msg } = await admin.from('messages').select('*').eq('id', body.messageId).maybeSingle();
       if (!msg) return json({ error: 'Meldung nicht gefunden' }, 404);
       if (msg.author_id === me.id) return json({ error: 'Der Urheber kann die eigene Meldung nicht als erledigt markieren' }, 400);
-      if (!msg.delete_on_done && !msg.needs_ack) return json({ error: 'Für diese Meldung ist keine Rückmeldung vorgesehen' }, 400);
+      if (!msg.delete_on_done && !msg.needs_ack && !msg.deadline_at) return json({ error: 'Für diese Meldung ist keine Rückmeldung vorgesehen' }, 400);
       if (msg.done_by) return json({ error: 'Schon erledigt' }, 409);
+      if (msg.closed_at) return json({ error: 'Die Meldung ist bereits geschlossen' }, 409);
+
+      if (msg.threat_strike) {
+        // Strich angedroht: Erledigt friert nur den Timer ein – der Urheber nimmt ab
+        await admin.from('messages').update({ done_by: me.id, done_at: new Date().toISOString() }).eq('id', msg.id);
+        await sendPush({
+          title: `Bitte abnehmen: ${msg.title}`,
+          body: `${meName} meldet „erledigt“. Nimm das Ergebnis ab oder vergib den Strich.`,
+          tag: `done-${msg.id}`,
+          url: `?tab=start&msg=${msg.id}`,
+          urgency: 'dringend',
+        }, { toUsers: [msg.author_id], high: true, contact: origin });
+        return json({ ok: true, deleted: false, review: true });
+      }
 
       if (msg.delete_on_done) {
         await admin.from('messages').delete().eq('id', msg.id);
@@ -65,6 +80,7 @@ Deno.serve(async (req) => {
       if (!msg) return json({ error: 'Meldung nicht gefunden' }, 404);
       if (!msg.needs_ack) return json({ error: 'Für diese Meldung ist keine Rückmeldung vorgesehen' }, 400);
       if (msg.author_id === me.id) return json({ error: 'Auf die eigene Meldung kann man nicht antworten' }, 400);
+      if (msg.closed_at) return json({ error: 'Die Meldung ist bereits geschlossen' }, 409);
       const options: string[] = msg.ack_options?.length ? msg.ack_options : ['Erledigt'];
       const option = String(body.option ?? '');
       if (!options.includes(option)) return json({ error: 'Diese Antwort gibt es nicht' }, 400);
@@ -98,6 +114,46 @@ Deno.serve(async (req) => {
         urgency: 'info',
       }, { toUsers: recipients, contact: origin });
       return json(r);
+    }
+
+    if (body.action === 'review') {
+      const { data: msg } = await admin.from('messages').select('*').eq('id', body.messageId).maybeSingle();
+      if (!msg) return json({ error: 'Meldung nicht gefunden' }, 404);
+      if (msg.author_id !== me.id) return json({ error: 'Nur der Urheber kann abnehmen' }, 403);
+      if (!msg.threat_strike) return json({ error: 'Für diese Meldung wurde kein Strich angedroht' }, 400);
+      if (msg.closed_at) return json({ error: 'Die Meldung ist bereits geschlossen' }, 409);
+      const { data: resps } = await admin.from('message_responses').select('user_id').eq('message_id', msg.id);
+      const reacted = [...new Set([msg.done_by, ...(resps ?? []).map((r) => r.user_id)].filter(Boolean))] as string[];
+      if (!reacted.length) return json({ error: 'Es gibt noch keine Rückmeldung zum Abnehmen' }, 400);
+      const now = new Date().toISOString();
+
+      if (body.verdict === 'accept') {
+        await admin.from('messages').update({ closed_at: now, review_status: 'accepted' }).eq('id', msg.id);
+        await sendPush({
+          title: `👍 Abgenommen: ${msg.title}`, body: `${meName} hat das Ergebnis abgenommen.`,
+          tag: `review-${msg.id}`, url: `?tab=start&msg=${msg.id}`, urgency: 'info',
+        }, { toUsers: reacted, contact: origin });
+        return json({ ok: true });
+      }
+
+      if (body.verdict === 'strike') {
+        const reason = String(body.reason ?? '').trim().slice(0, 200);
+        if (!reason) return json({ error: 'Bitte einen Grund angeben' }, 400);
+        const full = `${reason} – ${msg.title}`;
+        const { error } = await admin.from('strikes').insert(reacted.map((uid) => ({ user_id: uid, message_id: msg.id, given_by: me.id, reason: full })));
+        if (error) throw error;
+        for (const uid of reacted) {
+          const { data: prof } = await admin.from('profiles').select('strikes').eq('id', uid).single();
+          await admin.from('profiles').update({ strikes: (prof?.strikes ?? 0) + 1 }).eq('id', uid);
+        }
+        await admin.from('messages').update({ closed_at: now, review_status: 'rejected', strike_note: reason }).eq('id', msg.id);
+        await sendPush({
+          title: `😈 Strich: ${msg.title}`, body: `${meName}: ${reason}`,
+          tag: `review-${msg.id}`, url: `?tab=start&msg=${msg.id}`, urgency: 'dringend',
+        }, { toUsers: reacted, high: true, contact: origin });
+        return json({ ok: true });
+      }
+      return json({ error: 'Unbekannte Entscheidung' }, 400);
     }
 
     return json({ error: 'Unbekannte Aktion' }, 400);
