@@ -827,3 +827,6 @@ body.nav-tabs .ds-menu { bottom: calc(var(--tabbar-h) + env(safe-area-inset-bott
 .ds-switch .ds-switch-label { white-space: nowrap; }
 .ds-blue.ds-switch { background: linear-gradient(90deg, #8fb8e6 0 50px, #dcdce0 50px), #dcdce0; }
 .ds-switch:active { filter: brightness(.95); transform: translateY(1px); }
+
+.tabbar span { font-size: .8rem; }
+.row-btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }

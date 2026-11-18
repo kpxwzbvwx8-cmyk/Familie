@@ -1453,11 +1453,10 @@ function setupMenu() {
     const next = getNavMode() === 'tabs' ? 'x' : 'tabs';
     closeMenu(() => {
       setNavMode(next);
-      toast(next === 'tabs' ? 'Reiter-Ansicht aktiv – das Menü erreichst du unten rechts.' : 'X-Menü aktiv');
+      toast(next === 'tabs' ? 'Reiter-Ansicht aktiv – zurück zum X-Menü geht es unter Einstellungen.' : 'X-Menü aktiv');
     });
   });
   document.querySelectorAll('.tabbar [data-tab]').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
-  document.querySelector('.tabbar [data-open-menu]').addEventListener('click', openMenu);
   $('#menu-btn').addEventListener('click', () => ($('#menu').hidden || $('#menu').classList.contains('closing') ? openMenu() : closeMenu()));
   $('#menu-back').addEventListener('click', () => closeMenu());
   $('#menu-backdrop').addEventListener('click', () => closeMenu());
@@ -1502,7 +1501,7 @@ function renderSettings(view) {
       </div>
       ${state.me ? `<div class="setting-row">
         <div><b>Profil</b><p class="hint">${esc(fullName(state.me))}</p></div>
-        <button class="btn small" id="set-profile">Bearbeiten</button>
+        <span class="row-btns"><button class="btn small" id="set-card">Ansehen</button><button class="btn small" id="set-profile">Bearbeiten</button></span>
       </div>` : ''}
       <div class="setting-row">
         <div><b>App-Version</b><p class="hint">${esc(CFG.version || 'dev')}</p></div>
@@ -1512,6 +1511,7 @@ function renderSettings(view) {
   $('#theme-toggle', view).addEventListener('click', () => { toggleTheme(); render(); });
   const push = $('#set-push', view); if (push) push.addEventListener('click', enablePush);
   const prof = $('#set-profile', view); if (prof) prof.addEventListener('click', openEditProfile);
+  const card = $('#set-card', view); if (card) card.addEventListener('click', () => openTrainerCard(state.me));
   $('#set-update', view).addEventListener('click', checkForUpdate);
   $('#set-nav', view).addEventListener('click', () => setNavMode(getNavMode() === 'tabs' ? 'x' : 'tabs'));
 }
