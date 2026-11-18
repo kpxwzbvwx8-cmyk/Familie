@@ -807,3 +807,8 @@ body.menu-open .fab { opacity: 0; pointer-events: none; transition: opacity .15s
 .comment-form { display: flex; gap: 6px; }
 .comment-form input { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: var(--surface); }
 .msg .count { color: var(--muted); }
+
+input.dt { width: 100%; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--bg); }
+#ack-box .toggle-row { margin-top: 6px; }
+.msg .deadline { color: var(--text); }
+.msg .deadline.over { color: var(--danger); }

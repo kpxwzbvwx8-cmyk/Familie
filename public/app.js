@@ -147,6 +147,8 @@ function mapMessage(r) {
     doneBy: r.done_by || null,
     doneAt: r.done_at || null,
     ackOptions: Array.isArray(r.ack_options) && r.ack_options.length ? r.ack_options : null,
+    deadlineAt: r.deadline_at || null,
+    respondBy: r.respond_by || null,
   };
 }
 
@@ -735,6 +737,10 @@ function icsUrl(m) {
 }
 
 const HELP = {
+  autoDelete: 'Die Meldung verschwindet zum eingestellten Zeitpunkt automatisch für alle – praktisch für Dinge, die sich danach erledigt haben.',
+  event: 'Für Termine mit Dauer: Zusätzlich zum Start gibst du das Ende des Zeitraums an (von Minuten bis Jahren). Der Zeitraum wird auch so in den Kalender übernommen.',
+  deadline: 'Bis wann etwas erledigt sein muss. Die Deadline steht gut sichtbar in der Meldung.',
+  respondBy: 'Bis wann geantwortet werden soll. Wer bis eine Stunde vor Ablauf noch nicht geantwortet hat, bekommt eine Erinnerung.',
   notify: 'Wenn die Glocke an ist, bekommen alle anderen beim Absenden sofort eine Benachrichtigung. '
     + 'Ist sie aus, wird beim Absenden niemand benachrichtigt – spätere Benachrichtigungen (Erinnerung zum Beginn, Rückmeldungen) kommen trotzdem.',
   remind: 'Wenn die Glocke an ist, bekommen alle zum Beginn des Ereignisses eine Benachrichtigung – das Handy vibriert bzw. klingelt (je nach Einstellungen des Handys). '
@@ -812,6 +818,8 @@ function messageHtml(m) {
       <div class="msg-meta">
         <span class="author"><span class="dot" style="--c:${esc(author ? author.color : '#888888')}"></span>${esc(author ? fullName(author) : 'Unbekannt')} · <span data-rel="${esc(m.createdAt)}">${esc(relative(m.createdAt))}</span></span>
         ${m.eventAt ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt))}${m.remindAtStart ? ' <span title="Erinnerung zum Beginn">🔔</span>' : ''}</span>` : ''}
+        ${m.deadlineAt ? `<span class="deadline${Date.parse(m.deadlineAt) < Date.now() ? ' over' : ''}">⏳ Deadline: ${esc(formatDateTime(m.deadlineAt))}</span>` : ''}
+        ${m.needsAck && m.respondBy ? `<span class="more">✉️ Antworten bis ${esc(formatDateTime(m.respondBy))}</span>` : ''}
         ${m.doneBy ? `<span class="done-line">✓ Erledigt von ${esc(doneBy ? doneBy.firstName : 'jemandem')}</span>` : ''}
         ${m.needsAck ? `<span class="count">✉️ ${resps.length ? `${resps.length} Antwort${resps.length === 1 ? '' : 'en'}` : 'Rückmeldung erbeten'}</span>` : ''}
         ${comments.length ? `<span class="count">💬 ${comments.length} Kommentar${comments.length === 1 ? '' : 'e'}</span>` : ''}
@@ -1055,13 +1063,14 @@ function openNewMessage() {
        <label class="field"><span>Beschreibung</span><textarea name="description" maxlength="4000" placeholder="Details …"></textarea></label>
        <label class="field"><span>Urheber</span><input value="${esc(fullName(state.me))}" readonly></label>
        <div class="field">
-         <div class="field-head"><span>Zeitpunkt</span>${bellToggle('remind', false, 'Beim Beginn des Ereignisses vibrieren')}${helpBtn('remind')}</div>
-         <div class="range">
-           <label><span class="mini">von</span><input name="eventAt" type="datetime-local" value="${toLocalInput(now)}"></label>
-           <label><span class="mini">bis (optional – für Zeiträume)</span><input name="endAt" type="datetime-local"></label>
-         </div>
+         <div class="field-head"><span>Zeitpunkt</span>${bellToggle('remind', true, 'Beim Beginn des Ereignisses vibrieren')}${helpBtn('remind')}</div>
+         <input name="eventAt" type="datetime-local" value="${toLocalInput(now)}" aria-label="Startzeitpunkt" class="dt">
        </div>
-       <div class="toggle-row"><span>Automatisch löschen?</span>${switchToggle('autoDelete')}</div>
+       <div class="toggle-row"><span>Ereignis?</span>${helpBtn('event')}${switchToggle('hasEnd')}</div>
+       <label class="field" id="end-box" hidden><span>Ende des Zeitraums</span><input name="endAt" type="datetime-local" class="dt"></label>
+       <div class="toggle-row"><span>Deadline?</span>${helpBtn('deadline')}${switchToggle('hasDeadline')}</div>
+       <label class="field" id="deadline-box" hidden><span>Deadline</span><input name="deadlineAt" type="datetime-local" class="dt"></label>
+       <div class="toggle-row"><span>Automatisch löschen?</span>${helpBtn('autoDelete')}${switchToggle('autoDelete')}</div>
        <div class="field" id="auto-delete-box" hidden>
          <input name="deleteAt" type="datetime-local" min="${toLocalInput(now)}" aria-label="Automatisch löschen am">
          <div class="chips">${presets.map((p, i) => `<button type="button" class="chip" data-preset="${i}">${p.label}</button>`).join('')}</div>
@@ -1071,6 +1080,8 @@ function openNewMessage() {
        <div class="field" id="ack-box" hidden>
          <div class="ack-list" id="ack-list">${ackOptionRow('Erledigt')}</div>
          <button type="button" class="btn small ack-add" id="ack-add" aria-label="Weitere Antwortmöglichkeit">＋</button>
+         <div class="toggle-row"><span>Rückmeldung bis?</span>${helpBtn('respondBy')}${switchToggle('hasRespondBy')}</div>
+         <input name="respondBy" type="datetime-local" class="dt" id="respond-by-box" hidden aria-label="Rückmeldung bis">
        </div>
        <div class="toggle-row"><span>Löschen, wenn erledigt?</span>${helpBtn('doneDelete')}${switchToggle('deleteOnDone')}</div>
        <p class="error" id="msg-error"></p>
@@ -1097,6 +1108,16 @@ function openNewMessage() {
         });
         form.elements.deleteAt.addEventListener('input', () => setActive(-1));
         // Nur einer der drei Regler darf an sein
+        // Zeilen klappen erst auf, wenn ihr Regler an ist
+        [['hasEnd', '#end-box', 'endAt'], ['hasDeadline', '#deadline-box', 'deadlineAt'], ['hasRespondBy', '#respond-by-box', 'respondBy']]
+          .forEach(([name, box, field]) => form.elements[name].addEventListener('change', () => {
+            const on = form.elements[name].checked;
+            $(box, modal).hidden = !on;
+            if (on && !form.elements[field].value) {
+              const base = form.elements.eventAt.value ? new Date(form.elements.eventAt.value) : new Date();
+              form.elements[field].value = toLocalInput(new Date(base.getTime() + 3600e3));
+            }
+          }));
         const exclusive = ['autoDelete', 'needsAck', 'deleteOnDone'];
         const syncBoxes = () => {
           $('#auto-delete-box', modal).hidden = !form.elements.autoDelete.checked;
@@ -1135,14 +1156,19 @@ function openNewMessage() {
           const toIso = (v) => (v ? new Date(v).toISOString() : null);
           const title = f.get('title').trim();
           const eventAt = toIso(f.get('eventAt'));
-          const endAt = toIso(f.get('endAt'));
+          const endAt = form.elements.hasEnd.checked ? toIso(f.get('endAt')) : null;
+          const deadlineAt = form.elements.hasDeadline.checked ? toIso(f.get('deadlineAt')) : null;
+          const respondBy = form.elements.needsAck.checked && form.elements.hasRespondBy.checked ? toIso(f.get('respondBy')) : null;
           const deleteAt = form.elements.autoDelete.checked ? toIso(f.get('deleteAt')) : null;
-          const remind = form.elements.remind.checked;
+          // Erinnerung nur, wenn der Start noch mindestens 2 Minuten entfernt ist (sonst käme sie sofort)
+          const remind = form.elements.remind.checked && eventAt && Date.parse(eventAt) > Date.now() + 2 * 60e3;
           err.textContent = '';
           if (!title) { err.textContent = 'Bitte einen Titel angeben.'; return; }
-          if (endAt && !eventAt) { err.textContent = 'Für einen Zeitraum bitte auch den Beginn angeben.'; return; }
+          if (!eventAt) { err.textContent = 'Bitte einen Startzeitpunkt angeben.'; return; }
+          if (form.elements.hasEnd.checked && !endAt) { err.textContent = 'Bitte das Ende des Zeitraums angeben.'; return; }
+          if (form.elements.hasDeadline.checked && !deadlineAt) { err.textContent = 'Bitte eine Deadline angeben.'; return; }
+          if (form.elements.needsAck.checked && form.elements.hasRespondBy.checked && !respondBy) { err.textContent = 'Bitte angeben, bis wann geantwortet werden soll.'; return; }
           if (endAt && Date.parse(endAt) < Date.parse(eventAt)) { err.textContent = 'Das Ende liegt vor dem Beginn.'; return; }
-          if (remind && !eventAt) { err.textContent = 'Für die Erinnerung bitte einen Zeitpunkt angeben.'; return; }
           if (form.elements.autoDelete.checked && !deleteAt) { err.textContent = 'Bitte ein Löschdatum wählen.'; return; }
           const ackOptions = form.elements.needsAck.checked
             ? [...new Set([...modal.querySelectorAll('#ack-list input')].map((i) => i.value.trim()).filter(Boolean))]
@@ -1158,6 +1184,8 @@ function openNewMessage() {
               description: f.get('description').trim(),
               event_at: eventAt,
               end_at: endAt,
+              deadline_at: deadlineAt,
+              respond_by: respondBy,
               delete_at: deleteAt,
               remind_at_start: remind,
               needs_ack: form.elements.needsAck.checked,

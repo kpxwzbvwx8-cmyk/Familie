@@ -29,5 +29,30 @@ Deno.serve(async (req) => {
   // zu alte, nie verschickte Erinnerungen abhaken
   await admin.from('messages').update({ reminder_sent: true })
     .eq('remind_at_start', true).eq('reminder_sent', false).lt('event_at', since);
-  return json({ reminders: due?.length ?? 0, sent });
+  // Rückmelde-Fristen: 1 Stunde vor Ablauf alle erinnern, die noch nicht geantwortet haben (außer dem Urheber)
+  const { data: deadlines } = await admin.from('messages')
+    .update({ respond_reminder_sent: true })
+    .eq('needs_ack', true).eq('respond_reminder_sent', false)
+    .not('respond_by', 'is', null)
+    .lte('respond_by', new Date(Date.now() + 3600e3).toISOString())
+    .select('*');
+  let fristen = 0;
+  for (const msg of deadlines ?? []) {
+    if (Date.parse(msg.respond_by) < Date.now()) continue; // Frist schon vorbei – nicht mehr erinnern
+    const { data: answered } = await admin.from('message_responses').select('user_id').eq('message_id', msg.id);
+    const done = new Set([msg.author_id, ...(answered ?? []).map((r) => r.user_id)]);
+    const { data: members } = await admin.from('profiles').select('id');
+    const toUsers = (members ?? []).map((m) => m.id).filter((id) => !done.has(id));
+    if (!toUsers.length) continue;
+    const time = new Date(msg.respond_by).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' });
+    const r = await sendPush({
+      title: `⏳ Rückmeldung bis ${time}: ${msg.title}`,
+      body: 'Noch eine Stunde – bitte antworte in der Meldung.',
+      tag: `frist-${msg.id}`,
+      url: `?tab=start&msg=${msg.id}`,
+      urgency: 'wichtig',
+    }, { toUsers, high: true });
+    sent += r.sent; fristen++;
+  }
+  return json({ reminders: due?.length ?? 0, fristen, sent });
 });
