@@ -1421,9 +1421,49 @@ function pokemonTileHtml(p) {
   </button>`;
 }
 
+/* ---- Team-Ansichten: „Übersicht“ (Kacheln) und „Party“ (wie der Pokémon-Bildschirm im Spiel) ---- */
+function getTeamView() {
+  try { return localStorage.getItem('familie.teamView') === 'party' ? 'party' : 'uebersicht'; } catch { return 'uebersicht'; }
+}
+
+function partySlotHtml(entry, i) {
+  const { kind, id, name, gender, sprite, birthday, selected } = entry;
+  const xp = birthday ? xpInfo(parseBirthday(birthday)) : null;
+  const pct = xp ? Math.min(100, (xp.xp / xp.total) * 100) : 0;
+  return `<button type="button" class="party-slot${selected ? ' selected' : ''}${i % 2 ? ' right' : ''}" data-party-kind="${kind}" data-party-id="${esc(id)}">
+    <span class="party-ball" aria-hidden="true"></span>
+    <span class="party-icon">${sprite ? `<img class="sprite" src="${esc(sprite)}" alt="">` : ''}</span>
+    <span class="party-name">${esc(name)}</span>
+    ${gender ? `<span class="party-gender">${genderSvg(gender)}</span>` : ''}
+    ${xp ? `<span class="party-bar"><span class="party-bar-tag">XP</span><span class="party-bar-track"><span class="party-bar-fill" style="width:${pct.toFixed(1)}%"></span></span></span>
+    <span class="party-lv">Lv.${xp.level}</span>
+    <span class="party-xp">${xp.xp} /${xp.total}</span>` : `<span class="party-egg-hint">SSW ${esc(eggInfo().ssw)} · ${eggInfo().remaining} T</span>`}
+  </button>`;
+}
+
+function renderParty() {
+  const users = state.users.slice().sort((a, b) => fullName(a).localeCompare(fullName(b), 'de'));
+  const entries = [
+    ...users.map((u) => ({ kind: 'user', id: u.id, name: u.firstName.toUpperCase(), gender: u.gender, sprite: SPRITES[u.gender], birthday: u.birthday, selected: state.me && u.id === state.me.id })),
+    ...POKEMON.map((p) => ({ kind: 'pokemon', id: p.id, name: p.firstName.toUpperCase(), gender: p.gender, sprite: p.sprite, birthday: p.birthday })),
+    { kind: 'egg', id: 'egg', name: 'EI', sprite: asset('img/egg.png') },
+  ];
+  return `<div class="party">
+    <div class="party-grid">${entries.map(partySlotHtml).join('')}</div>
+    <div class="party-foot">
+      <button type="button" class="party-menu-btn" id="party-menu">MENÜ</button>
+    </div>
+  </div>`;
+}
+
 function renderTeam(view) {
   const users = state.users.slice().sort((a, b) => fullName(a).localeCompare(fullName(b), 'de'));
-  const grid = `<div class="team-grid">${users
+  const mode = getTeamView();
+  const switcher = `<div class="card-tabs team-switch" role="tablist" aria-label="Team-Ansicht">
+    <button type="button" role="tab" data-team-view="uebersicht" class="${mode === 'uebersicht' ? 'active' : ''}" aria-selected="${mode === 'uebersicht'}">Übersicht</button>
+    <button type="button" role="tab" data-team-view="party" class="${mode === 'party' ? 'active' : ''}" aria-selected="${mode === 'party'}">Party</button>
+  </div>`;
+  const grid = mode === 'party' ? renderParty() : `<div class="team-grid">${users
     .map((u) => {
       const age = ageParts(parseBirthday(u.birthday));
       return `<button class="team-tile" data-user="${esc(u.id)}" style="${colorVars(u.color)}">
@@ -1440,7 +1480,19 @@ function renderTeam(view) {
       </div>`
     : '';
   const version = `<p class="app-version">App-Version: ${esc(CFG.version || 'dev')}</p>`;
-  view.innerHTML = grid + invite + version;
+  view.innerHTML = switcher + grid + invite + version;
+  view.querySelectorAll('[data-team-view]').forEach((b) => b.addEventListener('click', () => {
+    try { localStorage.setItem('familie.teamView', b.dataset.teamView); } catch { /* privat */ }
+    render();
+  }));
+  view.querySelectorAll('[data-party-kind]').forEach((b) => b.addEventListener('click', () => {
+    const { partyKind: kind, partyId: id } = b.dataset;
+    if (kind === 'user') openTrainerCard(userById(id));
+    else if (kind === 'pokemon') openTrainerCard(pokemonById(id));
+    else openEggMemo();
+  }));
+  const pm = $('#party-menu', view);
+  if (pm) pm.addEventListener('click', openMenu);
   view.querySelectorAll('[data-user]').forEach((b) =>
     b.addEventListener('click', () => openTrainerCard(userById(b.dataset.user)))
   );
