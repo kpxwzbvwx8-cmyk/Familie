@@ -2173,7 +2173,7 @@ async function loadEvents() {
     sb.from('event_comments').select('*').order('created_at', { ascending: true }),
   ]);
   state.events = must(ev).map(mapEvent);
-  state.invites = must(inv).map((r) => ({ eventId: r.event_id, userId: r.user_id, status: r.status, respondedAt: r.responded_at }));
+  state.invites = must(inv).map((r) => ({ eventId: r.event_id, userId: r.user_id, status: r.status, respondedAt: r.responded_at, createdAt: r.created_at }));
   state.eventComments = must(com).map((r) => ({ id: r.id, eventId: r.event_id, authorId: r.author_id, body: r.body, createdAt: r.created_at }));
   state.eventsLoaded = true;
 }
@@ -4397,8 +4397,18 @@ function openDossier(userId) {
  *  blau für Trainer, rosa für Trainerinnen
  * ---------------------------------------------------------------------- */
 
-const APP_VERSION = '1.0';
+const APP_VERSION = '1.0.0.1';
 const CHANGELOG = [
+  {
+    version: '1.0.0.1', date: '2026-11-18', title: 'Was ist passiert?',
+    intro: 'Nie mehr etwas verpassen: Oben links neben dem Pokéball wohnt jetzt das Tagebuch.',
+    items: [
+      'Tagebuch-Knopf oben neben dem Pokéball',
+      'Er wackelt und funkelt, wenn in deiner Abwesenheit etwas passiert ist',
+      'Seite „Seit deinem letzten Besuch“: alles auf einen Blick',
+      'Antippen bringt dich direkt zur Meldung, zum Termin, zur Notiz oder zum Board',
+    ],
+  },
   {
     version: '1.0', date: '2026-11-18', title: 'Willkommen!',
     intro: 'Unsere Familien-App ist offiziell gestartet! Alles, was in den letzten zwei Tagen entstanden ist, steckt jetzt in Version 1.0. Ab sofort steht hier im Tagebuch, was sich mit jedem Update ändert.',
@@ -4499,14 +4509,15 @@ function diaryPageHtml(entry) {
 }
 
 /** Tagebuch öffnen; start = Index im CHANGELOG (0 = neueste Version) */
-function openDiary(start = 0, { welcome = false } = {}) {
+function openDiary(start = 0, { welcome = false, feed = false } = {}) {
   return new Promise((resolve) => {
     let i = start;
+    const PAGES = feed ? [{ feed: true }, ...CHANGELOG] : CHANGELOG;
     const theme = state.me && state.me.gender === 'w' ? 'pink' : 'blue';
     openModal(
       `<div class="diary diary-${theme}">
         <div class="diary-top">
-          <span class="diary-label">${welcome ? 'Neu in der App!' : 'Tagebuch · Updates'}</span>
+          <span class="diary-label">${welcome ? 'Neu in der App!' : feed ? 'Tagebuch' : 'Tagebuch · Updates'}</span>
           <button class="icon-btn" data-close aria-label="Schließen">✕</button>
         </div>
         <div class="diary-sheet" id="diary-sheet"></div>
@@ -4521,14 +4532,18 @@ function openDiary(start = 0, { welcome = false } = {}) {
         onMount: (modal, close) => {
           const sheet = $('#diary-sheet', modal);
           const show = () => {
-            sheet.innerHTML = diaryPageHtml(CHANGELOG[i]);
+            sheet.innerHTML = PAGES[i].feed ? feedPageHtml() : diaryPageHtml(PAGES[i]);
             sheet.classList.remove('flip'); void sheet.offsetWidth; sheet.classList.add('flip');
-            $('#diary-count', modal).textContent = `${i + 1} / ${CHANGELOG.length}`;
-            modal.querySelector('[data-dir="1"]').disabled = i >= CHANGELOG.length - 1;
+            $('#diary-count', modal).textContent = PAGES[i].feed ? 'Neuigkeiten' : `v${PAGES[i].version}`;
+            modal.querySelector('[data-dir="1"]').disabled = i >= PAGES.length - 1;
+            sheet.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => {
+              close();
+              followDiaryLink(JSON.parse(b.dataset.go));
+            }));
             modal.querySelector('[data-dir="-1"]').disabled = i <= 0;
           };
           modal.querySelectorAll('[data-dir]').forEach((b) => b.addEventListener('click', () => {
-            i = Math.min(CHANGELOG.length - 1, Math.max(0, i + Number(b.dataset.dir)));
+            i = Math.min(PAGES.length - 1, Math.max(0, i + Number(b.dataset.dir)));
             show();
           }));
           let sx = null;
@@ -4536,7 +4551,7 @@ function openDiary(start = 0, { welcome = false } = {}) {
           sheet.addEventListener('touchend', (e) => {
             if (sx == null) return;
             const dx = e.changedTouches[0].clientX - sx; sx = null;
-            if (Math.abs(dx) > 50) { i = Math.min(CHANGELOG.length - 1, Math.max(0, i + (dx < 0 ? 1 : -1))); show(); }
+            if (Math.abs(dx) > 50) { i = Math.min(PAGES.length - 1, Math.max(0, i + (dx < 0 ? 1 : -1))); show(); }
           });
           show();
           new MutationObserver((_, obs) => { if (!modal.isConnected) { obs.disconnect(); resolve(); } })
@@ -4545,6 +4560,132 @@ function openDiary(start = 0, { welcome = false } = {}) {
       }
     );
   });
+}
+
+/* ---- Seit deinem letzten Besuch ---------------------------------------- */
+
+const AWAY_KEY = 'familie.awayWindow';   // { from, to, ack }
+const ACTIVE_KEY = 'familie.lastActive'; // zuletzt aktiv (wird regelmäßig gesetzt)
+
+/** Beim Zurückkehren: Abwesenheitsfenster bestimmen (ungelesene Fenster werden zusammengeführt) */
+function markReturn() {
+  const now = Date.now();
+  const last = lsGet(ACTIVE_KEY, null);
+  const prev = lsGet(AWAY_KEY, null);
+  if (last && now - last > 60e3) {
+    const from = prev && !prev.ack ? Math.min(prev.from, last) : last;
+    lsSet(AWAY_KEY, { from, to: now, ack: false });
+  } else if (prev && !prev.ack) {
+    lsSet(AWAY_KEY, { ...prev, to: now });
+  }
+  lsSet(ACTIVE_KEY, now);
+}
+function markActive() { lsSet(ACTIVE_KEY, Date.now()); }
+setInterval(() => { if (document.visibilityState === 'visible' && state.me) markActive(); }, 30e3);
+window.addEventListener('pagehide', markActive);
+
+/** Alles, was andere im Abwesenheitsfenster getan haben */
+function awayFeed() {
+  const w = lsGet(AWAY_KEY, null);
+  if (!w || !state.me) return { items: [], window: w };
+  const me = state.me.id;
+  const inWin = (iso) => { const t = Date.parse(iso); return t > w.from && t <= w.to + 5000; };
+  const who = (id) => nameOf(id, 'Jemand');
+  const items = [];
+  const push = (iso, icon, text, go) => { if (iso && inWin(iso)) items.push({ t: Date.parse(iso), icon, text, go }); };
+  for (const m of state.messages) {
+    if (m.authorId !== me) push(m.createdAt, m.urgency === 'info' ? '🟣' : '📨', `${who(m.authorId)}: ${m.urgency === 'info' ? 'neue Info' : 'neue Meldung'} „${m.title}“`, { msg: m.id });
+    if (m.doneBy && m.doneBy !== me) push(m.doneAt, '✅', `${who(m.doneBy)} hat „${m.title}“ erledigt`, { msg: m.id });
+    for (const r of state.responses.get(m.id) || []) if (r.userId !== me) push(r.createdAt, '✉️', `${who(r.userId)} antwortet „${r.option}“ – ${m.title}`, { msg: m.id });
+    for (const c of state.comments.get(m.id) || []) if (c.authorId !== me) push(c.createdAt, '💬', `${who(c.authorId)} kommentiert „${m.title}“`, { msg: m.id });
+  }
+  for (const s of state.strikes) {
+    for (const h of s.history) {
+      if (h.by === me) continue;
+      const target = s.userId === me ? 'dir' : who(s.userId);
+      const txt = {
+        given: `${who(h.by)} gibt ${target} ${strikeWord(s.value)}: „${s.title}“`,
+        appealed: `${who(h.by)} legt Einspruch ein: „${s.title}“`,
+        acknowledged: `${who(h.by)} erkennt den Strich an: „${s.title}“`,
+        upheld: `${who(h.by)} bewertet den Strich neu: „${s.title}“`,
+        forced: `${who(h.by)} boxt den Strich durch: „${s.title}“`,
+        withdrawn: `${who(h.by)} zieht den Strich zurück: „${s.title}“`,
+      }[h.type];
+      if (txt) push(h.at, '😈', txt, { tab: 'schande' });
+    }
+  }
+  for (const r of state.rules) if (r.createdBy !== me) push(r.createdAt, '⚖️', `${who(r.createdBy)} schlägt einen Strafgrund vor: „${r.title}“`, { tab: 'schande' });
+  for (const f of state.fines) for (const c of f.confirmations) if (c.by !== me) push(c.at, '💶', `${who(c.by)} bestätigt die Bezahlung von 10 €`, { tab: 'schande' });
+  for (const n of state.notes || []) if (n.updatedBy && n.updatedBy !== me) push(n.updatedAt, '📝', `${who(n.updatedBy)} hat die Notiz „${n.title || 'Ohne Überschrift'}“ bearbeitet`, { note: n.id });
+  for (const ev of state.events || []) {
+    if (ev.ownerId !== me) {
+      if (!invitesOf(ev).some((i) => i.userId === me)) push(ev.createdAt, '📅', `${who(ev.ownerId)} trägt einen Termin ein: „${ev.title}“`, { event: ev.id });
+      if (Date.parse(ev.updatedAt) - Date.parse(ev.createdAt) > 5000) push(ev.updatedAt, '📅', `${who(ev.ownerId)} ändert den Termin „${ev.title}“`, { event: ev.id });
+    }
+    for (const i of invitesOf(ev)) {
+      if (i.userId === me && ev.ownerId !== me) push(i.createdAt, '📨', `${who(ev.ownerId)} lädt dich ein: „${ev.title}“`, { event: ev.id });
+      if (i.userId !== me && i.respondedAt) push(i.respondedAt, i.status === 'accepted' ? '✅' : '❌', `${who(i.userId)} ${i.status === 'accepted' ? 'sagt zu' : 'sagt ab'}: „${ev.title}“`, { event: ev.id });
+    }
+  }
+  for (const c of state.eventComments || []) {
+    if (c.authorId === me) continue;
+    const ev = state.events.find((e) => e.id === c.eventId);
+    if (ev) push(c.createdAt, '💬', `${who(c.authorId)} kommentiert den Termin „${ev.title}“`, { event: ev.id });
+  }
+  // doppelte (z. B. Termin angelegt + Einladung) zusammenfassen
+  const seen = new Set();
+  const unique = items.filter((x) => { const k = `${x.text}|${Math.round(x.t / 60000)}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  unique.sort((a, b) => a.t - b.t);
+  return { items: unique, window: w };
+}
+
+function syncDiaryButton() {
+  const btn = document.getElementById('diary-btn');
+  if (!btn) return;
+  if (state.me) btn.style.setProperty('--diary-cover', state.me.gender === 'w' ? '#e48aa8' : '#4f8fd8');
+  const w = lsGet(AWAY_KEY, null);
+  const n = w && !w.ack ? awayFeed().items.length : 0;
+  btn.classList.toggle('has-news', n > 0);
+  btn.querySelector('.diary-badge').textContent = n > 9 ? '9+' : n ? String(n) : '';
+  btn.setAttribute('aria-label', n ? `Tagebuch – ${n} Neuigkeiten seit deinem letzten Besuch` : 'Tagebuch');
+}
+
+function feedPageHtml() {
+  const { items, window: w } = awayFeed();
+  const since = w ? new Date(w.from).toLocaleString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }) : null;
+  const today = new Date().toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
+  const weekday = new Date().toLocaleDateString('de-DE', { weekday: 'long' });
+  let lastDay = '';
+  const lines = items.map((x) => {
+    const d = new Date(x.t);
+    const day = d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' });
+    const head = day !== lastDay && items.length > 1 ? `<div class="diary-line diary-sub">${esc(day)}</div>` : '';
+    lastDay = day;
+    return `${head}<button type="button" class="diary-line diary-item" data-go='${esc(JSON.stringify(x.go))}'>
+      <span class="diary-time">${esc(formatTimeOnly(d.toISOString()))}</span> ${x.icon} ${esc(x.text)}</button>`;
+  }).join('');
+  return `<div class="diary-page">
+    <div class="diary-line diary-head"><span>${esc(today)}</span><span>${esc(weekday)}</span></div>
+    <div class="diary-line diary-title">Seit deinem letzten Besuch</div>
+    ${since ? `<div class="diary-line diary-sub">Zuletzt da: ${esc(since)} Uhr</div>` : ''}
+    ${lines || '<div class="diary-line">– Nichts Neues. Alles ruhig in der Familie!</div>'}
+    <div class="diary-line"></div><div class="diary-line"></div>
+  </div>`;
+}
+
+/** Tagebuch-Knopf oben: Neuigkeiten + Updates */
+function openDiaryFeed() {
+  const w = lsGet(AWAY_KEY, null);
+  if (w && !w.ack) lsSet(AWAY_KEY, { ...w, ack: true });
+  openDiary(0, { feed: true }).then(syncDiaryButton);
+  syncDiaryButton();
+}
+
+function followDiaryLink(go) {
+  if (go.msg) { state.highlight = go.msg; setTab('start'); return; }
+  if (go.event) { openEventById(go.event); return; }
+  if (go.note) { setTab('notizen'); openNoteById(go.note); return; }
+  if (go.tab) setTab(go.tab);
 }
 
 /** Beim Start: neue Version einmalig im Tagebuch zeigen */
@@ -4652,6 +4793,7 @@ async function refreshAll() {
     renderProfileButton();
     render();
     checkVerdicts();
+    syncDiaryButton();
   } catch (e) {
     toast(e.message);
   }
@@ -4763,8 +4905,9 @@ setInterval(() => {
 
 // iOS beendet Verbindungen im Hintergrund – beim Zurückkehren neu laden
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') pollForUpdate();
-  if (document.visibilityState === 'visible' && state.me) refreshAll();
+  if (document.visibilityState === 'hidden') { if (state.me) markActive(); return; }
+  pollForUpdate();
+  if (state.me) { markReturn(); refreshAll(); }
 });
 
 /* -------------------------------------------------------------------------
@@ -4772,6 +4915,7 @@ document.addEventListener('visibilitychange', () => {
  * ---------------------------------------------------------------------- */
 
 async function startApp() {
+  markReturn();
   renderProfileButton();
   await Promise.all([loadUsers(), loadMessages(), loadFamilyCode(), loadBoard(), loadNotes(), loadEvents()]).catch((e) => toast(e.message));
   if (state.openNote) { const id = state.openNote; state.openNote = null; openNoteById(id); }
@@ -4779,6 +4923,7 @@ async function startApp() {
   renderProfileButton();
   render();
   checkVerdicts();
+  syncDiaryButton();
   if (hsvEnabled()) { state.hsvRequested = true; loadHsv(); }
   startRealtime();
   syncPushSubscription();
@@ -4800,6 +4945,7 @@ async function startApp() {
 async function init() {
   $('#fab').addEventListener('click', () => (state.tab === 'notizen' ? openNoteEditor() : openCreateMenu()));
   $('#update-btn').addEventListener('click', checkForUpdate);
+  $('#diary-btn').addEventListener('click', () => { if (state.me) openDiaryFeed(); });
   setupMenu();
   darkQuery.addEventListener('change', syncThemeToggle);
   syncThemeToggle();

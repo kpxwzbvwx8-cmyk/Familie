@@ -23,6 +23,17 @@
 <body>
   <header class="topbar">
     <h1 id="tab-title">Start</h1>
+    <button id="diary-btn" class="diary-btn-top" type="button" aria-label="Tagebuch" title="Tagebuch">
+      <svg class="diary-icon" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="6" y="3" width="21" height="26" rx="3" fill="var(--diary-cover, #4f8fd8)" stroke="#1f3c6e" stroke-width="2"/>
+        <rect x="9" y="3" width="3" height="26" fill="rgba(0,0,0,.18)"/>
+        <rect x="14" y="8" width="10" height="7" rx="1.5" fill="#fff" stroke="#1f3c6e" stroke-width="1.2"/>
+        <path d="M16 10.5h6M16 12.8h4" stroke="#1f3c6e" stroke-width="1.1"/>
+        <path d="M22 29v-6l2 1.6 2-1.6v6" fill="#e0485a"/>
+      </svg>
+      <span class="diary-badge" aria-hidden="true"></span>
+      <span class="diary-spark" aria-hidden="true"></span>
+    </button>
     <button id="update-btn" class="update-ball" type="button" aria-label="Nach Updates suchen" title="Nach Updates suchen">
       <span class="ball-sprite" aria-hidden="true"></span>
     </button>

@@ -1726,3 +1726,34 @@ body.nav-tabs .punish-field { bottom: calc(var(--tabbar-h) + env(safe-area-inset
 .diary-sheet { flex: 1 1 auto; overflow: hidden; min-height: 240px; display: flex; flex-direction: column; }
 .diary-sheet .diary-page { flex: 1 1 auto; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .diary-nav { flex: none; padding-bottom: calc(4px + env(safe-area-inset-bottom)); }
+
+/* ---------- Tagebuch-Knopf oben ---------- */
+.diary-btn-top {
+  position: relative; margin-left: auto; margin-right: 6px; flex: none; width: 44px; height: 44px; border: 0; padding: 0;
+  background: none; cursor: pointer; display: grid; place-items: center; border-radius: 12px; -webkit-tap-highlight-color: transparent;
+}
+.diary-btn-top:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.diary-icon { width: 34px; height: 34px; filter: drop-shadow(0 2px 0 rgba(0,0,0,.18)); }
+.diary-badge {
+  position: absolute; top: 0; right: 0; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 999px; display: none;
+  background: #e0485a; color: #fff; font-size: .72rem; line-height: 18px; text-align: center; border: 2px solid var(--surface);
+}
+.diary-spark { position: absolute; inset: 0; pointer-events: none; display: none; }
+.diary-spark::before, .diary-spark::after {
+  content: ""; position: absolute; width: 9px; height: 9px; background: #ffcb05;
+  clip-path: polygon(50% 0, 61% 38%, 100% 50%, 61% 62%, 50% 100%, 39% 62%, 0 50%, 39% 38%);
+  animation: diary-twinkle 1.6s ease-in-out infinite;
+}
+.diary-spark::before { left: -2px; top: 4px; }
+.diary-spark::after { right: 2px; bottom: 0; animation-delay: .8s; }
+.diary-btn-top.has-news .diary-badge, .diary-btn-top.has-news .diary-spark { display: block; }
+.diary-btn-top.has-news .diary-icon { animation: diary-wiggle 2.4s ease-in-out infinite; transform-origin: 50% 90%; }
+@keyframes diary-wiggle { 0%, 70%, 100% { transform: rotate(0); } 75% { transform: rotate(-10deg) translateY(-2px); } 82% { transform: rotate(9deg) translateY(-2px); } 89% { transform: rotate(-5deg); } 95% { transform: rotate(3deg); } }
+@keyframes diary-twinkle { 0%, 100% { opacity: 0; transform: scale(.4); } 50% { opacity: 1; transform: scale(1.1) rotate(20deg); } }
+@media (prefers-reduced-motion: reduce) { .diary-btn-top.has-news .diary-icon, .diary-spark::before, .diary-spark::after { animation: none; } }
+
+/* Neuigkeiten im Tagebuch */
+.diary-sub { color: var(--head); font-size: .95rem; padding-left: 2px; }
+.diary-item { display: block; width: 100%; text-align: left; background: none; border: 0; border-bottom: 2px solid var(--line); font: inherit; color: inherit; cursor: pointer; padding-right: 4px; }
+.diary-item:active { background: rgba(255,255,255,.5); }
+.diary-time { color: var(--head); font-variant-numeric: tabular-nums; }
