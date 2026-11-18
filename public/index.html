@@ -37,6 +37,28 @@
     <span>X</span>
   </button>
 
+  <!-- Alternative Navigation: Reiter unten (umschaltbar über „Menü wechseln“) -->
+  <nav class="tabbar" aria-label="Bereiche">
+    <button type="button" data-tab="start">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v10H8l-4 4z"/></svg><span>Start</span>
+    </button>
+    <button type="button" data-tab="team">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 20c0-3.5 2.7-6 6-6s6 2.5 6 6M14.5 14.5c.8-.3 1.6-.5 2.5-.5 2.5 0 4 1.8 4 4.5"/></svg><span>Team</span>
+    </button>
+    <button type="button" data-tab="notizen">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M9 11h7M9 15h7M9 7h4"/></svg><span>Notizen</span>
+    </button>
+    <button type="button" data-tab="kalender">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg><span>Kalender</span>
+    </button>
+    <button type="button" data-tab="schande">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 8v8M11 8v8M14 8v8M7 15l10-6"/></svg><span>Schande</span>
+    </button>
+    <button type="button" data-open-menu>
+      <span class="tab-x" aria-hidden="true">X</span><span>Menü</span>
+    </button>
+  </nav>
+
   <div id="menu-backdrop" class="menu-backdrop" hidden></div>
   <div id="menu" class="ds-menu" role="dialog" aria-modal="true" aria-label="Menü" hidden>
     <section class="ds-panel">
@@ -53,7 +75,7 @@
       </div>
     </section>
     <section class="ds-side">
-      <div class="ds-box ds-blue" style="--i:8" aria-hidden="true"><span class="ds-key">Y</span><img src="img/menu/bike.png" alt=""></div>
+      <button type="button" id="menu-switch" class="ds-box ds-blue ds-switch" style="--i:8"><span class="ds-key">Y</span><span class="ds-switch-label">Menü wechseln</span></button>
       <div class="ds-box ds-blue" style="--i:9" aria-hidden="true"><img src="img/menu/item.png" alt=""></div>
       <div class="ds-box ds-free" style="--i:10" aria-hidden="true"></div>
       <button type="button" id="menu-back" class="ds-box ds-red" style="--i:11"><span class="ds-key ds-key-a">A</span><span>Zurück</span></button>

@@ -1431,7 +1431,33 @@ function closeMenu(after) {
   if (after) setTimeout(after, 140);
 }
 
+/* Navigation: X-Menü oder Reiter unten (pro Gerät gespeichert) */
+function getNavMode() {
+  try { return localStorage.getItem('familie.nav') === 'tabs' ? 'tabs' : 'x'; } catch { return 'x'; }
+}
+
+function applyNavMode() {
+  const tabs = getNavMode() === 'tabs';
+  document.body.classList.toggle('nav-tabs', tabs);
+}
+
+function setNavMode(mode) {
+  try { localStorage.setItem('familie.nav', mode); } catch { /* privat */ }
+  applyNavMode();
+  render();
+}
+
 function setupMenu() {
+  applyNavMode();
+  $('#menu-switch').addEventListener('click', () => {
+    const next = getNavMode() === 'tabs' ? 'x' : 'tabs';
+    closeMenu(() => {
+      setNavMode(next);
+      toast(next === 'tabs' ? 'Reiter-Ansicht aktiv – das Menü erreichst du unten rechts.' : 'X-Menü aktiv');
+    });
+  });
+  document.querySelectorAll('.tabbar [data-tab]').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
+  document.querySelector('.tabbar [data-open-menu]').addEventListener('click', openMenu);
   $('#menu-btn').addEventListener('click', () => ($('#menu').hidden || $('#menu').classList.contains('closing') ? openMenu() : closeMenu()));
   $('#menu-back').addEventListener('click', () => closeMenu());
   $('#menu-backdrop').addEventListener('click', () => closeMenu());
@@ -1467,6 +1493,10 @@ function renderSettings(view) {
         </button>
       </div>
       <div class="setting-row">
+        <div><b>Navigation</b><p class="hint">${getNavMode() === 'tabs' ? 'Reiter unten' : 'X-Menü'}</p></div>
+        <button class="btn small" id="set-nav">${getNavMode() === 'tabs' ? 'X-Menü nutzen' : 'Reiter nutzen'}</button>
+      </div>
+      <div class="setting-row">
         <div><b>Benachrichtigungen</b><p class="hint">${pushState}</p></div>
         ${pushSupported && Notification.permission === 'default' ? '<button class="btn small primary" id="set-push">Aktivieren</button>' : ''}
       </div>
@@ -1483,6 +1513,7 @@ function renderSettings(view) {
   const push = $('#set-push', view); if (push) push.addEventListener('click', enablePush);
   const prof = $('#set-profile', view); if (prof) prof.addEventListener('click', openEditProfile);
   $('#set-update', view).addEventListener('click', checkForUpdate);
+  $('#set-nav', view).addEventListener('click', () => setNavMode(getNavMode() === 'tabs' ? 'x' : 'tabs'));
 }
 
 /* -------------------------------------------------------------------------
@@ -1558,6 +1589,11 @@ function render() {
   const view = $('#view');
   $('#tab-title').textContent = TABS[state.tab];
   document.title = state.tab === 'start' ? 'Familie' : `${TABS[state.tab]} · Familie`;
+  document.querySelectorAll('.tabbar [data-tab]').forEach((b) => {
+    const active = b.dataset.tab === state.tab;
+    b.classList.toggle('active', active);
+    if (active) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  });
   $('#fab').hidden = !(state.tab === 'start' && state.me);
 
   if (!configured) {
