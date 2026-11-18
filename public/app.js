@@ -2038,6 +2038,10 @@ function renderSettings(view) {
         <span class="row-btns"><button class="btn small" id="set-card">Ansehen</button><button class="btn small" id="set-profile">Bearbeiten</button></span>
       </div>` : ''}
       <div class="setting-row">
+        <div><b>Zähler am App-Symbol</b><p class="hint">${!badgeSupported ? 'Auf diesem Gerät nicht verfügbar (iPhone ab iOS 16.4, App vom Home-Bildschirm)' : badgeEnabled() ? 'an – rote Zahl für Neuigkeiten seit deinem letzten Besuch' : 'aus'}</p></div>
+        ${badgeSupported ? `<button class="btn small" id="set-badge">${badgeEnabled() ? 'Ausschalten' : 'Einschalten'}</button>` : ''}
+      </div>
+      <div class="setting-row">
         <div><b>HSV-Spiele im Kalender</b><p class="hint">${hsvEnabled() ? 'an' : 'aus'}</p></div>
         <button class="btn small" id="set-hsv">${hsvEnabled() ? 'Ausblenden' : 'Einblenden'}</button>
       </div>
@@ -2057,6 +2061,8 @@ function renderSettings(view) {
   $('#set-update', view).addEventListener('click', checkForUpdate);
   $('#set-log', view).addEventListener('click', () => openDiary(0));
   $('#set-hsv', view).addEventListener('click', () => { lsSet('familie.hsvOn', !hsvEnabled()); render(); });
+  const badgeBtn = $('#set-badge', view);
+  if (badgeBtn) badgeBtn.addEventListener('click', () => { lsSet('familie.badgeOn', !badgeEnabled()); syncDiaryButton(); render(); });
   $('#set-nav', view).addEventListener('click', () => setNavMode(getNavMode() === 'tabs' ? 'x' : 'tabs'));
 }
 
@@ -4397,8 +4403,18 @@ function openDossier(userId) {
  *  blau für Trainer, rosa für Trainerinnen
  * ---------------------------------------------------------------------- */
 
-const APP_VERSION = '1.0.0.1';
+const APP_VERSION = '1.0.0.2';
 const CHANGELOG = [
+  {
+    version: '1.0.0.2', date: '2026-11-18', title: 'Rote Zahl am Symbol',
+    items: [
+      'Zähler am App-Symbol auf dem Home-Bildschirm',
+      'Zählt Benachrichtigungen, während die App geschlossen ist',
+      'Beim Öffnen zeigt er die Neuigkeiten seit deinem letzten Besuch',
+      'Verschwindet, sobald du ins Tagebuch geschaut hast',
+      'In den Einstellungen ein- und ausschaltbar',
+    ],
+  },
   {
     version: '1.0.0.1', date: '2026-11-18', title: 'Was ist passiert?',
     intro: 'Nie mehr etwas verpassen: Oben links neben dem Pokéball wohnt jetzt das Tagebuch.',
@@ -4639,6 +4655,22 @@ function awayFeed() {
   return { items: unique, window: w };
 }
 
+/* ---- Zähler am App-Symbol (iOS 16.4+, nur als Home-Bildschirm-App mit Benachrichtigungen) ---- */
+const badgeSupported = 'setAppBadge' in navigator;
+const badgeEnabled = () => lsGet('familie.badgeOn', true) !== false;
+async function setAppBadge(n) {
+  try {
+    const c = await caches.open('familie-badge');
+    await c.put('/badge', new Response(String(n)));
+    await c.put('/badge-off', new Response(badgeEnabled() ? '0' : '1'));
+  } catch { /* egal */ }
+  if (!badgeSupported) return;
+  try {
+    if (n > 0 && badgeEnabled()) await navigator.setAppBadge(n);
+    else await navigator.clearAppBadge();
+  } catch { /* nicht erlaubt */ }
+}
+
 function syncDiaryButton() {
   const btn = document.getElementById('diary-btn');
   if (!btn) return;
@@ -4648,6 +4680,7 @@ function syncDiaryButton() {
   btn.classList.toggle('has-news', n > 0);
   btn.querySelector('.diary-badge').textContent = n > 9 ? '9+' : n ? String(n) : '';
   btn.setAttribute('aria-label', n ? `Tagebuch – ${n} Neuigkeiten seit deinem letzten Besuch` : 'Tagebuch');
+  setAppBadge(n);
 }
 
 function feedPageHtml() {
