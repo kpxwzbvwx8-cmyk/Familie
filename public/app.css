@@ -248,7 +248,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
   text-shadow: 0 1px 2px var(--c-shadow, rgba(0,0,0,.35));
 }
 .team-tile .avatar .sprite { height: 80px; width: auto; align-self: start; margin-top: 2px; }
-.team-tile .avatar .sprite-m { margin-left: -18px; }
+.team-tile .avatar .sprite-m { margin-left: 0; }
 .team-tile .avatar {
   overflow: hidden;
   width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
