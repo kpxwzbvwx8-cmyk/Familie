@@ -861,7 +861,7 @@ function messageHtml(m) {
       </div>
       <div class="msg-actions">
         ${canMarkDone ? `<button class="btn small primary" data-done="${esc(m.id)}">✓ Erledigt</button>` : ''}
-        <a class="btn small" href="${esc(icsUrl(m))}" target="_blank" rel="noopener" title="In Kalender übernehmen">📅 In Kalender</a>
+        ${isCalSubscribed() ? '' : `<a class="btn small" href="${esc(icsUrl(m))}" target="_blank" rel="noopener" title="In Kalender übernehmen">📅 In Kalender</a>`}
         ${mine ? `<button class="btn small danger" data-delete="${esc(m.id)}">Löschen</button>` : ''}
       </div>
       ${m.needsAck ? `<div class="msg-replies msg-extra">
@@ -1837,6 +1837,10 @@ function renderSettings(view) {
         <span class="row-btns"><button class="btn small" id="set-card">Ansehen</button><button class="btn small" id="set-profile">Bearbeiten</button></span>
       </div>` : ''}
       <div class="setting-row">
+        <div><b>Apple-Kalender</b><p class="hint">${isCalSubscribed() ? 'abonniert' : 'nicht abonniert'}</p></div>
+        <button class="btn small" id="set-cal">${isCalSubscribed() ? 'Verwalten' : 'Abonnieren'}</button>
+      </div>
+      <div class="setting-row">
         <div><b>App-Version</b><p class="hint">${esc(CFG.version || 'dev')}</p></div>
         <button class="btn small" id="set-update">Nach Updates suchen</button>
       </div>
@@ -1846,6 +1850,7 @@ function renderSettings(view) {
   const prof = $('#set-profile', view); if (prof) prof.addEventListener('click', openEditProfile);
   const card = $('#set-card', view); if (card) card.addEventListener('click', () => openTrainerCard(state.me));
   $('#set-update', view).addEventListener('click', checkForUpdate);
+  $('#set-cal', view).addEventListener('click', () => setTab('kalender'));
   $('#set-nav', view).addEventListener('click', () => setNavMode(getNavMode() === 'tabs' ? 'x' : 'tabs'));
 }
 
@@ -1912,6 +1917,131 @@ async function checkForUpdate() {
 
 function renderPlaceholder(view, icon, title, text) {
   view.innerHTML = `<div class="empty"><div class="big">${icon}</div><h2>${esc(title)}</h2><p>${esc(text)}</p></div>`;
+}
+
+/* -------------------------------------------------------------------------
+ * Kalender: Abo für den Apple-Kalender + Terminübersicht
+ * ---------------------------------------------------------------------- */
+
+const CAL_SUB_KEY = 'familie.calSubscribed';
+const isCalSubscribed = () => lsGet(CAL_SUB_KEY, false) === true;
+
+async function calendarFeedUrl(reset = false) {
+  if (!reset && state.calFeedToken) return feedUrls(state.calFeedToken);
+  state.calFeedToken = must(await sb.rpc('calendar_feed_token', { p_reset: reset }));
+  return feedUrls(state.calFeedToken);
+}
+function feedUrls(token) {
+  const https = `${CFG.supabaseUrl}/functions/v1/ics?feed=${encodeURIComponent(token)}`;
+  return { https, webcal: https.replace(/^https?:/, 'webcal:') };
+}
+
+/** Ende eines Termins wie im Kalender: Ende des Zeitraums, sonst Deadline, sonst 1 Stunde */
+function eventEnd(m) {
+  const e = m.endAt || m.deadlineAt;
+  return e && Date.parse(e) > Date.parse(m.eventAt) ? Date.parse(e) : Date.parse(m.eventAt) + 3600e3;
+}
+
+function agendaHtml() {
+  const now = Date.now();
+  const list = state.messages
+    .filter((m) => m.eventAt && (!m.deleteAt || Date.parse(m.deleteAt) > now) && eventEnd(m) >= startOfDay(new Date()).getTime())
+    .sort((a, b) => Date.parse(a.eventAt) - Date.parse(b.eventAt))
+    .slice(0, 60);
+  if (!list.length) return '<p class="hint">Keine anstehenden Termine.</p>';
+  const days = new Map();
+  for (const m of list) {
+    const d = new Date(Math.max(Date.parse(m.eventAt), startOfDay(new Date()).getTime()));
+    const key = startOfDay(d).getTime();
+    if (!days.has(key)) days.set(key, []);
+    days.get(key).push(m);
+  }
+  const today = startOfDay(new Date()).getTime();
+  const dayLabel = (t) => {
+    const diff = Math.round((t - today) / 86400e3);
+    const base = new Date(t).toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
+    return diff === 0 ? `Heute · ${base}` : diff === 1 ? `Morgen · ${base}` : base;
+  };
+  return [...days].map(([t, items]) => `<section class="agenda-day">
+    <h3>${esc(dayLabel(t))}</h3>
+    ${items.map((m) => {
+      const running = Date.parse(m.eventAt) < t;
+      const sd = new Date(m.eventAt), ed = new Date(eventEnd(m));
+      const allDay = sd.getHours() === 0 && sd.getMinutes() === 0 && ed.getHours() === 23 && ed.getMinutes() === 59;
+      return `<button type="button" class="agenda-item u-${esc(m.urgency)}" data-open-msg="${esc(m.id)}">
+        <span class="agenda-time">${allDay ? 'ganztags' : running ? 'läuft' : esc(formatTimeOnly(m.eventAt))}</span>
+        <span class="agenda-main"><b>${m.deadlineAt && !m.endAt ? '⏳ ' : ''}${esc(m.title)}</b>
+          <small>${esc(formatRange(m.eventAt, new Date(eventEnd(m)).toISOString()))}</small></span>
+        ${ballSvg(urgencyInfo(m.urgency).ball, 20)}
+      </button>`;
+    }).join('')}
+  </section>`).join('');
+}
+
+function renderCalendar(view) {
+  if (!state.me) { view.innerHTML = ''; return; }
+  const subscribed = isCalSubscribed();
+  view.innerHTML = `<div class="calendar-page">
+    <section class="cal-sub${subscribed ? ' done' : ''}">
+      <div class="cal-sub-head"><img src="${asset('img/menu/cal.png')}" alt="" class="cal-icon"><div>
+        <h2>Apple-Kalender</h2>
+        <p class="hint">${subscribed
+          ? '✓ Abonniert – neue und geänderte Termine erscheinen automatisch in deinem Kalender „Familie“.'
+          : 'Einmal abonnieren – danach landen alle Termine, Ereignisse und Deadlines automatisch in deinem iPhone-Kalender.'}</p>
+      </div></div>
+      <div class="cal-sub-actions">
+        <button type="button" class="btn ${subscribed ? '' : 'primary'}" id="cal-subscribe">📅 ${subscribed ? 'Erneut abonnieren' : 'Im Kalender abonnieren'}</button>
+        <button type="button" class="btn" id="cal-copy">🔗 Link kopieren</button>
+      </div>
+      <details class="cal-help">
+        <summary>So funktioniert's</summary>
+        <ol>
+          <li>Tippe auf <b>Im Kalender abonnieren</b> und bestätige mit <b>Abonnieren</b>.</li>
+          <li>Wähle bei <i>Account</i> am besten <b>iCloud</b> – dann ist der Kalender auch auf iPad/Mac da.</li>
+          <li>Unter <i>Automatisch aktualisieren</i> „Alle 15 Minuten“ wählen.</li>
+        </ol>
+        <p class="hint">Klappt der Knopf nicht: Link kopieren → Einstellungen → Apps → Kalender → Kalenderaccounts → Account hinzufügen → Andere → Kalenderabo hinzufügen → Link einfügen.</p>
+        <p class="hint">Das iPhone holt Änderungen selbst ab (je nach Einstellung alle 15 Minuten bis stündlich). Im Kalender sind die Termine nur lesbar – geändert wird hier in der App.</p>
+        <button type="button" class="btn small danger" id="cal-reset">Link erneuern (alter Link wird ungültig)</button>
+      </details>
+    </section>
+    <h2 class="section-title cal-agenda-title">Anstehende Termine</h2>
+    <div class="agenda">${agendaHtml()}</div>
+  </div>`;
+
+  const sub = $('#cal-subscribe', view);
+  sub.addEventListener('click', async () => {
+    sub.disabled = true;
+    try {
+      const { webcal } = await calendarFeedUrl();
+      lsSet(CAL_SUB_KEY, true);
+      location.href = webcal;
+      setTimeout(render, 800);
+    } catch (e) { toast(e.message); }
+    sub.disabled = false;
+  });
+  $('#cal-copy', view).addEventListener('click', async () => {
+    try {
+      const { webcal } = await calendarFeedUrl();
+      await navigator.clipboard.writeText(webcal);
+      toast('🔗 Kalender-Link kopiert.');
+    } catch (e) {
+      try { const { webcal } = await calendarFeedUrl(); prompt('Kalender-Link:', webcal); } catch { toast(e.message); }
+    }
+  });
+  $('#cal-reset', view).addEventListener('click', async () => {
+    if (!confirm('Neuen Link erzeugen? Das bisherige Abo im Kalender bekommt dann keine Termine mehr und muss neu abonniert werden.')) return;
+    try {
+      await calendarFeedUrl(true);
+      lsSet(CAL_SUB_KEY, false);
+      toast('🔁 Neuer Link erzeugt – bitte neu abonnieren.');
+      render();
+    } catch (e) { toast(e.message); }
+  });
+  view.querySelectorAll('[data-open-msg]').forEach((b) => b.addEventListener('click', () => {
+    state.highlight = b.dataset.openMsg;
+    setTab('start');
+  }));
 }
 
 /* -------------------------------------------------------------------------
@@ -3299,7 +3429,7 @@ function render() {
     case 'start': return renderAustausch(view);
     case 'einstellungen': return renderSettings(view);
     case 'notizen': return renderNotes(view);
-    case 'kalender': return renderPlaceholder(view, '📅', 'Kalender', 'Dieser Bereich kommt im nächsten Schritt.');
+    case 'kalender': return renderCalendar(view);
     case 'schande': return renderBoard(view);
     case 'team': return renderTeam(view);
   }

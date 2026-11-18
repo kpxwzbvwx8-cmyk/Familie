@@ -1298,3 +1298,31 @@ body.nav-tabs .punish-field { bottom: calc(var(--tabbar-h) + env(safe-area-inset
 .note-text b, .note-text strong { font-weight: 700; text-shadow: .07em 0 0 currentColor; -webkit-text-stroke: .02em currentColor; letter-spacing: .03em; }
 .note-text u { text-decoration-thickness: 2px; text-underline-offset: 3px; }
 .tool b { text-shadow: 1px 0 0 currentColor; }
+
+/* =========================================================================
+ * Kalender
+ * ======================================================================= */
+.calendar-page { max-width: 640px; margin: 0 auto; display: grid; gap: 16px; }
+.cal-sub { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow); display: grid; gap: 12px; }
+.cal-sub.done { border-color: #57b46a; }
+.cal-sub-head { display: flex; gap: 12px; align-items: flex-start; }
+.cal-sub-head h2 { margin: 0 0 4px; font-size: 1.2rem; }
+.cal-icon { width: 44px; height: 44px; image-rendering: pixelated; flex: none; }
+.cal-sub-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.cal-sub-actions .btn { flex: 1 1 160px; min-height: 44px; }
+.cal-help summary { cursor: pointer; color: var(--muted); }
+.cal-help ol { margin: 8px 0; padding-left: 20px; display: grid; gap: 4px; }
+.cal-help .hint { margin: 6px 0; }
+.cal-agenda-title { margin: 6px 0 0; }
+.agenda { display: grid; gap: 14px; }
+.agenda-day h3 { margin: 0 0 6px; font-size: 1rem; color: var(--muted); font-weight: 700; }
+.agenda-item {
+  width: 100%; display: grid; grid-template-columns: 66px 1fr auto; gap: 10px; align-items: center; text-align: left;
+  padding: 10px 12px; margin-bottom: 6px; border-radius: 12px; cursor: pointer; font: inherit; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border); border-left: 5px solid var(--u, var(--u-normal));
+}
+.agenda-item.u-info { --u: var(--u-info); } .agenda-item.u-wichtig { --u: var(--u-wichtig); } .agenda-item.u-dringend { --u: var(--u-dringend); }
+.agenda-time { font-weight: 700; }
+.agenda-main { display: grid; gap: 2px; min-width: 0; }
+.agenda-main b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agenda-main small { color: var(--muted); font-size: .85rem; }
