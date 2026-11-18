@@ -148,6 +148,7 @@ function mapMessage(r) {
     doneAt: r.done_at || null,
     ackOptions: Array.isArray(r.ack_options) && r.ack_options.length ? r.ack_options : null,
     deadlineAt: r.deadline_at || null,
+    threatStrike: Boolean(r.threat_strike),
     respondBy: r.respond_by || null,
   };
 }
@@ -737,6 +738,7 @@ function icsUrl(m) {
 }
 
 const HELP = {
+  strike: 'Wird die Meldung nicht erfüllt, droht ein Strich auf dem Board der Schande. Die Androhung steht gut sichtbar in der Meldung – die automatische Vergabe der Striche folgt in einem späteren Update.',
   autoDelete: 'Die Meldung verschwindet zum eingestellten Zeitpunkt automatisch für alle – praktisch für Dinge, die sich danach erledigt haben.',
   event: 'Für Termine mit Dauer: Zusätzlich zum Start gibst du das Ende des Zeitraums an (von Minuten bis Jahren). Der Zeitraum wird auch so in den Kalender übernommen.',
   deadline: 'Bis wann etwas erledigt sein muss. Die Deadline steht gut sichtbar in der Meldung.',
@@ -818,6 +820,7 @@ function messageHtml(m) {
       <div class="msg-meta">
         <span class="author"><span class="dot" style="--c:${esc(author ? author.color : '#888888')}"></span>${esc(author ? fullName(author) : 'Unbekannt')} · <span data-rel="${esc(m.createdAt)}">${esc(relative(m.createdAt))}</span></span>
         ${m.eventAt ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt))}${m.remindAtStart ? ' <span title="Erinnerung zum Beginn">🔔</span>' : ''}</span>` : ''}
+        ${m.threatStrike ? '<span class="strike-threat">😈 Strich auf dem Board der Schande bei Nichterfüllung</span>' : ''}
         ${m.deadlineAt ? `<span class="deadline${Date.parse(m.deadlineAt) < Date.now() ? ' over' : ''}">⏳ Deadline: ${esc(formatDateTime(m.deadlineAt))}</span>` : ''}
         ${m.needsAck && m.respondBy ? `<span class="more">✉️ Antworten bis ${esc(formatDateTime(m.respondBy))}</span>` : ''}
         ${m.doneBy ? `<span class="done-line">✓ Erledigt von ${esc(doneBy ? doneBy.firstName : 'jemandem')}</span>` : ''}
@@ -1084,6 +1087,7 @@ function openNewMessage() {
          <input name="respondBy" type="datetime-local" class="dt" id="respond-by-box" hidden aria-label="Rückmeldung bis">
        </div>
        <div class="toggle-row"><span>Löschen, wenn erledigt?</span>${helpBtn('doneDelete')}${switchToggle('deleteOnDone')}</div>
+       <div class="toggle-row strike-row"><span>😈 Strich androhen?</span>${helpBtn('strike')}${switchToggle('threatStrike')}</div>
        <p class="error" id="msg-error"></p>
        <div class="modal-actions">
          <button type="button" class="btn" data-close>Abbrechen</button>
@@ -1191,6 +1195,7 @@ function openNewMessage() {
               needs_ack: form.elements.needsAck.checked,
               ack_options: ackOptions,
               delete_on_done: form.elements.deleteOnDone.checked,
+              threat_strike: form.elements.threatStrike.checked,
             }).select().single());
             upsertMessage(mapMessage(row));
             close();

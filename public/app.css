@@ -830,3 +830,7 @@ body.nav-tabs .ds-menu { bottom: calc(var(--tabbar-h) + env(safe-area-inset-bott
 
 .tabbar span { font-size: .8rem; }
 .row-btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+.msg .strike-threat { color: #7a1f8a; font-weight: normal; }
+:root[data-theme="dark"] .msg .strike-threat { color: #e7a6f0; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .msg .strike-threat { color: #e7a6f0; } }
