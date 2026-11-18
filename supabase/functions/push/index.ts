@@ -7,6 +7,7 @@
 //  review  – Urheber nimmt eine Meldung mit Strich-Androhung ab (accept) oder vergibt den Strich (strike + Grund)
 //  strike  – Board der Schande: Urteil, Einspruch, Entscheidung, Anerkennung
 //  board   – Board der Schande: neuer Grund zur Beglaubigung, Bezahlung bestätigt
+//  note    – Notizen: Beteiligte über eine Änderung benachrichtigen
 import { admin, bearer, cors, json, memberFromToken, URGENCY_LABELS } from '../_shared/common.ts';
 import { ensureTickConfig, publicKey, sendPush } from '../_shared/webpush.ts';
 
@@ -196,6 +197,24 @@ Deno.serve(async (req) => {
       } else return json({ sent: 0 });
       const r = await sendPush({ title, body: text, tag: `board-${body.ruleId ?? 'fine'}`, url: '?tab=schande', urgency: 'wichtig' },
         { exceptUser: me.id, contact: origin });
+      return json(r);
+    }
+
+    if (body.action === 'note') {
+      // Gemeinsame Notiz wurde hochgeladen → die anderen Beteiligten benachrichtigen
+      const { data: note } = await admin.from('notes').select('id, title, owner_id, shared_with').eq('id', body.noteId).maybeSingle();
+      if (!note) return json({ error: 'Notiz nicht gefunden' }, 404);
+      const people: string[] = [note.owner_id, ...(note.shared_with ?? [])];
+      if (!people.includes(me.id)) return json({ error: 'Keine Berechtigung' }, 403);
+      const recipients = [...new Set(people)].filter((id) => id !== me.id);
+      if (!recipients.length) return json({ sent: 0 });
+      const r = await sendPush({
+        title: `📝 ${note.title || 'Notiz'}`,
+        body: `${meName} hat die gemeinsame Notiz geändert.`,
+        tag: `note-${note.id}`,
+        url: `?tab=notizen&note=${note.id}`,
+        urgency: 'info',
+      }, { toUsers: recipients, contact: origin });
       return json(r);
     }
 

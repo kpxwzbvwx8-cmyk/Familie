@@ -1218,3 +1218,79 @@ body.nav-tabs .punish-field { bottom: calc(var(--tabbar-h) + env(safe-area-inset
   .tally .embers path, .burn-plus, .pins.has-burn::after { animation: none; display: none; }
   .tally .scorch path.burn-scorch { animation: none; opacity: .4; }
 }
+
+/* =========================================================================
+ * Notizen
+ * ======================================================================= */
+.notes { max-width: 720px; margin: 0 auto; }
+.note-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.note-empty { padding: 4px 4px 10px; }
+.note-card {
+  display: block; text-align: left; border: 0; padding: 7px; border-radius: 12px; cursor: pointer; font: inherit; color: #2a2a2e;
+  background: var(--tile) 0 0 / 30px auto repeat, var(--frame);
+  box-shadow: 0 3px 10px rgba(0,0,0,.14);
+}
+.note-card:active { transform: scale(.98); }
+.note-card-sheet {
+  display: grid; gap: 6px; min-height: 150px; padding: 10px 11px; border-radius: 7px; align-content: start;
+  background: repeating-linear-gradient(var(--sheet) 0 23px, var(--line) 23px 24px) 0 6px, var(--sheet);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.06);
+}
+.note-card-title { font-weight: 700; font-size: 1.1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-card-text { font-size: .95rem; line-height: 24px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; color: #45454d; }
+.note-card-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: .8rem; color: #6b6a72; margin-top: auto; }
+.note-card-meta > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.note-people { display: inline-flex; gap: 3px; flex: none; }
+.note-people .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 1.5px #fff; }
+
+/* Editor: Vollbild, Knöpfe fest am oberen Bildschirmrand */
+.modal.note-modal { padding: 0; max-width: 760px; background: var(--bg); display: flex; flex-direction: column; overflow: hidden; }
+.note-topbar {
+  flex: none; display: flex; align-items: center; gap: 8px; z-index: 2;
+  padding: calc(env(safe-area-inset-top) + 8px) 10px 8px;
+  background: var(--surface); border-bottom: 1px solid var(--border); box-shadow: 0 2px 8px rgba(0,0,0,.06);
+}
+.note-tb-title { flex: 1; font-family: "Pokemon Solid", sans-serif; color: #ffcb05; -webkit-text-stroke: 1.2px #3c5aa6; paint-order: stroke fill; font-size: 1.25rem; letter-spacing: .03em; }
+.note-tb-btn { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 10px; padding: 8px 10px; font: inherit; font-size: .95rem; cursor: pointer; white-space: nowrap; }
+#note-close { font-size: 1.6rem; line-height: 1; padding: 4px 12px 6px; }
+.note-tb-btn.upload:not(:disabled) { background: #2f80ed; border-color: #2f80ed; color: #fff; font-weight: 700; }
+.note-tb-btn.notify:not(:disabled) { background: #ffcb05; border-color: #c79f00; color: #2b2208; font-weight: 700; animation: notify-pulse 1.6s ease-in-out infinite; }
+.note-tb-btn:disabled { opacity: .5; cursor: default; }
+@keyframes notify-pulse { 50% { box-shadow: 0 0 0 4px rgba(255,203,5,.35); } }
+.note-editor { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px 12px calc(30px + env(safe-area-inset-bottom)); display: grid; gap: 8px; align-content: start; }
+.note-title { font: inherit; font-size: 1.35rem; font-weight: 700; border: 0; border-bottom: 2px solid var(--border); background: transparent; color: var(--text); padding: 6px 2px; outline: none; }
+.note-title:focus { border-bottom-color: #2f80ed; }
+.note-meta { font-size: .85rem; color: var(--muted); }
+.note-tools {
+  position: sticky; top: -12px; z-index: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
+  padding: 8px; margin: 0 -4px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); box-shadow: 0 2px 8px rgba(0,0,0,.06);
+}
+.note-tools .seg, .note-tools .tool-group, .note-tools .colors { display: flex; gap: 4px; align-items: center; }
+.note-tools .tool-group[hidden] { display: none; }
+.tool { min-width: 36px; height: 36px; border-radius: 9px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; font-size: 1.05rem; cursor: pointer; padding: 0 6px; }
+.tool.active { border-color: #2f80ed; background: #e7f0ff; color: #1b4fa8; }
+.swatch-dot { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--surface); background: var(--c); box-shadow: 0 0 0 1px var(--border); cursor: pointer; padding: 0; }
+.swatch-dot.active { box-shadow: 0 0 0 2.5px var(--text); }
+
+.note-paper { padding: 14px; border-radius: 14px; background: var(--tile) 0 0 / 40px auto repeat, var(--frame); box-shadow: 0 4px 16px rgba(0,0,0,.15); }
+.note-sheet { position: relative; border-radius: 8px; background: var(--sheet); box-shadow: inset 0 0 0 1px rgba(0,0,0,.08); }
+.note-text {
+  min-height: inherit; padding: 8px 14px 40px; outline: none; color: #26262b; font-size: 1.15rem; line-height: 32px;
+  background: repeating-linear-gradient(transparent 0 31px, var(--line) 31px 32px) 0 8px;
+  overflow-wrap: anywhere; -webkit-user-select: text; user-select: text;
+}
+.note-text:empty::before { content: attr(data-placeholder); color: #9a99a2; }
+.note-text ul, .note-text ol { margin: 0; padding-left: 24px; }
+.note-canvas { position: absolute; left: 0; top: 0; width: 100%; pointer-events: none; touch-action: none; }
+.note-sheet.drawing .note-canvas { pointer-events: auto; cursor: crosshair; }
+.note-sheet.drawing .note-text { -webkit-user-select: none; user-select: none; }
+
+.paper-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
+.paper-opt { border: 2px solid transparent; background: none; padding: 4px; border-radius: 12px; cursor: pointer; font: inherit; color: var(--text); display: grid; gap: 4px; }
+.paper-opt.active { border-color: #2f80ed; }
+.paper-prev { display: block; height: 84px; padding: 8px; border-radius: 8px; background: var(--tile) 0 0 / 26px auto repeat, var(--frame); }
+.paper-prev span { display: block; height: 100%; border-radius: 4px; background: repeating-linear-gradient(var(--sheet) 0 11px, var(--line) 11px 12px), var(--sheet); }
+.paper-name { font-size: .85rem; text-align: center; }
+.invite-list { display: grid; gap: 8px; margin: 10px 0; }
+.invite-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 12px; cursor: pointer; }
+.invite-row input { width: 20px; height: 20px; }

@@ -35,9 +35,12 @@ Deno.serve(async (req) => {
   if (!msg) return new Response('Nachricht nicht gefunden', { status: 404, headers: cors });
 
   const start = msg.event_at ?? msg.created_at;
-  const end = msg.end_at ? new Date(msg.end_at) : new Date(Date.parse(start) + 60 * 60 * 1000);
+  // Ende: Ende des Zeitraums, sonst die Deadline (Ereignis vom Start bis zur Deadline), sonst 1 Stunde
+  const endIso = msg.end_at ?? msg.deadline_at;
+  const end = endIso && Date.parse(endIso) > Date.parse(start) ? new Date(endIso) : new Date(Date.parse(start) + 60 * 60 * 1000);
   const author = msg.author ? `${msg.author.first_name} ${msg.author.last_name}` : 'Unbekannt';
-  const desc = [msg.description, `Dringlichkeit: ${URGENCY_LABELS[msg.urgency] ?? msg.urgency}`, `Von: ${author}`]
+  const fmt = (d: string) => new Date(d).toLocaleString('de-DE', { timeZone: 'Europe/Berlin', dateStyle: 'medium', timeStyle: 'short' });
+  const desc = [msg.description, msg.deadline_at ? `Deadline: ${fmt(msg.deadline_at)}` : '', `Dringlichkeit: ${URGENCY_LABELS[msg.urgency] ?? msg.urgency}`, `Von: ${author}`]
     .filter(Boolean)
     .join('\n');
 
@@ -59,6 +62,10 @@ Deno.serve(async (req) => {
     `DESCRIPTION:${icsEscape(msg.title)}`,
     'TRIGGER:-PT30M',
     'END:VALARM',
+    ...(msg.deadline_at && !msg.end_at ? [
+      'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsEscape('Deadline in 1 Stunde: ' + msg.title)}`,
+      'TRIGGER;RELATED=END:-PT1H', 'END:VALARM',
+    ] : []),
     'END:VEVENT',
     'END:VCALENDAR',
   ].map(fold).join('\r\n') + '\r\n';

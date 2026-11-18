@@ -26,6 +26,7 @@ const state = {
   expanded: new Set(),
   responses: new Map(), // messageId -> [{ userId, option, createdAt }]
   comments: new Map(),  // messageId -> [{ id, authorId, body, createdAt }]
+  notes: [],            // Notizen (eigene + gemeinsame)
   strikes: [],          // Board der Schande: alle Striche (neueste zuerst)
   rules: [],            // Strafkatalog inkl. Vorschläge
   fines: [],            // Strafen (10 € je 10 Striche)
@@ -758,7 +759,7 @@ const HELP = {
   strike: 'Wird die Meldung bis zur Deadline nicht erfüllt, gibt es einen Strich auf dem Board der Schande. Reagiert jemand vorher, friert der Timer ein und du nimmst das Ergebnis ab. Eine Meldung mit Androhung ist automatisch dringend.',
   autoDelete: 'Die Meldung verschwindet zum eingestellten Zeitpunkt automatisch für alle – praktisch für Dinge, die sich danach erledigt haben.',
   event: 'Für Termine mit Dauer: Zusätzlich zum Start gibst du das Ende des Zeitraums an (von Minuten bis Jahren). Der Zeitraum wird auch so in den Kalender übernommen.',
-  deadline: 'Bis wann etwas erledigt sein muss. Die Deadline steht gut sichtbar in der Meldung.',
+  deadline: 'Bis wann etwas erledigt sein muss. Die Meldung wird damit zu einem Ereignis vom Zeitpunkt bis zur Deadline – genau so landet sie auch im Kalender.',
   respondBy: 'Bis wann geantwortet werden soll. Wer bis eine Stunde vor Ablauf noch nicht geantwortet hat, bekommt eine Erinnerung.',
   notify: 'Wenn die Glocke an ist, bekommen alle anderen beim Absenden sofort eine Benachrichtigung. '
     + 'Ist sie aus, wird beim Absenden niemand benachrichtigt – spätere Benachrichtigungen (Erinnerung zum Beginn, Rückmeldungen) kommen trotzdem.',
@@ -846,7 +847,7 @@ function messageHtml(m) {
       ${m.description ? `<p class="desc">${esc(m.description)}</p>` : ''}
       <div class="msg-meta">
         <span class="author"><span class="dot" style="--c:${esc(author ? author.color : '#888888')}"></span>${esc(author ? fullName(author) : 'Unbekannt')} · <span data-rel="${esc(m.createdAt)}">${esc(relative(m.createdAt))}</span></span>
-        ${m.eventAt ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt))}${m.remindAtStart ? ' <span title="Erinnerung zum Beginn">🔔</span>' : ''}</span>` : ''}
+        ${m.eventAt ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt || m.deadlineAt))}${m.remindAtStart ? ' <span title="Erinnerung zum Beginn">🔔</span>' : ''}</span>` : ''}
         ${statusLine ? `<span class="status-line${m.reviewStatus === 'rejected' || m.reviewStatus === 'missed' ? ' bad' : ''}">${esc(statusLine)}</span>` : ''}
         ${m.threatStrike && !m.closedAt ? '<span class="strike-threat">😈 Strich auf dem Board der Schande bei Nichterfüllung</span>' : ''}
         ${m.deadlineAt ? `<span class="deadline${Date.parse(m.deadlineAt) < Date.now() ? ' over' : ''}">⏳ Deadline: ${esc(formatDateTime(m.deadlineAt))}</span>` : ''}
@@ -1265,17 +1266,30 @@ function renderAustausch(view) {
 
 function openNewMessage() {
   const now = new Date();
-  const presets = [
-    { label: 'In 1 Stunde', fn: () => toLocalInput(new Date(Date.now() + 3600e3)) },
-    { label: 'Heute Abend', fn: () => { const d = new Date(); d.setHours(23, 59, 0, 0); return toLocalInput(d); } },
-    { label: 'Morgen', fn: () => toLocalInput(new Date(Date.now() + 86400e3)) },
-    { label: 'In 1 Woche', fn: () => toLocalInput(new Date(Date.now() + 7 * 86400e3)) },
-    { label: 'Nach Ereignis', fn: (form) => {
-      const v = form.elements.endAt.value || form.elements.eventAt.value;
-      if (!v) return null;
-      return toLocalInput(new Date(new Date(v).getTime() + 3600e3));
-    } },
-  ];
+  // Schnellwahl für Deadline & Löschdatum: Morgen · in: +1d +1h +10min +1min · Nächste Woche
+  const quickChips = (target) => `<div class="chips time-chips" data-target="${target}">
+    <button type="button" class="chip" data-q="tomorrow">Morgen</button>
+    <span class="mini">in:</span>
+    <button type="button" class="chip" data-q="1440">+1d</button>
+    <button type="button" class="chip" data-q="60">+1h</button>
+    <button type="button" class="chip" data-q="10">+10min</button>
+    <button type="button" class="chip" data-q="1">+1min</button>
+    <button type="button" class="chip" data-q="week">Nächste Woche</button>
+  </div>`;
+  const quickValue = (field, q) => {
+    const cur = field.value ? new Date(field.value) : null;
+    if (q === 'tomorrow' || q === 'week') {
+      // gleiche Uhrzeit wie bisher gewählt (sonst jetzt), morgen bzw. in 7 Tagen
+      const t = cur || new Date();
+      const d = new Date();
+      d.setHours(t.getHours(), t.getMinutes(), 0, 0);
+      d.setDate(d.getDate() + (q === 'tomorrow' ? 1 : 7));
+      return toLocalInput(d);
+    }
+    // „in:“ zählt ab jetzt; mehrfach tippen addiert (z. B. +1d +1h)
+    const base = cur && cur.getTime() >= Date.now() - 60e3 ? cur : new Date();
+    return toLocalInput(new Date(base.getTime() + Number(q) * 60e3));
+  };
 
   openModal(
     `<div class="modal-head"><h2>Neue Nachricht</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
@@ -1306,12 +1320,13 @@ function openNewMessage() {
        <div class="toggle-row"><span>Deadline?</span>${helpBtn('deadline')}${switchToggle('hasDeadline')}</div>
        <div class="field" id="deadline-box" hidden>
          <label class="field"><span>Deadline</span><input name="deadlineAt" type="datetime-local" class="dt"></label>
+         ${quickChips('deadlineAt')}
          <div class="toggle-row strike-row"><span>😈 Strich androhen?</span>${helpBtn('strike')}${switchToggle('threatStrike')}</div>
        </div>
        <div class="toggle-row"><span>Automatisch löschen?</span>${helpBtn('autoDelete')}${switchToggle('autoDelete')}</div>
        <div class="field" id="auto-delete-box" hidden>
          <input name="deleteAt" type="datetime-local" min="${toLocalInput(now)}" aria-label="Automatisch löschen am">
-         <div class="chips">${presets.map((p, i) => `<button type="button" class="chip" data-preset="${i}">${p.label}</button>`).join('')}</div>
+         ${quickChips('deleteAt')}
          <p class="hint">Die Nachricht verschwindet zu diesem Zeitpunkt für alle.</p>
        </div>
        <div class="toggle-row"><span>Rückmeldung?</span>${helpBtn('ack')}${switchToggle('needsAck')}</div>
@@ -1331,9 +1346,14 @@ function openNewMessage() {
     {
       onMount: (modal, close) => {
         const form = $('#msg-form', modal);
-        const chips = [...form.querySelectorAll('.chip')];
-        const setActive = (i) => chips.forEach((c, j) => c.classList.toggle('active', j === i));
         form.addEventListener('click', (e) => {
+          const qbtn = e.target.closest('[data-q]');
+          if (qbtn) {
+            e.preventDefault();
+            const field = form.elements[qbtn.closest('.time-chips').dataset.target];
+            field.value = quickValue(field, qbtn.dataset.q);
+            return;
+          }
           const tbtn = e.target.closest('[data-time], [data-add]');
           if (tbtn) {
             e.preventDefault();
@@ -1356,15 +1376,7 @@ function openNewMessage() {
           }
           const help = e.target.closest('[data-help]');
           if (help) { e.preventDefault(); showHelp(help.dataset.help); return; }
-          const chip = e.target.closest('[data-preset]');
-          if (!chip) return;
-          const i = Number(chip.dataset.preset);
-          const v = presets[i].fn(form);
-          if (v === null) { toast('Bitte zuerst einen Zeitpunkt wählen.'); return; }
-          form.elements.deleteAt.value = v;
-          setActive(i);
         });
-        form.elements.deleteAt.addEventListener('input', () => setActive(-1));
         // Nur einer der drei Regler darf an sein
         // Zeilen klappen erst auf, wenn ihr Regler an ist
         [['hasEnd', '#end-box', 'endAt'], ['hasDeadline', '#deadline-box', 'deadlineAt'], ['hasRespondBy', '#respond-by-box', 'respondBy']]
@@ -1394,7 +1406,7 @@ function openNewMessage() {
         exclusive.forEach((name) => form.elements[name].addEventListener('change', () => {
           if (form.elements[name].checked) exclusive.filter((n) => n !== name).forEach((n) => { form.elements[n].checked = false; });
           if (name === 'autoDelete' && form.elements.autoDelete.checked && !form.elements.deleteAt.value) {
-            form.elements.deleteAt.value = presets[2].fn(form); setActive(2);
+            form.elements.deleteAt.value = quickValue(form.elements.deleteAt, 'tomorrow');
           }
           syncBoxes();
         }));
@@ -1900,6 +1912,553 @@ async function checkForUpdate() {
 
 function renderPlaceholder(view, icon, title, text) {
   view.innerHTML = `<div class="empty"><div class="big">${icon}</div><h2>${esc(title)}</h2><p>${esc(text)}</p></div>`;
+}
+
+/* -------------------------------------------------------------------------
+ * Notizen
+ *  – eigene & gemeinsame Notizen (ein-/ausklappbar)
+ *  – Überschrift, formatierter Text (Farbe, fett, unterstrichen, Aufzählung)
+ *  – mit dem Finger malen
+ *  – Briefpapier als Hintergrund
+ *  – oben am Bildschirm: „Hochladen“, danach „Benachrichtigen“
+ * ---------------------------------------------------------------------- */
+
+const NOTE_COLORS = [
+  { c: '#26262b', name: 'Schwarz' }, { c: '#d63b3b', name: 'Rot' }, { c: '#2f6fd8', name: 'Blau' },
+  { c: '#2e9e55', name: 'Grün' }, { c: '#e8772e', name: 'Orange' }, { c: '#8a45c4', name: 'Lila' },
+];
+
+/* ---- Briefpapier (eigene Muster, angelehnt an die Briefe aus Platin) ---- */
+
+const svgTile = (w, h, body) => `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}' viewBox='0 0 ${w} ${h}'>${body}</svg>`)}")`;
+
+const PAPERS = [
+  { key: 'schlicht', name: 'Schlicht', frame: '#e9e2cf', sheet: '#fffdf6', line: '#d8e3f0', tile: svgTile(20, 20, "<circle cx='10' cy='10' r='1.4' fill='#cfc4a6'/>") },
+  { key: 'wiese', name: 'Wiesenbrief', frame: '#8fd16a', sheet: '#f6fdee', line: '#cfe9bb', tile: svgTile(40, 40,
+    "<path d='M6 40C7 30 4 24 2 18M6 40C8 31 12 27 15 22M24 40c1-9-2-15-5-20M24 40c2-8 6-12 10-15M34 40c0-6 1-9 4-13' stroke='#3f9a3a' stroke-width='2.4' fill='none' stroke-linecap='round'/><circle cx='30' cy='10' r='3' fill='#f7e15a'/><circle cx='12' cy='6' r='2' fill='#fff'/>") },
+  { key: 'flamme', name: 'Flammenbrief', frame: '#f6a04d', sheet: '#fff7ee', line: '#f6d8bd', tile: svgTile(40, 40,
+    "<path d='M12 36c-6-4-6-11-1-16 0 4 2 5 3 5-1-6 3-10 6-12-1 5 3 8 3 13 1-1 2-3 2-5 4 5 3 12-3 15z' fill='#e2462a'/><path d='M15 35c-2-2-2-6 1-8 0 2 1 3 2 3 0-3 2-5 3-6 0 3 2 4 2 7 0 2-2 4-4 5z' fill='#ffd23f'/><circle cx='33' cy='8' r='2' fill='#ffd23f'/>") },
+  { key: 'blase', name: 'Blasenbrief', frame: '#7cc6f0', sheet: '#f1f9ff', line: '#c8e3f6', tile: svgTile(40, 40,
+    "<circle cx='11' cy='12' r='7' fill='#e8f6ff' stroke='#3b8fd0' stroke-width='1.6'/><circle cx='8.5' cy='9.5' r='2' fill='#fff'/><circle cx='29' cy='28' r='5' fill='#e8f6ff' stroke='#3b8fd0' stroke-width='1.4'/><circle cx='27.5' cy='26.5' r='1.4' fill='#fff'/><circle cx='31' cy='9' r='2.5' fill='none' stroke='#3b8fd0' stroke-width='1.2'/>") },
+  { key: 'bluete', name: 'Blütenbrief', frame: '#f6b8d2', sheet: '#fff6fa', line: '#f5d5e2', tile: svgTile(40, 40,
+    "<g transform='translate(12 12)'><circle r='4' cx='0' cy='-5' fill='#f07aa8'/><circle r='4' cx='5' cy='0' fill='#f07aa8'/><circle r='4' cx='0' cy='5' fill='#f07aa8'/><circle r='4' cx='-5' cy='0' fill='#f07aa8'/><circle r='2.6' fill='#ffe066'/></g><g transform='translate(30 30) scale(.65)'><circle r='4' cx='0' cy='-5' fill='#fff'/><circle r='4' cx='5' cy='0' fill='#fff'/><circle r='4' cx='0' cy='5' fill='#fff'/><circle r='4' cx='-5' cy='0' fill='#fff'/><circle r='2.6' fill='#ffb347'/></g>") },
+  { key: 'tunnel', name: 'Tunnelbrief', frame: '#a98564', sheet: '#fbf6f0', line: '#e5d6c6', tile: svgTile(40, 40,
+    "<path d='M3 14l6-7 9 2 3 8-7 6-9-2z' fill='#7d5d42' stroke='#5c4230' stroke-width='1.2'/><path d='M24 30l5-6 8 1 2 7-6 5-7-2z' fill='#8e6c4f' stroke='#5c4230' stroke-width='1.2'/><circle cx='30' cy='9' r='2' fill='#5c4230'/>") },
+  { key: 'stahl', name: 'Stahlbrief', frame: '#a9b1bc', sheet: '#f7f8fa', line: '#dde2e8', tile: svgTile(40, 40,
+    "<rect x='1' y='1' width='38' height='38' fill='none' stroke='#7d8794' stroke-width='1'/><circle cx='7' cy='7' r='2.6' fill='#e4e8ee' stroke='#59626e' stroke-width='1.2'/><circle cx='33' cy='33' r='2.6' fill='#e4e8ee' stroke='#59626e' stroke-width='1.2'/><path d='M14 26l12-12' stroke='#59626e' stroke-width='1.6'/>") },
+  { key: 'herz', name: 'Herzbrief', frame: '#f58fa8', sheet: '#fff5f7', line: '#f7d3dc', tile: svgTile(40, 40,
+    "<path d='M12 18c-6-4-8-7-8-10a4 4 0 0 1 8-1 4 4 0 0 1 8 1c0 3-2 6-8 10z' fill='#e23d6b'/><path d='M30 34c-4-3-6-5-6-7a3 3 0 0 1 6-1 3 3 0 0 1 6 1c0 2-2 4-6 7z' fill='#fff'/>") },
+  { key: 'schnee', name: 'Schneebrief', frame: '#b9e1f5', sheet: '#f8fcff', line: '#d9ebf6', tile: svgTile(40, 40,
+    "<g stroke='#4aa3d6' stroke-width='1.6' stroke-linecap='round'><path d='M12 4v16M5 8l14 8M5 16l14-8'/><path d='M30 24v10M25.7 26.5l8.6 5M25.7 31.5l8.6-5' stroke='#fff'/></g>") },
+  { key: 'stern', name: 'Sternbrief', frame: '#33407a', sheet: '#f7f7ff', line: '#d9dbf2', tile: svgTile(40, 40,
+    "<path d='M12 4l2.4 5 5.6.8-4 3.9 1 5.5-5-2.6-5 2.6 1-5.5-4-3.9 5.6-.8z' fill='#ffd84a'/><circle cx='31' cy='29' r='1.8' fill='#fff'/><circle cx='34' cy='12' r='1.2' fill='#cfd6ff'/><circle cx='22' cy='35' r='1' fill='#fff'/>") },
+  { key: 'luft', name: 'Luftbrief', frame: '#9fd8f3', sheet: '#fbfeff', line: '#d6eef9', tile: svgTile(40, 40,
+    "<path d='M6 16a5 5 0 0 1 9-3 4 4 0 0 1 7 2 3.5 3.5 0 0 1 0 7H8a4 4 0 0 1-2-6z' fill='#fff'/><path d='M24 32l8-4-8-4 2 4z' fill='#e85d4a'/>") },
+  { key: 'mosaik', name: 'Mosaikbrief', frame: '#f2d16b', sheet: '#fffdf3', line: '#efe3b7', tile: svgTile(40, 40,
+    "<rect x='2' y='2' width='16' height='16' fill='#e85d4a'/><rect x='22' y='2' width='16' height='16' fill='#4aa3d6'/><rect x='2' y='22' width='16' height='16' fill='#57b46a'/><rect x='22' y='22' width='16' height='16' fill='#fff7d6'/>") },
+  { key: 'ziegel', name: 'Ziegelbrief', frame: '#c9654a', sheet: '#fff8f4', line: '#f0d5ca', tile: svgTile(40, 20,
+    "<rect width='40' height='20' fill='#b4523a'/><path d='M0 .5h40M0 10h40M20 0v10M0 10v10M40 10v10' stroke='#e8c4b4' stroke-width='1.4'/>") },
+];
+const paperByKey = (k) => PAPERS.find((p) => p.key === k) || PAPERS[0];
+function paperStyle(key) {
+  const p = paperByKey(key);
+  return `--frame:${p.frame};--sheet:${p.sheet};--line:${p.line};--tile:${p.tile}`;
+}
+
+/* ---- Daten ------------------------------------------------------------ */
+
+function mapNote(r) {
+  return {
+    id: r.id, ownerId: r.owner_id, title: r.title || '', content: r.content || '',
+    drawing: Array.isArray(r.drawing) ? r.drawing : [], paper: r.paper || 'schlicht',
+    sharedWith: r.shared_with || [], updatedAt: r.updated_at, updatedBy: r.updated_by, createdAt: r.created_at,
+  };
+}
+async function loadNotes() {
+  state.notes = must(await sb.from('notes').select('*').order('updated_at', { ascending: false })).map(mapNote);
+  state.notesLoaded = true;
+}
+const isShared = (n) => n.sharedWith.length > 0;
+const noteParticipants = (n) => [n.ownerId, ...n.sharedWith];
+
+/** Nur harmlose Formatierungen behalten (fett, unterstrichen, Farbe, Listen, Zeilen) */
+function sanitizeNoteHtml(html) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = String(html || '');
+  const ALLOWED = new Set(['B', 'STRONG', 'U', 'I', 'EM', 'UL', 'OL', 'LI', 'BR', 'DIV', 'P', 'SPAN', 'FONT']);
+  const COLOR = /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\))$/i;
+  const walk = (node) => {
+    for (const child of [...node.childNodes]) {
+      if (child.nodeType === Node.TEXT_NODE) continue;
+      if (child.nodeType !== Node.ELEMENT_NODE || !ALLOWED.has(child.tagName)) {
+        if (child.nodeType === Node.ELEMENT_NODE && !/^(SCRIPT|STYLE|IFRAME|OBJECT|EMBED)$/.test(child.tagName)) {
+          walk(child);
+          child.replaceWith(...child.childNodes);
+        } else child.remove();
+        continue;
+      }
+      const color = child.tagName === 'FONT' ? child.getAttribute('color') : child.style && child.style.color;
+      for (const a of [...child.attributes]) child.removeAttribute(a.name);
+      if (color && COLOR.test(color.trim())) {
+        if (child.tagName === 'FONT') child.setAttribute('color', color.trim());
+        else child.style.color = color.trim();
+      }
+      walk(child);
+    }
+  };
+  walk(tpl.content);
+  return tpl.innerHTML;
+}
+function noteText(n) {
+  const d = document.createElement('div');
+  d.innerHTML = sanitizeNoteHtml(n.content.replace(/<\/?(div|p|li|ul|ol)\b[^>]*>|<br\s*\/?>/gi, ' $&'));
+  return d.textContent.replace(/\s+/g, ' ').trim();
+}
+
+/* ---- Liste ------------------------------------------------------------ */
+
+function noteCardHtml(n) {
+  const text = noteText(n);
+  const who = n.updatedBy ? userById(n.updatedBy) : null;
+  const people = noteParticipants(n).map(userById).filter(Boolean);
+  return `<button type="button" class="note-card" data-note="${esc(n.id)}" style="${esc(paperStyle(n.paper))}">
+    <span class="note-card-sheet">
+      <span class="note-card-title">${esc(n.title || 'Ohne Überschrift')}</span>
+      <span class="note-card-text">${esc(text.slice(0, 160)) || (n.drawing.length ? '✏️ Zeichnung' : '<i>leer</i>')}</span>
+      <span class="note-card-meta">
+        <span>✎ <span data-rel="${esc(n.updatedAt)}">${esc(relative(n.updatedAt))}</span>${who ? ` · ${esc(who.firstName)}` : ''}${n.drawing.length && text ? ' · ✏️' : ''}</span>
+        ${isShared(n) ? `<span class="note-people">${people.map((u) => `<span class="dot" style="--c:${esc(u.color)}" title="${esc(u.firstName)}"></span>`).join('')}</span>` : ''}
+      </span>
+    </span>
+  </button>`;
+}
+
+function renderNotes(view) {
+  if (!state.me) { view.innerHTML = ''; return; }
+  if (!state.notesLoaded) {
+    view.innerHTML = '<div class="empty"><p>Notizen werden geladen …</p></div>';
+    loadNotes().then(render).catch((e) => toast(e.message));
+    return;
+  }
+  const open = lsGet('familie.noteSections', { eigene: true, gemeinsam: true });
+  const own = state.notes.filter((n) => !isShared(n));
+  const shared = state.notes.filter(isShared);
+  const section = (key, title, list, empty) => `<section class="msg-section note-section${open[key] ? ' open' : ''}" data-sec="${key}">
+    <button type="button" class="section-head" data-sec-toggle="${key}" aria-expanded="${Boolean(open[key])}">
+      <span class="section-title">${title}</span><span class="section-count">${list.length}</span>
+      <span class="section-chevron" aria-hidden="true">▾</span>
+    </button>
+    ${open[key] ? (list.length ? `<div class="note-grid">${list.map(noteCardHtml).join('')}</div>` : `<p class="hint note-empty">${empty}</p>`) : ''}
+  </section>`;
+  view.innerHTML = `<div class="notes">
+    ${section('eigene', 'Eigene Notizen', own, 'Noch keine eigenen Notizen. Tippe auf ＋.')}
+    ${section('gemeinsam', 'Gemeinsame Notizen', shared, 'Lade in einer Notiz jemanden ein – dann erscheint sie hier.')}
+  </div>`;
+  view.querySelectorAll('[data-sec-toggle]').forEach((b) => b.addEventListener('click', () => {
+    const k = b.dataset.secToggle;
+    open[k] = !open[k];
+    lsSet('familie.noteSections', open);
+    render();
+  }));
+  view.querySelectorAll('[data-note]').forEach((b) => b.addEventListener('click', () => openNoteEditor(b.dataset.note)));
+}
+
+function openNoteById(id) {
+  const go = () => (state.notes.some((n) => n.id === id) ? openNoteEditor(id) : toast('Diese Notiz gibt es nicht mehr.'));
+  if (state.notesLoaded) go(); else loadNotes().then(go).catch((e) => toast(e.message));
+}
+
+/* ---- Editor ----------------------------------------------------------- */
+
+const draftKey = (id) => `familie.noteDraft.${id || 'neu'}`;
+
+function openNoteEditor(id = null) {
+  const note = id ? state.notes.find((n) => n.id === id) : null;
+  if (id && !note) return;
+  const mine = !note || note.ownerId === state.me.id;
+  // Arbeitskopie (ggf. aus einem lokalen Entwurf)
+  const base = note || { title: '', content: '', drawing: [], paper: 'schlicht', sharedWith: [], updatedAt: null };
+  let draft = lsGet(draftKey(id), null);
+  if (draft && note && draft.base !== note.updatedAt) draft = null; // inzwischen anderswo geändert
+  const work = {
+    title: draft ? draft.title : base.title,
+    content: draft ? draft.content : base.content,
+    drawing: draft ? draft.drawing : [...base.drawing],
+    paper: draft ? draft.paper : base.paper,
+    sharedWith: draft ? draft.sharedWith : [...base.sharedWith],
+  };
+  let noteId = id;
+  let baseUpdatedAt = note ? note.updatedAt : null;
+  let dirty = Boolean(draft) || !note;
+  let uploaded = false;
+  let mode = 'text';
+  let color = NOTE_COLORS[0].c;
+  let penWidth = 3;
+  let eraser = false;
+
+  const metaHtml = () => {
+    const n = noteId && state.notes.find((x) => x.id === noteId);
+    if (!n) return 'Neue Notiz – noch nicht hochgeladen';
+    const who = n.updatedBy && userById(n.updatedBy);
+    return `Zuletzt bearbeitet: ${formatDateTime(n.updatedAt)} Uhr${who ? ` von ${who.firstName}` : ''}`;
+  };
+  const peopleHtml = () => {
+    const people = [mine ? state.me.id : (note ? note.ownerId : state.me.id), ...work.sharedWith].map(userById).filter(Boolean);
+    return work.sharedWith.length
+      ? `👥 Gemeinsam mit ${people.filter((u) => u.id !== state.me.id).map((u) => esc(u.firstName)).join(', ')}`
+      : '🔒 Nur für dich';
+  };
+
+  openModal(
+    `<header class="note-topbar">
+       <button type="button" class="note-tb-btn" id="note-close" aria-label="Zurück">‹</button>
+       <span class="note-tb-title">Notiz</span>
+       <button type="button" class="note-tb-btn upload" id="note-upload">⬆️ Hochladen</button>
+       <button type="button" class="note-tb-btn notify" id="note-notify" disabled>🔔 Benachrichtigen</button>
+     </header>
+     <div class="note-editor">
+       <input class="note-title" id="note-title" maxlength="120" placeholder="Überschrift" value="${esc(work.title)}">
+       <div class="note-meta"><span id="note-meta">${esc(metaHtml())}</span> · <span id="note-people">${peopleHtml()}</span></div>
+       <div class="note-tools" role="toolbar" aria-label="Werkzeuge">
+         <div class="seg" role="group" aria-label="Eingabe">
+           <button type="button" class="tool active" data-mode="text" title="Tastatur">⌨️</button>
+           <button type="button" class="tool" data-mode="draw" title="Mit dem Finger malen">✏️</button>
+         </div>
+         <div class="colors" role="group" aria-label="Farbe">${NOTE_COLORS.map((c, i) => `<button type="button" class="swatch-dot${i === 0 ? ' active' : ''}" data-color="${c.c}" style="--c:${c.c}" title="${c.name}" aria-label="${c.name}"></button>`).join('')}</div>
+         <div class="tool-group text-tools">
+           <button type="button" class="tool" data-cmd="bold" title="Fett"><b>B</b></button>
+           <button type="button" class="tool" data-cmd="underline" title="Unterstreichen"><u>U</u></button>
+           <button type="button" class="tool" data-cmd="insertUnorderedList" title="Aufzählung">•≡</button>
+         </div>
+         <div class="tool-group draw-tools" hidden>
+           <button type="button" class="tool active" data-width="3" title="Dünn">✎</button>
+           <button type="button" class="tool" data-width="8" title="Dick">🖌️</button>
+           <button type="button" class="tool" data-eraser title="Radierer">🧽</button>
+           <button type="button" class="tool" data-undo title="Rückgängig">↶</button>
+         </div>
+         <div class="tool-group">
+           <button type="button" class="tool" data-paper title="Briefpapier">📄</button>
+           ${mine ? '<button type="button" class="tool" data-invite title="Einladen">👥</button>' : ''}
+           <button type="button" class="tool" data-delete title="${mine ? 'Löschen' : 'Verlassen'}">${mine ? '🗑️' : '🚪'}</button>
+         </div>
+       </div>
+       <div class="note-paper" id="note-paper" style="${esc(paperStyle(work.paper))}">
+         <div class="note-sheet" id="note-sheet">
+           <div class="note-text" id="note-text" contenteditable="true" spellcheck="true" data-placeholder="Schreib los …">${sanitizeNoteHtml(work.content)}</div>
+           <canvas class="note-canvas" id="note-canvas"></canvas>
+         </div>
+       </div>
+     </div>`,
+    {
+      full: true,
+      cls: 'note-modal',
+      dismissible: false,
+      onMount: (modal, close) => {
+        const $m = (sel) => $(sel, modal);
+        const titleEl = $m('#note-title');
+        const textEl = $m('#note-text');
+        const sheet = $m('#note-sheet');
+        const canvas = $m('#note-canvas');
+        const ctx = canvas.getContext('2d');
+        const btnUp = $m('#note-upload');
+        const btnNotify = $m('#note-notify');
+
+        const syncButtons = () => {
+          btnUp.disabled = !dirty;
+          btnUp.textContent = dirty ? '⬆️ Hochladen' : '✓ Hochgeladen';
+          btnNotify.disabled = !(uploaded && !dirty && work.sharedWith.length + (mine ? 0 : 1) > 0);
+        };
+        const saveDraft = () => lsSet(draftKey(noteId), { ...work, base: baseUpdatedAt });
+        const markDirty = () => {
+          dirty = true;
+          uploaded = false;
+          btnNotify.textContent = '🔔 Benachrichtigen';
+          syncButtons();
+          clearTimeout(markDirty.t);
+          markDirty.t = setTimeout(saveDraft, 400);
+        };
+
+        /* Zeichnen */
+        const ratio = () => window.devicePixelRatio || 1;
+        const sizeCanvas = () => {
+          const w = sheet.clientWidth;
+          const maxY = work.drawing.reduce((m, s) => s.p.reduce((mm, pt) => Math.max(mm, pt[1]), m), 0) * w;
+          sheet.style.minHeight = `${Math.max(window.innerHeight * 0.62, maxY + 160)}px`;
+          const h = sheet.scrollHeight;
+          canvas.width = Math.round(w * ratio());
+          canvas.height = Math.round(h * ratio());
+          canvas.style.height = `${h}px`;
+          redraw();
+        };
+        const drawStroke = (s, w) => {
+          if (!s.p.length) return;
+          ctx.save();
+          ctx.globalCompositeOperation = s.e ? 'destination-out' : 'source-over';
+          ctx.strokeStyle = s.c || '#000';
+          ctx.lineWidth = s.w * w;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.beginPath();
+          ctx.moveTo(s.p[0][0] * w, s.p[0][1] * w);
+          if (s.p.length === 1) ctx.lineTo(s.p[0][0] * w + 0.1, s.p[0][1] * w);
+          for (let i = 1; i < s.p.length; i++) ctx.lineTo(s.p[i][0] * w, s.p[i][1] * w);
+          ctx.stroke();
+          ctx.restore();
+        };
+        function redraw() {
+          const w = sheet.clientWidth;
+          ctx.setTransform(ratio(), 0, 0, ratio(), 0, 0);
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          work.drawing.forEach((s) => drawStroke(s, w));
+        }
+        let current = null;
+        const pos = (e) => {
+          const r = canvas.getBoundingClientRect();
+          const w = sheet.clientWidth;
+          return [Math.round(((e.clientX - r.left) / w) * 10000) / 10000, Math.round(((e.clientY - r.top) / w) * 10000) / 10000];
+        };
+        canvas.addEventListener('pointerdown', (e) => {
+          if (mode !== 'draw') return;
+          e.preventDefault();
+          canvas.setPointerCapture(e.pointerId);
+          const w = sheet.clientWidth;
+          current = { c: color, w: Math.round(((eraser ? 22 : penWidth) / w) * 10000) / 10000, p: [pos(e)] };
+          if (eraser) current.e = 1;
+          work.drawing.push(current);
+          drawStroke(current, w);
+        });
+        canvas.addEventListener('pointermove', (e) => {
+          if (!current) return;
+          e.preventDefault();
+          const p = pos(e);
+          const last = current.p[current.p.length - 1];
+          const w = sheet.clientWidth;
+          if (Math.hypot((p[0] - last[0]) * w, (p[1] - last[1]) * w) < 1.5) return;
+          current.p.push(p);
+          // inkrementell zeichnen
+          drawStroke({ ...current, p: [last, p] }, w);
+          if (p[1] * w > sheet.clientHeight - 80) sizeCanvas();
+        });
+        const endStroke = () => {
+          if (!current) return;
+          current = null;
+          markDirty();
+        };
+        canvas.addEventListener('pointerup', endStroke);
+        canvas.addEventListener('pointercancel', endStroke);
+
+        const setMode = (m) => {
+          mode = m;
+          modal.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === m));
+          $m('.text-tools').hidden = m !== 'text';
+          $m('.draw-tools').hidden = m !== 'draw';
+          sheet.classList.toggle('drawing', m === 'draw');
+          textEl.contentEditable = m === 'text' ? 'true' : 'false';
+          if (m === 'draw') textEl.blur();
+        };
+
+        /* Text */
+        try { document.execCommand('styleWithCSS', false, false); } catch { /* egal */ }
+        textEl.addEventListener('input', () => {
+          work.content = textEl.innerHTML;
+          markDirty();
+          if (sheet.scrollHeight > canvas.clientHeight + 4) sizeCanvas();
+        });
+        textEl.addEventListener('paste', (e) => {
+          e.preventDefault();
+          const txt = (e.clipboardData || window.clipboardData).getData('text/plain');
+          document.execCommand('insertText', false, txt);
+        });
+        titleEl.addEventListener('input', () => { work.title = titleEl.value; markDirty(); });
+
+        /* Werkzeugleiste */
+        const tools = $m('.note-tools');
+        // Fokus im Text behalten, wenn Knöpfe getippt werden
+        tools.addEventListener('pointerdown', (e) => { if (mode === 'text' && e.target.closest('[data-cmd],[data-color]')) e.preventDefault(); });
+        tools.addEventListener('click', (e) => {
+          const b = e.target.closest('button');
+          if (!b) return;
+          if (b.dataset.mode) { setMode(b.dataset.mode); return; }
+          if (b.dataset.color) {
+            color = b.dataset.color;
+            eraser = false;
+            modal.querySelectorAll('[data-color]').forEach((x) => x.classList.toggle('active', x === b));
+            modal.querySelectorAll('[data-eraser]').forEach((x) => x.classList.remove('active'));
+            if (mode === 'text') { document.execCommand('foreColor', false, color); work.content = textEl.innerHTML; markDirty(); }
+            return;
+          }
+          if (b.dataset.cmd) {
+            document.execCommand(b.dataset.cmd, false, null);
+            work.content = textEl.innerHTML;
+            markDirty();
+            return;
+          }
+          if (b.dataset.width) {
+            penWidth = Number(b.dataset.width);
+            eraser = false;
+            modal.querySelectorAll('[data-width],[data-eraser]').forEach((x) => x.classList.toggle('active', x === b));
+            return;
+          }
+          if (b.hasAttribute('data-eraser')) {
+            eraser = !eraser;
+            modal.querySelectorAll('[data-width]').forEach((x) => x.classList.toggle('active', !eraser && Number(x.dataset.width) === penWidth));
+            b.classList.toggle('active', eraser);
+            return;
+          }
+          if (b.hasAttribute('data-undo')) {
+            if (work.drawing.length) { work.drawing.pop(); redraw(); markDirty(); }
+            return;
+          }
+          if (b.hasAttribute('data-paper')) { pickPaper(); return; }
+          if (b.hasAttribute('data-invite')) { pickPeople(); return; }
+          if (b.hasAttribute('data-delete')) { removeNote(); }
+        });
+
+        const pickPaper = () => openModal(
+          `<div class="modal-head"><h2>Briefpapier</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+           <div class="paper-grid">${PAPERS.map((p) => `<button type="button" class="paper-opt${p.key === work.paper ? ' active' : ''}" data-key="${p.key}" style="${esc(paperStyle(p.key))}">
+             <span class="paper-prev"><span></span></span><span class="paper-name">${esc(p.name)}</span></button>`).join('')}</div>`,
+          {
+            onMount: (m2, close2) => m2.addEventListener('click', (e) => {
+              const o = e.target.closest('[data-key]');
+              if (!o) return;
+              work.paper = o.dataset.key;
+              $m('#note-paper').setAttribute('style', paperStyle(work.paper));
+              markDirty();
+              close2();
+            }),
+          }
+        );
+
+        const pickPeople = () => {
+          const others = state.users.filter((u) => u.id !== state.me.id);
+          if (!others.length) { toast('Es gibt noch niemanden zum Einladen.'); return; }
+          openModal(
+            `<div class="modal-head"><h2>Einladen</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+             <p class="hint">Eingeladene sehen und bearbeiten die Notiz. Sie wird dann zu einer gemeinsamen Notiz.</p>
+             <div class="invite-list">${others.map((u) => `<label class="invite-row" style="${colorVars(u.color)}">
+               <input type="checkbox" value="${esc(u.id)}" ${work.sharedWith.includes(u.id) ? 'checked' : ''}>
+               <span class="mini-photo">${avatarHtml(u)}</span><span>${esc(fullName(u))}</span></label>`).join('')}</div>
+             <div class="modal-actions"><button type="button" class="btn primary" id="invite-ok">Übernehmen</button></div>`,
+            {
+              onMount: (m2, close2) => $('#invite-ok', m2).addEventListener('click', () => {
+                work.sharedWith = [...m2.querySelectorAll('input:checked')].map((i) => i.value);
+                $m('#note-people').innerHTML = peopleHtml();
+                markDirty();
+                close2();
+                toast(work.sharedWith.length ? '👥 Eingeladen – wird beim Hochladen übernommen.' : '🔒 Wieder nur für dich – wird beim Hochladen übernommen.');
+              }),
+            }
+          );
+        };
+
+        const finish = () => { close(); render(); };
+        const removeNote = async () => {
+          if (!noteId) {
+            if (!confirm('Diese neue Notiz verwerfen?')) return;
+            try { localStorage.removeItem(draftKey(null)); } catch { /* egal */ }
+            finish();
+            return;
+          }
+          if (!confirm(mine ? 'Notiz für alle löschen?' : 'Diese gemeinsame Notiz verlassen? Du siehst sie dann nicht mehr.')) return;
+          try {
+            if (mine) must(await sb.from('notes').delete().eq('id', noteId));
+            else must(await sb.rpc('leave_note', { p_note: noteId }));
+            state.notes = state.notes.filter((n) => n.id !== noteId);
+            try { localStorage.removeItem(draftKey(noteId)); } catch { /* egal */ }
+            toast(mine ? '🗑️ Notiz gelöscht.' : '🚪 Notiz verlassen.');
+            finish();
+          } catch (ex) { toast(ex.message); }
+        };
+
+        btnUp.addEventListener('click', async () => {
+          work.title = titleEl.value.trim();
+          work.content = sanitizeNoteHtml(textEl.innerHTML);
+          if (!work.title && !noteText({ content: work.content }) && !work.drawing.length) { toast('Die Notiz ist noch leer.'); return; }
+          btnUp.disabled = true;
+          btnUp.textContent = '⏳ Lädt …';
+          try {
+            const payload = { title: work.title, content: work.content, drawing: work.drawing, paper: work.paper };
+            if (mine) payload.shared_with = work.sharedWith;
+            let row;
+            if (!noteId) {
+              row = must(await sb.from('notes').insert(payload).select().single());
+              try { localStorage.removeItem(draftKey(null)); } catch { /* egal */ }
+            } else {
+              const cur = must(await sb.from('notes').select('updated_at, updated_by').eq('id', noteId).maybeSingle());
+              if (!cur) throw new Error('Die Notiz wurde inzwischen gelöscht.');
+              if (cur.updated_at !== baseUpdatedAt && cur.updated_by !== state.me.id) {
+                const who = userById(cur.updated_by);
+                if (!confirm(`${who ? who.firstName : 'Jemand'} hat die Notiz inzwischen geändert. Mit deiner Version überschreiben?`)) {
+                  dirty = true; syncButtons(); return;
+                }
+              }
+              row = must(await sb.from('notes').update(payload).eq('id', noteId).select().single());
+            }
+            const n = mapNote(row);
+            upsertBy(state.notes, n, true);
+            state.notes.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+            noteId = n.id;
+            baseUpdatedAt = n.updatedAt;
+            try { localStorage.removeItem(draftKey(noteId)); } catch { /* egal */ }
+            dirty = false;
+            uploaded = true;
+            $m('#note-meta').textContent = metaHtml();
+            syncButtons();
+            toast(isShared(n) || !mine ? '⬆️ Hochgeladen – jetzt kannst du benachrichtigen.' : '⬆️ Hochgeladen.');
+          } catch (ex) {
+            toast(ex.message);
+            dirty = true;
+            syncButtons();
+          }
+        });
+
+        btnNotify.addEventListener('click', async () => {
+          btnNotify.disabled = true;
+          try {
+            await invokeOrThrow({ action: 'note', noteId });
+            btnNotify.textContent = '✓ Benachrichtigt';
+            uploaded = false;
+            toast('🔔 Die anderen wurden benachrichtigt.');
+          } catch (ex) {
+            toast(ex.message);
+            btnNotify.disabled = false;
+          }
+        });
+
+        $m('#note-close').addEventListener('click', () => {
+          if (dirty && (titleEl.value.trim() || noteText({ content: textEl.innerHTML }) || work.drawing.length)) {
+            if (!confirm('Noch nicht hochgeladen. Schließen? (Der Entwurf bleibt auf diesem Gerät gespeichert.)')) return;
+            saveDraft();
+          }
+          finish();
+        });
+
+        // Live-Änderung von anderen übernehmen, wenn hier nichts Ungespeichertes ist
+        modal.addEventListener('note-remote', () => {
+          const n = state.notes.find((x) => x.id === noteId);
+          if (!n || dirty || n.updatedAt === baseUpdatedAt) return;
+          Object.assign(work, { title: n.title, content: n.content, drawing: [...n.drawing], paper: n.paper, sharedWith: [...n.sharedWith] });
+          baseUpdatedAt = n.updatedAt;
+          titleEl.value = n.title;
+          textEl.innerHTML = sanitizeNoteHtml(n.content);
+          $m('#note-paper').setAttribute('style', paperStyle(n.paper));
+          $m('#note-meta').textContent = metaHtml();
+          $m('#note-people').innerHTML = peopleHtml();
+          sizeCanvas();
+          toast('📝 Die Notiz wurde gerade von jemand anderem aktualisiert.');
+        });
+
+        const onResize = () => sizeCanvas();
+        window.addEventListener('resize', onResize);
+        new MutationObserver(() => { if (!modal.isConnected) window.removeEventListener('resize', onResize); })
+          .observe($('#modal-root'), { childList: true });
+        requestAnimationFrame(sizeCanvas);
+        syncButtons();
+        if (!id && !isIos) titleEl.focus();
+      },
+    }
+  );
 }
 
 /* -------------------------------------------------------------------------
@@ -2714,7 +3273,8 @@ function render() {
     b.classList.toggle('active', active);
     if (active) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
-  $('#fab').hidden = !(state.tab === 'start' && state.me);
+  $('#fab').hidden = !((state.tab === 'start' || state.tab === 'notizen') && state.me);
+  $('#fab').setAttribute('aria-label', state.tab === 'notizen' ? 'Neue Notiz' : 'Neue Nachricht');
 
   if (!configured) {
     view.innerHTML = `<div class="empty"><div class="big">🛠️</div><h2>Noch nicht eingerichtet</h2><p>In <code>config.js</code> fehlen die Supabase-Zugangsdaten. Siehe Anleitung in der README.</p></div>`;
@@ -2724,7 +3284,7 @@ function render() {
   switch (state.tab) {
     case 'start': return renderAustausch(view);
     case 'einstellungen': return renderSettings(view);
-    case 'notizen': return renderPlaceholder(view, '📝', 'Notizen', 'Dieser Bereich kommt im nächsten Schritt.');
+    case 'notizen': return renderNotes(view);
     case 'kalender': return renderPlaceholder(view, '📅', 'Kalender', 'Dieser Bereich kommt im nächsten Schritt.');
     case 'schande': return renderBoard(view);
     case 'team': return renderTeam(view);
@@ -2738,6 +3298,7 @@ function setTab(tab) {
   const url = new URL(location.href);
   url.searchParams.set('tab', tab);
   url.searchParams.delete('msg');
+  url.searchParams.delete('note');
   url.searchParams.delete('code');
   history.replaceState(null, '', url);
   render();
@@ -2785,7 +3346,7 @@ async function loadFamilyCode() {
 
 async function refreshAll() {
   try {
-    await Promise.all([loadUsers(), loadMessages(), loadBoard()]);
+    await Promise.all([loadUsers(), loadMessages(), loadBoard(), loadNotes()]);
     renderProfileButton();
     render();
     checkVerdicts();
@@ -2851,6 +3412,12 @@ function startRealtime() {
       if (state.tab === 'schande') render();
       checkVerdicts();
     })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, async () => {
+      await loadNotes().catch(() => {});
+      const ed = document.querySelector('.modal.note-modal');
+      if (ed) ed.dispatchEvent(new Event('note-remote'));
+      else if (state.tab === 'notizen') render();
+    })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'strike_rules' }, ({ eventType, new: row, old }) => {
       if (eventType === 'DELETE') state.rules = state.rules.filter((x) => x.id !== old.id);
       else upsertBy(state.rules, mapRule(row));
@@ -2869,7 +3436,7 @@ function startRealtime() {
 // Countdown-Anzeigen aktualisieren & abgelaufene Nachrichten lokal ausblenden
 // Nur Zeitangaben aktualisieren statt alles neu zu zeichnen – sonst springen die Meldungen
 setInterval(() => {
-  if (!state.me || state.tab !== 'start') return;
+  if (!state.me || (state.tab !== 'start' && state.tab !== 'notizen')) return;
   const expired = state.messages.some((m) => m.deleteAt && Date.parse(m.deleteAt) <= Date.now() && document.getElementById(`msg-${m.id}`));
   if (expired && !$('.modal-backdrop')) { render(); return; }
   document.querySelectorAll('#view [data-rel]').forEach((el) => {
@@ -2890,7 +3457,8 @@ document.addEventListener('visibilitychange', () => {
 
 async function startApp() {
   renderProfileButton();
-  await Promise.all([loadUsers(), loadMessages(), loadFamilyCode(), loadBoard()]).catch((e) => toast(e.message));
+  await Promise.all([loadUsers(), loadMessages(), loadFamilyCode(), loadBoard(), loadNotes()]).catch((e) => toast(e.message));
+  if (state.openNote) { const id = state.openNote; state.openNote = null; openNoteById(id); }
   renderProfileButton();
   render();
   checkVerdicts();
@@ -2900,7 +3468,7 @@ async function startApp() {
 }
 
 async function init() {
-  $('#fab').addEventListener('click', openNewMessage);
+  $('#fab').addEventListener('click', () => (state.tab === 'notizen' ? openNoteEditor() : openNewMessage()));
   $('#update-btn').addEventListener('click', checkForUpdate);
   setupMenu();
   darkQuery.addEventListener('change', syncThemeToggle);
@@ -2912,12 +3480,16 @@ async function init() {
   const startTab = TAB_ALIASES[params.get('tab')] || params.get('tab');
   if (TABS[startTab]) state.tab = startTab;
   if (params.get('msg')) state.highlight = params.get('msg');
+  if (params.get('note')) state.openNote = params.get('note');
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch((e) => console.warn('SW-Registrierung fehlgeschlagen', e));
     navigator.serviceWorker.addEventListener('message', (e) => {
       if (e.data && e.data.type === 'open-message') {
-        state.highlight = e.data.id;
+        const id = String(e.data.id || '');
+        if (id.startsWith('note-')) { setTab('notizen'); openNoteById(id.slice(5)); return; }
+        if (/^(strike|board)-/.test(id)) { setTab('schande'); return; }
+        state.highlight = id.replace(/^(done|resp|comment|review|start|frist)-/, '').slice(0, 36);
         setTab('start');
       }
     });
