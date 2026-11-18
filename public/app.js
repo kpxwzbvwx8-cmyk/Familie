@@ -442,10 +442,157 @@ function openModal(html, { dismissible = true, onMount, full = false, cls = '' }
   return close;
 }
 
+/* -------------------------------------------------------------------------
+ * Spiel-Textbox (wie die Dialoge in den Pokémon-Spielen)
+ *  – Text erscheint Buchstabe für Buchstabe; Tippen zeigt alles / blättert weiter
+ *  – dsSay: Erklärungen & Hinweise (mehrseitig)
+ *  – dsAsk: Ja/Nein-Auswahl statt der Browser-Rückfrage
+ * ---------------------------------------------------------------------- */
+
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** Schreibt Text Buchstabe für Buchstabe; liefert finish() und ein Versprechen */
+function typeText(el, text, speed = 22) {
+  let i = 0, timer = null, resolve;
+  const done = new Promise((r) => { resolve = r; });
+  const chars = [...text];
+  const step = () => {
+    i = Math.min(chars.length, i + 1);
+    el.textContent = chars.slice(0, i).join('');
+    if (i >= chars.length) { resolve(); return; }
+    const c = chars[i - 1];
+    timer = setTimeout(step, /[.!?…:]/.test(c) ? speed * 6 : /[,;–]/.test(c) ? speed * 3 : speed);
+  };
+  if (reduceMotion || !text) { el.textContent = text; resolve(); } else step();
+  return {
+    done,
+    get finished() { return i >= chars.length || reduceMotion; },
+    finish() { clearTimeout(timer); i = chars.length; el.textContent = text; resolve(); },
+  };
+}
+
+/** Längere Texte in Seiten teilen (wie im Spiel: höchstens ~2–3 Zeilen pro Box) */
+function pagesOf(text, max = 130) {
+  const sentences = String(text).match(/[^.!?]+[.!?]*\s*/g) || [String(text)];
+  const pages = [];
+  let cur = '';
+  for (const s of sentences) {
+    if ((cur + s).length > max && cur) { pages.push(cur.trim()); cur = ''; }
+    cur += s;
+  }
+  if (cur.trim()) pages.push(cur.trim());
+  return pages;
+}
+
+function sayRoot() {
+  let r = document.getElementById('say-root');
+  if (!r) { r = document.createElement('div'); r.id = 'say-root'; document.body.appendChild(r); }
+  return r;
+}
+
+function dsBoxHtml(speaker) {
+  return `<div class="ds-say" role="dialog" aria-live="polite">
+    ${speaker ? `<span class="ds-say-name">${esc(speaker)}</span>` : ''}
+    <p class="ds-say-text"></p>
+    <span class="ds-say-arrow" aria-hidden="true">▼</span>
+  </div>`;
+}
+
+/** Erklärung/Hinweis als Spiel-Textbox; Tippen blättert weiter und schließt am Ende */
+function dsSay(text, { speaker = '', pages = null } = {}) {
+  return new Promise((resolve) => {
+    const list = pages || pagesOf(text);
+    const wrap = document.createElement('div');
+    wrap.className = 'say-backdrop';
+    wrap.innerHTML = dsBoxHtml(speaker);
+    sayRoot().appendChild(wrap);
+    const p = wrap.querySelector('.ds-say-text');
+    const box = wrap.querySelector('.ds-say');
+    let idx = 0, typing = null;
+    const show = () => {
+      box.classList.remove('ready');
+      box.classList.toggle('last', idx === list.length - 1);
+      typing = typeText(p, list[idx]);
+      typing.done.then(() => box.classList.add('ready'));
+    };
+    const next = () => {
+      if (!typing.finished) { typing.finish(); return; }
+      if (idx < list.length - 1) { idx++; show(); return; }
+      wrap.classList.add('out');
+      setTimeout(() => { wrap.remove(); resolve(); }, 140);
+      document.removeEventListener('keydown', onKey);
+    };
+    const onKey = (e) => { if (['Enter', ' ', 'Escape'].includes(e.key)) { e.preventDefault(); next(); } };
+    wrap.addEventListener('click', next);
+    document.addEventListener('keydown', onKey);
+    show();
+  });
+}
+
+/** Ja/Nein-Frage wie im Spiel; liefert true/false */
+function dsAsk(text, { yes = 'Ja', no = 'Nein', danger = false, speaker = '' } = {}) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'say-backdrop ask';
+    wrap.innerHTML = `<div class="ds-choice" role="menu" hidden>
+        <button type="button" class="ds-choice-btn${danger ? ' danger' : ''}" data-v="1" role="menuitem">${esc(yes)}</button>
+        <button type="button" class="ds-choice-btn" data-v="0" role="menuitem">${esc(no)}</button>
+      </div>${dsBoxHtml(speaker)}`;
+    sayRoot().appendChild(wrap);
+    const choice = wrap.querySelector('.ds-choice');
+    const typing = typeText(wrap.querySelector('.ds-say-text'), text);
+    const open = () => {
+      choice.hidden = false;
+      wrap.querySelector('.ds-say').classList.add('asking');
+      choice.querySelector('[data-v="1"]').focus({ preventScroll: true });
+    };
+    typing.done.then(open);
+    const end = (v) => {
+      document.removeEventListener('keydown', onKey);
+      wrap.classList.add('out');
+      setTimeout(() => { wrap.remove(); resolve(v); }, 120);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') end(false);
+      if (e.key === 'Enter' && !typing.finished) { e.preventDefault(); typing.finish(); }
+    };
+    document.addEventListener('keydown', onKey);
+    wrap.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-v]');
+      if (b) { end(b.dataset.v === '1'); return; }
+      if (!typing.finished) { typing.finish(); return; }
+      if (!e.target.closest('.ds-choice, .ds-say')) end(false); // daneben tippen = Nein
+    });
+  });
+}
+
+/** Pokéball-Ladeanzeige */
+function loaderHtml(text = 'Lädt …') {
+  return `<div class="ball-loader"><span class="ball-loader-ball">${ballSvg('poke', 46)}</span><span class="ds-mini">${esc(text)}</span></div>`;
+}
+
+/** Leerer Bereich: eigener Trainer + Spiel-Textbox */
+function emptyStateHtml(text, { icon = '' } = {}) {
+  const me = state.me;
+  const sprite = me && SPRITES[me.gender] ? `<img class="empty-trainer" src="${SPRITES[me.gender]}" alt="">` : (icon ? `<div class="big">${icon}</div>` : '');
+  return `<div class="empty-ds">${sprite}<div class="ds-say static"><p class="ds-say-text">${esc(text)}</p></div></div>`;
+}
+
+/** Kurze „Gefangen!“-Animation als Bestätigung (Ball wackelt dreimal, dann klickt er zu) */
+function catchAnimation(text = 'Gespeichert!') {
+  if (reduceMotion) { toast(`✨ ${text}`); return; }
+  const el = document.createElement('div');
+  el.className = 'catch-fx';
+  el.innerHTML = `<div class="catch-ball">${ballSvg('poke', 64)}</div><div class="catch-stars" aria-hidden="true"><i></i><i></i><i></i></div><div class="catch-text">${esc(text)}</div>`;
+  sayRoot().appendChild(el);
+  setTimeout(() => el.remove(), 1700);
+}
+
 function toast(text, onClick) {
   const el = document.createElement('div');
   el.className = 'toast';
-  el.textContent = text;
+  el.innerHTML = '<span class="toast-text"></span><span class="ds-say-arrow" aria-hidden="true">▼</span>';
+  typeText(el.firstChild, text, 12);
   el.addEventListener('click', () => {
     el.remove();
     onClick && onClick();
@@ -797,12 +944,16 @@ function ackOptionRow(value) {
 }
 
 function showHelp(key) {
-  openModal(
-    `<div class="modal-head"><h2>Erklärung</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
-     <p class="help-text">${esc(HELP[key] || '')}</p>
-     <div class="modal-actions"><button class="btn primary" data-close>Verstanden</button></div>`
-  );
+  dsSay(HELP[key] || '', { speaker: 'Tipp' });
 }
+// Alle ?-Knöpfe öffnen die Erklärung als Spiel-Textbox
+document.addEventListener('click', (e) => {
+  const help = e.target.closest('[data-help]');
+  if (!help) return;
+  e.preventDefault();
+  e.stopPropagation();
+  showHelp(help.dataset.help);
+}, true);
 
 function formatTimeOnly(iso) {
   return new Date(iso).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
@@ -925,7 +1076,7 @@ function bindMessage(el) {
   el.querySelectorAll('[data-comment-form]').forEach((f) => f.addEventListener('submit', (e) => { e.preventDefault(); sendComment(f); }));
   el.querySelectorAll('[data-delete]').forEach((b) =>
     b.addEventListener('click', async () => {
-      if (!confirm('Nachricht wirklich löschen?')) return;
+      if (!(await dsAsk('Diese Nachricht wirklich löschen?', { yes: 'Löschen', danger: true }))) return;
       try {
         must(await sb.from('messages').delete().eq('id', b.dataset.delete));
         removeMessage(b.dataset.delete);
@@ -1003,7 +1154,7 @@ async function sendComment(form) {
 }
 
 async function deleteComment(commentId, messageId) {
-  if (!confirm('Kommentar löschen?')) return;
+  if (!(await dsAsk('Kommentar löschen?', { yes: 'Löschen', danger: true }))) return;
   try {
     must(await sb.from('message_comments').delete().eq('id', commentId));
     removeComment(commentId, messageId);
@@ -1227,7 +1378,7 @@ function renderAustausch(view) {
   const evItems = state.events.map((ev) => ({ ev, sec: eventSection(ev) })).filter((x) => x.sec);
   let list;
   if (!visible.length && !evItems.length) {
-    list = `<div class="empty"><div class="big">💬</div><h2>Noch nichts los</h2><p>Tippe auf <b>+</b> für eine Info, eine Meldung oder einen Termin.</p></div>`;
+    list = emptyStateHtml('Hier ist gerade nichts los! Tippe unten rechts auf ＋ für eine Info, eine Meldung oder einen Termin.');
   } else {
     const groups = Object.fromEntries(SECTIONS.map((sec) => [sec.key, []]));
     for (const m of visible) groups[sectionOf(m)].push({ m });
@@ -1294,6 +1445,7 @@ function openCreateMenu() {
     {
       cls: 'create-menu',
       onMount: (modal, close) => {
+        typeText($('.cm-box p', modal), 'Was möchtest du anlegen?');
         modal.addEventListener('click', (e) => {
           const b = e.target.closest('[data-create]');
           if (!b) return;
@@ -1416,8 +1568,6 @@ function openNewMessage(preset = 'normal') {
             }
             return;
           }
-          const help = e.target.closest('[data-help]');
-          if (help) { e.preventDefault(); showHelp(help.dataset.help); return; }
         });
         // Nur einer der drei Regler darf an sein
         // Zeilen klappen erst auf, wenn ihr Regler an ist
@@ -1517,6 +1667,7 @@ function openNewMessage(preset = 'normal') {
             }).select().single());
             upsertMessage(mapMessage(row));
             close();
+            catchAnimation(f.get('urgency') === 'info' ? 'Info verschickt!' : 'Meldung verschickt!');
             if (form.elements.notify.checked) {
               sb.functions.invoke('push', { body: { action: 'notify', messageId: row.id } })
                 .then((r) => r.error && console.warn('Benachrichtigung fehlgeschlagen', r.error));
@@ -1958,7 +2109,7 @@ async function checkForUpdate() {
  * ---------------------------------------------------------------------- */
 
 function renderPlaceholder(view, icon, title, text) {
-  view.innerHTML = `<div class="empty"><div class="big">${icon}</div><h2>${esc(title)}</h2><p>${esc(text)}</p></div>`;
+  view.innerHTML = emptyStateHtml(`${title}: ${text}`, { icon });
 }
 
 /* -------------------------------------------------------------------------
@@ -2247,7 +2398,7 @@ function dayPanelHtml() {
 function renderCalendar(view) {
   if (!state.me) { view.innerHTML = ''; return; }
   if (!state.eventsLoaded) {
-    view.innerHTML = '<div class="empty"><p>Kalender wird geladen …</p></div>';
+    view.innerHTML = loaderHtml('Kalender wird geladen …');
     loadEvents().then(render).catch((e) => toast(e.message));
     return;
   }
@@ -2446,7 +2597,7 @@ function openEventForm({ day = null, event = null } = {}) {
         syncRows();
         const delBtn = $('#ev-delete', modal);
         if (delBtn) delBtn.addEventListener('click', async () => {
-          if (!confirm('Termin wirklich löschen?')) return;
+          if (!(await dsAsk('Diesen Termin wirklich löschen? Eingeladene sehen ihn dann auch nicht mehr.', { yes: 'Löschen', danger: true }))) return;
           try {
             must(await sb.from('events').delete().eq('id', ev.id));
             state.events = state.events.filter((x) => x.id !== ev.id);
@@ -2501,7 +2652,7 @@ function openEventForm({ day = null, event = null } = {}) {
             state.calDay = startOfDay(s);
             state.calMonth = new Date(s.getFullYear(), s.getMonth(), 1);
             render();
-            toast(ev ? '📅 Termin gespeichert.' : fresh.length ? '📨 Termin angelegt – Einladung verschickt.' : '📅 Termin angelegt.');
+            if (ev) toast('📅 Termin gespeichert.'); else catchAnimation(fresh.length ? 'Termin & Einladung raus!' : 'Termin eingetragen!');
           } catch (ex) {
             err.textContent = ex.message;
             btn.disabled = false;
@@ -2580,7 +2731,7 @@ function openEventDetail(id) {
         if (edit) edit.addEventListener('click', () => { close(); openEventForm({ event: cur }); });
         const del = $('#ev-del', modal);
         if (del) del.addEventListener('click', async () => {
-          if (!confirm('Termin wirklich löschen?')) return;
+          if (!(await dsAsk('Diesen Termin wirklich löschen? Eingeladene sehen ihn dann auch nicht mehr.', { yes: 'Löschen', danger: true }))) return;
           try {
             must(await sb.from('events').delete().eq('id', cur.id));
             state.events = state.events.filter((x) => x.id !== cur.id);
@@ -2831,7 +2982,7 @@ function noteCardHtml(n) {
 function renderNotes(view) {
   if (!state.me) { view.innerHTML = ''; return; }
   if (!state.notesLoaded) {
-    view.innerHTML = '<div class="empty"><p>Notizen werden geladen …</p></div>';
+    view.innerHTML = loaderHtml('Notizen werden geladen …');
     loadNotes().then(render).catch((e) => toast(e.message));
     return;
   }
@@ -3164,12 +3315,12 @@ function openNoteEditor(id = null) {
         const finish = () => { close(); render(); };
         const removeNote = async () => {
           if (!noteId) {
-            if (!confirm('Diese neue Notiz verwerfen?')) return;
+            if (!(await dsAsk('Diese neue Notiz verwerfen?', { yes: 'Verwerfen', danger: true }))) return;
             try { localStorage.removeItem(draftKey(null)); } catch { /* egal */ }
             finish();
             return;
           }
-          if (!confirm(mine ? 'Notiz für alle löschen?' : 'Diese gemeinsame Notiz verlassen? Du siehst sie dann nicht mehr.')) return;
+          if (!(await dsAsk(mine ? 'Diese Notiz für alle löschen?' : 'Diese gemeinsame Notiz verlassen? Du siehst sie dann nicht mehr.', { yes: mine ? 'Löschen' : 'Verlassen', danger: true }))) return;
           try {
             if (mine) must(await sb.from('notes').delete().eq('id', noteId));
             else must(await sb.rpc('leave_note', { p_note: noteId }));
@@ -3198,7 +3349,7 @@ function openNoteEditor(id = null) {
               if (!cur) throw new Error('Die Notiz wurde inzwischen gelöscht.');
               if (cur.updated_at !== baseUpdatedAt && cur.updated_by !== state.me.id) {
                 const who = userById(cur.updated_by);
-                if (!confirm(`${who ? who.firstName : 'Jemand'} hat die Notiz inzwischen geändert. Mit deiner Version überschreiben?`)) {
+                if (!(await dsAsk(`${who ? who.firstName : 'Jemand'} hat die Notiz inzwischen geändert. Mit deiner Version überschreiben?`, { yes: 'Überschreiben', danger: true }))) {
                   dirty = true; syncButtons(); return;
                 }
               }
@@ -3214,7 +3365,8 @@ function openNoteEditor(id = null) {
             uploaded = true;
             $m('#note-meta').textContent = metaHtml();
             syncButtons();
-            toast(isShared(n) || !mine ? '⬆️ Hochgeladen – jetzt kannst du benachrichtigen.' : '⬆️ Hochgeladen.');
+            catchAnimation('Hochgeladen!');
+            if (isShared(n) || !mine) toast('Jetzt kannst du die anderen benachrichtigen.');
           } catch (ex) {
             toast(ex.message);
             dirty = true;
@@ -3235,9 +3387,9 @@ function openNoteEditor(id = null) {
           }
         });
 
-        $m('#note-close').addEventListener('click', () => {
+        $m('#note-close').addEventListener('click', async () => {
           if (dirty && (titleEl.value.trim() || noteText({ content: textEl.innerHTML }) || work.drawing.length)) {
-            if (!confirm('Noch nicht hochgeladen. Schließen? (Der Entwurf bleibt auf diesem Gerät gespeichert.)')) return;
+            if (!(await dsAsk('Noch nicht hochgeladen. Trotzdem schließen? Der Entwurf bleibt auf diesem Handy gespeichert.', { yes: 'Schließen', no: 'Weiter schreiben' }))) return;
             saveDraft();
           }
           finish();
@@ -3599,7 +3751,7 @@ function renderBoard(view) {
 
 async function ruleAction(fn, btn) {
   const id = btn.dataset.approve || btn.dataset.reject;
-  if (fn === 'reject_rule' && !confirm('Diesen Vorschlag wirklich verwerfen?')) return;
+  if (fn === 'reject_rule' && !(await dsAsk('Diesen Vorschlag wirklich verwerfen?', { yes: 'Verwerfen', danger: true }))) return;
   btn.disabled = true;
   try {
     const r = must(await sb.rpc(fn, { p_rule: id }));
@@ -3617,7 +3769,7 @@ async function ruleAction(fn, btn) {
 
 async function confirmFine(userId, btn) {
   const u = userById(userId);
-  if (!confirm(`Bestätigst du, dass ${u ? u.firstName : 'die Person'} die 10 € bezahlt hat?`)) return;
+  if (!(await dsAsk(`Bestätigst du, dass ${u ? u.firstName : 'die Person'} die 10 € bezahlt hat?`, { yes: 'Bezahlt', no: 'Noch nicht' }))) return;
   btn.disabled = true;
   try {
     const f = mapFine(must(await sb.rpc('confirm_fine', { p_user: userId })));
@@ -4113,6 +4265,11 @@ function setTab(tab) {
   history.replaceState(null, '', url);
   render();
   window.scrollTo(0, 0);
+  // kurzer Bildwechsel wie beim Szenenwechsel im Spiel
+  const v = $('#view');
+  v.classList.remove('scene-in');
+  void v.offsetWidth;
+  v.classList.add('scene-in');
 }
 
 /* -------------------------------------------------------------------------
@@ -4290,6 +4447,16 @@ async function startApp() {
   startRealtime();
   syncPushSubscription();
   if (!state.me.gender) openEditProfile();
+  else if (!lsGet('familie.introSeen', false)) {
+    lsSet('familie.introSeen', true);
+    setTimeout(() => dsSay('', { speaker: 'Prof. Familie', pages: [
+      `Hallo ${state.me.firstName}! Willkommen in der Welt der Familie!`,
+      'Auf START siehst du alles, was heute, morgen und diese Woche ansteht – Meldungen, Infos und Termine.',
+      'Mit dem ＋ unten rechts legst du eine Info, eine Meldung oder einen Termin an.',
+      'Über den X-Knopf erreichst du Team, Notizen, Kalender und das gefürchtete Board der Schande.',
+      'Siehst du ein ?, tippe darauf – dann erkläre ich dir, was es damit auf sich hat. Viel Spaß!',
+    ] }), 600);
+  }
 }
 
 async function init() {

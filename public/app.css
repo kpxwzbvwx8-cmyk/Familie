@@ -1543,3 +1543,104 @@ body.nav-tabs .punish-field { bottom: calc(var(--tabbar-h) + env(safe-area-inset
 .hsv-team img, .hsv-crest-fallback { width: 64px; height: 64px; object-fit: contain; }
 .hsv-crest-fallback { display: grid; place-items: center; border-radius: 50%; background: var(--bg); font-size: 1.6rem; }
 .hsv-score { font-family: "Pokemon Solid", sans-serif; font-size: 1.8rem; color: #ffcb05; -webkit-text-stroke: 1.5px #3c5aa6; paint-order: stroke fill; }
+
+/* =========================================================================
+ * Spiel-Textbox (Dialog wie in den Pokémon-Spielen)
+ * ======================================================================= */
+#say-root { position: relative; z-index: 70; }
+.say-backdrop {
+  position: fixed; inset: 0; z-index: 70; display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch;
+  padding: 0 12px calc(env(safe-area-inset-bottom) + 18px); background: rgba(10, 12, 25, .28); animation: fade .15s ease; cursor: pointer;
+}
+.say-backdrop.out { opacity: 0; transition: opacity .12s; }
+.ds-say {
+  position: relative; max-width: 620px; width: 100%; margin: 0 auto; min-height: 92px;
+  padding: 16px 40px 16px 18px; border-radius: 12px; background: #fff; color: #2b2b33;
+  border: 4px solid #4f6fbd; box-shadow: inset 0 0 0 3px #c9d7f5, 0 4px 0 #1f2a4a, 0 10px 30px rgba(0,0,0,.3);
+  font-size: 1.2rem; line-height: 1.55; animation: say-in .18s cubic-bezier(.2,.9,.3,1.2);
+}
+@keyframes say-in { from { transform: translateY(24px); opacity: 0; } }
+.ds-say-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.55em; }
+.ds-say-name {
+  position: absolute; left: 14px; top: -18px; padding: 2px 12px; border-radius: 8px; font-size: .95rem;
+  background: #4f6fbd; color: #fff; border: 3px solid #fff; box-shadow: 0 2px 0 #1f2a4a;
+}
+.ds-say-arrow { position: absolute; right: 14px; bottom: 8px; color: #e0485a; font-size: .85rem; opacity: 0; }
+.ds-say.ready .ds-say-arrow { opacity: 1; animation: say-bob .7s ease-in-out infinite; }
+.ds-say.ready.last .ds-say-arrow { animation: say-blink 1s steps(2) infinite; }
+.ds-say.asking .ds-say-arrow { display: none; }
+@keyframes say-bob { 50% { transform: translateY(3px); } }
+@keyframes say-blink { 50% { opacity: 0; } }
+.ds-say.static { animation: none; min-height: 0; box-shadow: inset 0 0 0 3px #c9d7f5, 0 4px 0 #1f2a4a; }
+
+/* Ja/Nein-Auswahl rechts über der Textbox */
+.ds-choice {
+  align-self: flex-end; display: grid; min-width: 150px; margin: 0 max(0px, calc((100% - 620px) / 2)) 10px 0; padding: 8px 6px;
+  background: #fff; border-radius: 12px; border: 4px solid #4f6fbd; box-shadow: inset 0 0 0 3px #c9d7f5, 0 4px 0 #1f2a4a;
+  animation: say-in .15s ease;
+}
+.ds-choice[hidden] { display: none; }
+.ds-choice-btn {
+  position: relative; border: 0; background: none; font: inherit; font-size: 1.2rem; color: #2b2b33; text-align: left;
+  padding: 8px 14px 8px 30px; border-radius: 8px; cursor: pointer; min-height: 44px;
+}
+.ds-choice-btn::before { content: "▶"; position: absolute; left: 8px; top: 50%; transform: translateY(-50%); font-size: .8rem; color: #2b2b33; opacity: 0; }
+.ds-choice-btn:hover::before, .ds-choice-btn:focus-visible::before, .ds-choice-btn:focus::before { opacity: 1; }
+.ds-choice-btn:focus { outline: none; background: #eef3ff; }
+.ds-choice-btn.danger { color: #c62828; }
+
+/* Toast als kleine Textbox */
+.toast {
+  position: relative; background: #fff; color: #2b2b33; border-radius: 10px; padding: 10px 34px 10px 14px;
+  border: 3px solid #4f6fbd; box-shadow: inset 0 0 0 2px #c9d7f5, 0 3px 0 #1f2a4a, 0 8px 20px rgba(0,0,0,.18);
+  font-size: 1.05rem; line-height: 1.45;
+}
+.toast .ds-say-arrow { opacity: 1; right: 10px; bottom: 6px; animation: say-bob .7s ease-in-out infinite; }
+
+/* Leerer Bereich: Trainer + Textbox */
+.empty-ds { display: grid; justify-items: center; gap: 4px; padding: 30px 6px 10px; max-width: 520px; margin: 0 auto; }
+.empty-trainer { height: 120px; image-rendering: pixelated; filter: drop-shadow(0 4px 0 rgba(0,0,0,.12)); animation: idle-bob 1.6s ease-in-out infinite; }
+@keyframes idle-bob { 50% { transform: translateY(-3px); } }
+.empty-ds .big { font-size: 3rem; }
+
+/* Pokéball-Ladeanzeige */
+.ball-loader { display: grid; justify-items: center; gap: 12px; padding: 60px 0; }
+.ball-loader-ball { animation: ball-spin 1s cubic-bezier(.5,.1,.5,.9) infinite; transform-origin: 50% 60%; }
+@keyframes ball-spin { 0% { transform: rotate(0); } 25% { transform: rotate(-20deg); } 50% { transform: rotate(0); } 75% { transform: rotate(20deg); } 100% { transform: rotate(0); } }
+.ds-mini { padding: 4px 12px; border-radius: 8px; background: #fff; color: #2b2b33; border: 3px solid #4f6fbd; box-shadow: 0 2px 0 #1f2a4a; }
+
+/* „Gefangen!“-Animation */
+.catch-fx { position: fixed; inset: 0; z-index: 75; display: grid; place-items: center; pointer-events: none; }
+.catch-ball { animation: catch-drop .35s cubic-bezier(.3,1.6,.5,1) both, catch-wobble 1s ease-in-out .35s both; filter: drop-shadow(0 6px 0 rgba(0,0,0,.2)); }
+@keyframes catch-drop { from { transform: translateY(-60vh) rotate(-360deg); } }
+@keyframes catch-wobble {
+  0%, 100% { transform: rotate(0); } 12% { transform: rotate(-22deg); } 24% { transform: rotate(0); }
+  42% { transform: rotate(18deg); } 54% { transform: rotate(0); } 72% { transform: rotate(-12deg); } 84% { transform: rotate(0); }
+}
+.catch-stars { position: absolute; width: 0; height: 0; }
+.catch-stars i { position: absolute; width: 14px; height: 14px; margin: -7px; opacity: 0; background: #ffcb05; clip-path: polygon(50% 0, 61% 38%, 100% 50%, 61% 62%, 50% 100%, 39% 62%, 0 50%, 39% 38%); animation: star-pop .6s ease-out 1.3s forwards; }
+.catch-stars i:nth-child(1) { --dx: -54px; --dy: -46px; } .catch-stars i:nth-child(2) { --dx: 0px; --dy: -64px; } .catch-stars i:nth-child(3) { --dx: 54px; --dy: -46px; }
+@keyframes star-pop { 0% { opacity: 1; transform: translate(0, 0) scale(.4); } 100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(1.3); } }
+.catch-text {
+  position: absolute; top: calc(50% + 52px); padding: 6px 16px; border-radius: 10px; background: #fff; color: #2b2b33; font-size: 1.2rem;
+  border: 3px solid #4f6fbd; box-shadow: inset 0 0 0 2px #c9d7f5, 0 3px 0 #1f2a4a; opacity: 0; animation: catch-text 1.7s ease both;
+}
+@keyframes catch-text { 0%, 70% { opacity: 0; transform: translateY(8px); } 80%, 92% { opacity: 1; transform: none; } 100% { opacity: 0; } }
+
+/* Hinweis-Banner auf Start im Textbox-Stil */
+.notify-banner {
+  background: #fff; color: #2b2b33; border-radius: 12px; border: 3px solid #4f6fbd;
+  box-shadow: inset 0 0 0 2px #c9d7f5, 0 3px 0 #1f2a4a;
+}
+.notify-banner.install { border-color: #e0485a; box-shadow: inset 0 0 0 2px #f8d0d5, 0 3px 0 #7a1510; }
+
+/* Fragezeichen-Knöpfe wie kleine Spielknöpfe */
+.help-btn { background: #4f6fbd; color: #fff; border: 2px solid #fff; box-shadow: 0 2px 0 #1f2a4a, 0 0 0 1px #4f6fbd; font-weight: 700; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-say, .ds-choice, .empty-trainer, .ball-loader-ball, .say-backdrop { animation: none; }
+}
+/* Szenenwechsel zwischen Bereichen */
+.view.scene-in { animation: scene-in .22s ease-out; }
+@keyframes scene-in { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .view.scene-in { animation: none; } }
