@@ -5,6 +5,8 @@
 //  respond – auf eine Meldung mit Rückmeldung antworten (eine der Optionen), Urheber wird benachrichtigt
 //  comment – nach einem neuen Kommentar die anderen Beteiligten benachrichtigen
 //  review  – Urheber nimmt eine Meldung mit Strich-Androhung ab (accept) oder vergibt den Strich (strike + Grund)
+//  strike  – Board der Schande: Urteil, Einspruch, Entscheidung, Anerkennung
+//  board   – Board der Schande: neuer Grund zur Beglaubigung, Bezahlung bestätigt
 import { admin, bearer, cors, json, memberFromToken, URGENCY_LABELS } from '../_shared/common.ts';
 import { ensureTickConfig, publicKey, sendPush } from '../_shared/webpush.ts';
 
@@ -139,21 +141,62 @@ Deno.serve(async (req) => {
       if (body.verdict === 'strike') {
         const reason = String(body.reason ?? '').trim().slice(0, 200);
         if (!reason) return json({ error: 'Bitte einen Grund angeben' }, 400);
-        const full = `${reason} – ${msg.title}`;
-        const { error } = await admin.from('strikes').insert(reacted.map((uid) => ({ user_id: uid, message_id: msg.id, given_by: me.id, reason: full })));
+        const { error } = await admin.from('strikes').insert(reacted.map((uid) => ({
+          user_id: uid, message_id: msg.id, given_by: me.id, value: 1,
+          title: 'Strich bei Abnahme', description: msg.title, reason,
+          history: [{ type: 'given', by: me.id, at: now, text: reason }],
+        })));
         if (error) throw error;
-        for (const uid of reacted) {
-          const { data: prof } = await admin.from('profiles').select('strikes').eq('id', uid).single();
-          await admin.from('profiles').update({ strikes: (prof?.strikes ?? 0) + 1 }).eq('id', uid);
-        }
         await admin.from('messages').update({ closed_at: now, review_status: 'rejected', strike_note: reason }).eq('id', msg.id);
         await sendPush({
-          title: `😈 Strich: ${msg.title}`, body: `${meName}: ${reason}`,
-          tag: `review-${msg.id}`, url: `?tab=start&msg=${msg.id}`, urgency: 'dringend',
+          title: `😈 VERURTEILT: ${msg.title}`, body: `${meName}: ${reason} – Anerkennen oder Einspruch einlegen.`,
+          tag: `review-${msg.id}`, url: `?tab=schande`, urgency: 'dringend',
         }, { toUsers: reacted, high: true, contact: origin });
         return json({ ok: true });
       }
       return json({ error: 'Unbekannte Entscheidung' }, 400);
+    }
+
+    if (body.action === 'strike') {
+      // Benachrichtigungen rund um das Board der Schande (Zustand kommt aus der Datenbank)
+      const { data: st } = await admin.from('strikes').select('*').eq('id', body.strikeId).maybeSingle();
+      if (!st) return json({ error: 'Strich nicht gefunden' }, 404);
+      const v = String(st.value).replace('.', ',');
+      const n = `${v} ${Number(st.value) === 1 ? 'Strich' : 'Striche'}`;
+      let payload: { to: string; title: string; body: string } | null = null;
+      if (body.event === 'given' && st.given_by === me.id && st.status === 'pending') {
+        payload = { to: st.user_id, title: `😈 VERURTEILT: ${st.title} (${n})`, body: `${meName}: ${st.reason} – Anerkennen oder Einspruch einlegen.` };
+      } else if (body.event === 'appealed' && st.user_id === me.id && st.status === 'appealed' && st.given_by) {
+        payload = { to: st.given_by, title: `⚖️ Einspruch: ${st.title}`, body: `${meName}: ${String(st.appeal_text ?? '').slice(0, 140)}` };
+      } else if (body.event === 'decided' && st.given_by === me.id) {
+        const t = st.status === 'withdrawn' ? `⚖️ Strich zurückgezogen: ${st.title}`
+          : st.final ? `😈 Urteil rechtskräftig: ${st.title} (${n})` : `⚖️ Neues Urteil: ${st.title} (${n})`;
+        payload = { to: st.user_id, title: t, body: `${meName}: ${String(st.verdict_text ?? 'Einspruch stattgegeben').slice(0, 140)}` };
+      } else if (body.event === 'acknowledged' && st.user_id === me.id && st.given_by) {
+        payload = { to: st.given_by, title: `✓ Strich anerkannt: ${st.title}`, body: `${meName} hat den Strich (${n}) anerkannt.` };
+      }
+      if (!payload) return json({ sent: 0 });
+      const r = await sendPush({
+        title: payload.title, body: payload.body, tag: `strike-${st.id}`, url: '?tab=schande', urgency: 'dringend',
+      }, { toUsers: [payload.to], high: true, contact: origin });
+      return json(r);
+    }
+
+    if (body.action === 'board') {
+      // Neuer Vorschlag für den Strafkatalog oder fällige Strafe → alle anderen informieren
+      let title = '', text = '';
+      if (body.event === 'rule') {
+        const { data: r } = await admin.from('strike_rules').select('*').eq('id', body.ruleId).maybeSingle();
+        if (!r || r.approved_at) return json({ sent: 0 });
+        title = `⚖️ Bitte beglaubigen: ${r.title}`;
+        text = `${meName} hat einen neuen Grund für Striche eingereicht.`;
+      } else if (body.event === 'fine') {
+        title = '💶 Strafe bezahlt?';
+        text = `${meName} hat die Bezahlung von 10 € bestätigt – bitte ebenfalls bestätigen.`;
+      } else return json({ sent: 0 });
+      const r = await sendPush({ title, body: text, tag: `board-${body.ruleId ?? 'fine'}`, url: '?tab=schande', urgency: 'wichtig' },
+        { exceptUser: me.id, contact: origin });
+      return json(r);
     }
 
     return json({ error: 'Unbekannte Aktion' }, 400);

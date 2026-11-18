@@ -26,6 +26,9 @@ const state = {
   expanded: new Set(),
   responses: new Map(), // messageId -> [{ userId, option, createdAt }]
   comments: new Map(),  // messageId -> [{ id, authorId, body, createdAt }]
+  strikes: [],          // Board der Schande: alle Striche (neueste zuerst)
+  rules: [],            // Strafkatalog inkl. Vorschläge
+  fines: [],            // Strafen (10 € je 10 Striche)
 };
 
 const TABS = {
@@ -121,7 +124,7 @@ function mapProfile(r) {
     gender: r.gender,
     color: r.color,
     birthday: r.birthday,
-    strikes: r.strikes || 0,
+    strikes: Number(r.strikes) || 0,
     nature: r.nature || '',
     loves: r.loves || '',
     flavor: r.flavor || '',
@@ -352,11 +355,17 @@ function avatarHtml(u) {
     : TRAINER_SVG;
 }
 
+function fmtNum(n) {
+  return String(Number(n) || 0).replace('.', ',');
+}
+
 function strikesLabel(n) {
+  n = Number(n) || 0;
   if (!n) return '0';
-  if (n > 15) return String(n);
-  const tally = ('||||/ '.repeat(Math.floor(n / 5)) + '|'.repeat(n % 5)).trim();
-  return `${tally} (${n})`;
+  if (n > 15) return fmtNum(n);
+  const whole = Math.floor(n);
+  const tally = ('||||/ '.repeat(Math.floor(whole / 5)) + '|'.repeat(whole % 5) + (n % 1 ? '½' : '')).trim();
+  return `${tally} (${fmtNum(n)})`;
 }
 
 function trainerCardHtml(u) {
@@ -400,15 +409,20 @@ function trainerCardHtml(u) {
  * Modal & Toast
  * ---------------------------------------------------------------------- */
 
-function openModal(html, { dismissible = true, onMount, full = false } = {}) {
+function openModal(html, { dismissible = true, onMount, full = false, cls = '' } = {}) {
   const root = $('#modal-root');
   const backdrop = document.createElement('div');
-  backdrop.className = 'modal-backdrop';
-  backdrop.innerHTML = `<div class="modal${full ? ' full' : ''}" role="dialog" aria-modal="true">${html}</div>`;
+  backdrop.className = `modal-backdrop${cls ? ' bd-' + cls.split(' ')[0] : ''}`;
+  backdrop.innerHTML = `<div class="modal${full ? ' full' : ''}${cls ? ' ' + cls : ''}" role="dialog" aria-modal="true">${html}</div>`;
   root.appendChild(backdrop);
+  let closed = false;
   const close = () => {
+    if (closed) return;
+    closed = true;
     backdrop.remove();
     document.removeEventListener('keydown', onKey);
+    // Danach ggf. das nächste offene Urteil zeigen
+    setTimeout(() => checkVerdicts(), 50);
   };
   const onKey = (e) => {
     if (e.key === 'Escape' && dismissible) close();
@@ -741,7 +755,7 @@ function icsUrl(m) {
 }
 
 const HELP = {
-  strike: 'Wird die Meldung bis zur Deadline nicht erfüllt, droht ein Strich auf dem Board der Schande. Eine Meldung mit Androhung ist automatisch dringend. Die Androhung steht gut sichtbar in der Meldung – die automatische Vergabe der Striche folgt in einem späteren Update.',
+  strike: 'Wird die Meldung bis zur Deadline nicht erfüllt, gibt es einen Strich auf dem Board der Schande. Reagiert jemand vorher, friert der Timer ein und du nimmst das Ergebnis ab. Eine Meldung mit Androhung ist automatisch dringend.',
   autoDelete: 'Die Meldung verschwindet zum eingestellten Zeitpunkt automatisch für alle – praktisch für Dinge, die sich danach erledigt haben.',
   event: 'Für Termine mit Dauer: Zusätzlich zum Start gibst du das Ende des Zeitraums an (von Minuten bis Jahren). Der Zeitraum wird auch so in den Kalender übernommen.',
   deadline: 'Bis wann etwas erledigt sein muss. Die Deadline steht gut sichtbar in der Meldung.',
@@ -1085,7 +1099,7 @@ async function reviewMessage(id, verdict, btn) {
         m.strikeNote = verdict === 'accept' ? null : reason;
         render();
       }
-      toast(verdict === 'accept' ? '👍 Abgenommen – die Meldung ist geschlossen.' : '😈 Strich vergeben und protokolliert.');
+      toast(verdict === 'accept' ? '👍 Abgenommen – die Meldung ist geschlossen.' : '⚖️ Strich vergeben – wartet auf Anerkennung.');
     } catch (e) {
       toast(e.message);
       btn.disabled = false;
@@ -1093,17 +1107,18 @@ async function reviewMessage(id, verdict, btn) {
   };
   if (verdict === 'accept') { send(); return; }
   openModal(
-    `<div class="modal-head"><h2>Strich vergeben</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+    `${judgeHeadHtml('Strich vergeben', 'Urteil nach Abnahme')}
      <form class="form" id="strike-form">
        <label class="field"><span>Grund (wird protokolliert)</span>
          <textarea name="reason" maxlength="200" required placeholder="z. B. Zimmer nur halb aufgeräumt"></textarea></label>
        <p class="error" id="strike-error"></p>
        <div class="modal-actions">
          <button type="button" class="btn" data-close>Abbrechen</button>
-         <button type="submit" class="btn primary">😈 Strich vergeben</button>
+         <button type="submit" class="btn judge-btn">⚖️ Strich vergeben</button>
        </div>
      </form>`,
     {
+      cls: 'judge',
       onMount: (modal, close) => {
         const form = $('#strike-form', modal);
         form.elements.reason.focus();
@@ -1888,6 +1903,676 @@ function renderPlaceholder(view, icon, title, text) {
 }
 
 /* -------------------------------------------------------------------------
+ * Board der Schande
+ *  – Kreidetafel mit Polaroids der Trainer, darunter die Striche (bis 10)
+ *  – Strafkatalog (Vorlagen müssen von allen beglaubigt werden)
+ *  – Bestrafen → Urteil (weiß/gold) · Strafe für den Bestraften (schwarz/rot/gold)
+ * ---------------------------------------------------------------------- */
+
+const STRIKE_VALUES = [0.5, 1, 2];
+const FINE_STRIKES = 10;
+const STRIKE_STATUS = {
+  pending: '⏳ vorläufig – wartet auf Anerkennung',
+  appealed: '⚖️ Einspruch eingelegt',
+  withdrawn: '🕊️ zurückgezogen',
+};
+const HISTORY_LABELS = {
+  given: 'Urteil verkündet', acknowledged: 'Anerkannt', appealed: 'Einspruch eingelegt',
+  upheld: 'Neu bewertet', forced: 'Durchgeboxt – rechtskräftig', withdrawn: 'Zurückgezogen',
+};
+
+function mapStrike(r) {
+  return {
+    id: r.id,
+    userId: r.user_id,
+    givenBy: r.given_by,
+    messageId: r.message_id,
+    value: Number(r.value) || 1,
+    title: r.title || 'Strich',
+    description: r.description || '',
+    reason: r.reason || '',
+    status: r.status || 'active',
+    final: Boolean(r.final),
+    appealText: r.appeal_text || '',
+    verdictText: r.verdict_text || '',
+    acknowledgedAt: r.acknowledged_at,
+    hasPhoto: Boolean(r.has_photo),
+    history: Array.isArray(r.history) ? r.history : [],
+    createdAt: r.created_at,
+  };
+}
+function mapRule(r) {
+  return {
+    id: r.id, title: r.title, description: r.description || '', value: Number(r.value) || 1,
+    createdBy: r.created_by, approvedBy: r.approved_by || [], approvedAt: r.approved_at, createdAt: r.created_at,
+  };
+}
+function mapFine(r) {
+  return { id: r.id, userId: r.user_id, confirmedBy: r.confirmed_by || [], settledAt: r.settled_at, createdAt: r.created_at };
+}
+function upsertBy(list, item, front = false) {
+  const i = list.findIndex((x) => x.id === item.id);
+  if (i >= 0) list[i] = item; else if (front) list.unshift(item); else list.push(item);
+}
+
+function strikeWord(v) {
+  return `${fmtNum(v)} ${Number(v) === 1 ? 'Strich' : 'Striche'}`;
+}
+function strikeStatusLabel(s) {
+  if (s.status === 'active') return s.final ? '🔨 durchgeboxt – rechtskräftig' : '✓ anerkannt – rechtskräftig';
+  return STRIKE_STATUS[s.status] || s.status;
+}
+function nameOf(id, fallback = 'Unbekannt') {
+  const u = id && userById(id);
+  return u ? u.firstName : fallback;
+}
+
+/* ---- Motive ---------------------------------------------------------- */
+
+/** Goldener Ring mit grünen Juwelen – fürs Vergeben und Urteilen */
+function judgeEmblem(size = 74) {
+  const spokes = [0, 90, 180, 270].map((a) =>
+    `<path transform="rotate(${a} 50 50)" d="M50 4 57 20 50 16 43 20Z" fill="url(#jg)" stroke="#8a6410" stroke-width="1"/>`).join('');
+  const gems = [[50, 14], [86, 50], [50, 86], [14, 50]].map(([x, y]) =>
+    `<circle cx="${x}" cy="${y}" r="5" fill="#3fc070" stroke="#0e5c33" stroke-width="1.6"/><circle cx="${x - 1.5}" cy="${y - 1.6}" r="1.4" fill="#c9f7d9"/>`).join('');
+  return `<svg class="judge-emblem" viewBox="0 0 100 100" width="${size}" height="${size}" aria-hidden="true">
+    <defs><linearGradient id="jg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff4c2"/><stop offset=".45" stop-color="#e3b93c"/><stop offset="1" stop-color="#9c7414"/></linearGradient></defs>
+    ${spokes}
+    <circle cx="50" cy="50" r="36" fill="none" stroke="url(#jg)" stroke-width="7"/>
+    <circle cx="50" cy="50" r="36" fill="none" stroke="#8a6410" stroke-width="1" opacity=".6"/>
+    <path d="M50 14Q63 50 50 86Q37 50 50 14Z M14 50Q50 63 86 50Q50 37 14 50Z" fill="none" stroke="url(#jg)" stroke-width="3.5"/>
+    <circle cx="50" cy="50" r="9" fill="#f4f4ef" stroke="#a9a9a2" stroke-width="2"/>
+    <circle cx="50" cy="50" r="3.6" fill="#3fc070"/>${gems}
+  </svg>`;
+}
+
+function judgeHeadHtml(title, sub = '', closable = true) {
+  return `<div class="judge-head">
+    ${judgeEmblem()}
+    <div class="judge-titles"><span class="judge-sub">${esc(sub || 'Gericht der Familie')}</span><h2>${esc(title)}</h2></div>
+    ${closable ? '<button class="icon-btn" data-close aria-label="Schließen">✕</button>' : ''}
+  </div>`;
+}
+
+/** Schattenarme mit roten Spitzen – nur für den Bestraften */
+function shadowTendrils() {
+  const arms = [
+    [-8, 120, 'M20 130 C60 90 30 50 80 30 C110 18 120 40 150 22'],
+    [-4, 120, 'M40 135 C90 100 70 60 120 52 C160 46 170 70 210 48'],
+    [0, 120, 'M60 140 C120 115 110 80 160 82 C205 84 215 104 255 86'],
+    [4, 120, 'M70 145 C130 140 150 112 200 120 C240 126 250 146 290 132'],
+  ];
+  return `<svg class="hell-tendrils" viewBox="0 0 300 150" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+    ${arms.map(([d, , path], i) => {
+      const end = path.trim().split(' ').slice(-2).map(Number);
+      return `<g class="tendril" style="--d:${i * 0.35}s;--r:${d}deg">
+        <path d="${path}" fill="none" stroke="#0d0a0e" stroke-width="18" stroke-linecap="round"/>
+        <path d="${path}" fill="none" stroke="#4b2b55" stroke-width="7" stroke-linecap="round" opacity=".55" stroke-dasharray="12 9"/>
+        <circle cx="${end[0]}" cy="${end[1]}" r="9" fill="#d43a45"/><circle cx="${end[0] + 3}" cy="${end[1] - 2}" r="3" fill="#ff8a8a"/>
+      </g>`;
+    }).join('')}
+  </svg>`;
+}
+
+/* ---- Kreidestriche --------------------------------------------------- */
+
+function tallySvg(value) {
+  const v = Math.min(Number(value) || 0, FINE_STRIKES);
+  const whole = Math.floor(v);
+  const half = v % 1 !== 0;
+  const lines = [];
+  const slot = (i) => ({ g: Math.floor(i / 5), k: i % 5 });
+  const x0 = (g) => 8 + g * 64;
+  const draw = (i, frac) => {
+    const { g, k } = slot(i);
+    if (k < 4) {
+      const x = x0(g) + k * 11 + (i % 2 ? 1 : -1);
+      lines.push(`<path d="M${x} ${44 - 38 * frac} L${x + (k % 2 ? 1.5 : -1)} 46"/>`);
+    } else {
+      const sx = x0(g) - 6, sy = 38, ex = x0(g) + 40, ey = 10;
+      lines.push(`<path d="M${sx} ${sy} L${sx + (ex - sx) * frac} ${sy + (ey - sy) * frac}"/>`);
+    }
+  };
+  for (let i = 0; i < whole; i++) draw(i, 1);
+  if (half) draw(whole, 0.5);
+  return `<svg class="tally" viewBox="0 0 132 52" aria-label="${fmtNum(v)} Striche">
+    <g filter="url(#chalk)" stroke="#f3f1e7" stroke-width="3.6" stroke-linecap="round" fill="none">${lines.join('')}</g>
+  </svg>`;
+}
+
+const CHALK_DEFS = `<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <filter id="chalk" x="-10%" y="-10%" width="120%" height="120%">
+    <feTurbulence type="fractalNoise" baseFrequency="1.1" numOctaves="2" seed="4" result="n"/>
+    <feDisplacementMap in="SourceGraphic" in2="n" scale="2.6" result="d"/>
+    <feComposite in="d" in2="n" operator="in" result="c"/>
+    <feMerge><feMergeNode in="d"/><feMergeNode in="c"/></feMerge>
+  </filter></defs></svg>`;
+
+/* ---- Board ----------------------------------------------------------- */
+
+function openFine(userId) {
+  return state.fines.find((f) => f.userId === userId && !f.settledAt);
+}
+
+function polaroidHtml(u, i) {
+  const open = Number(u.strikes) || 0;
+  const over = Math.max(0, open - FINE_STRIKES);
+  const pending = state.strikes.filter((s) => s.userId === u.id && (s.status === 'pending' || s.status === 'appealed'))
+    .reduce((a, s) => a + s.value, 0);
+  const rot = [-4, 3, -2, 5, -3][i % 5];
+  const fine = open >= FINE_STRIKES ? openFine(u.id) : null;
+  const confirmed = fine ? fine.confirmedBy : [];
+  return `<div class="pin-col">
+    <figure class="polaroid" style="--rot:${rot}deg;${colorVars(u.color)}" data-strikes-of="${esc(u.id)}">
+      <span class="pin" aria-hidden="true"></span>
+      <div class="photo">${avatarHtml(u)}</div>
+      <figcaption>${esc(u.firstName)}</figcaption>
+    </figure>
+    ${tallySvg(open)}
+    <div class="chalk count">${fmtNum(Math.min(open, FINE_STRIKES))} / ${FINE_STRIKES}${over ? ` <span class="over">+${fmtNum(over)} warten</span>` : ''}</div>
+    ${pending ? `<div class="chalk pending">+${fmtNum(pending)} vorläufig</div>` : ''}
+    ${open >= FINE_STRIKES ? `<div class="fine-box">
+      <div class="fine-head">💶 10 € fällig!</div>
+      <div class="fine-confirm">${state.users.map((x) => `<span class="${confirmed.includes(x.id) ? 'ok' : ''}">${confirmed.includes(x.id) ? '✓' : '○'} ${esc(x.firstName)}</span>`).join('')}</div>
+      ${confirmed.includes(state.me.id) ? '<div class="chalk small">Warte auf die anderen …</div>'
+        : `<button type="button" class="btn small chalk-btn" data-fine="${esc(u.id)}">Bezahlung bestätigen</button>`}
+    </div>` : ''}
+  </div>`;
+}
+
+function ruleHtml(r) {
+  const pendingRule = !r.approvedAt;
+  const iApproved = r.approvedBy.includes(state.me.id);
+  const mine = r.createdBy === state.me.id;
+  return `<li class="rule${pendingRule ? ' proposal' : ''}">
+    <div class="rule-top"><b>${esc(r.title)}</b><span class="rule-value">${strikeWord(r.value)}</span></div>
+    ${r.description ? `<p>${esc(r.description)}</p>` : ''}
+    ${pendingRule ? `<div class="rule-meta">Eingereicht von ${esc(nameOf(r.createdBy))} · beglaubigt ${r.approvedBy.length}/${state.users.length}
+        (${state.users.map((u) => `${r.approvedBy.includes(u.id) ? '✓' : '○'} ${esc(u.firstName)}`).join(', ')})</div>
+      <div class="rule-actions">
+        ${iApproved ? '' : `<button type="button" class="btn small chalk-btn" data-approve="${esc(r.id)}">✓ Beglaubigen</button>`}
+        <button type="button" class="btn small chalk-btn ghost" data-reject="${esc(r.id)}">${mine ? 'Zurückziehen' : '✕ Ablehnen'}</button>
+      </div>` : ''}
+  </li>`;
+}
+
+function logRowHtml(s) {
+  return `<li><button type="button" class="log-row status-${esc(s.status)}" data-strike="${esc(s.id)}">
+    <span class="log-who">${esc(nameOf(s.userId))}</span>
+    <span class="log-what">${esc(s.title)}${s.hasPhoto ? ' 📷' : ''}</span>
+    <span class="log-val">${s.status === 'withdrawn' ? '<s>' : ''}${strikeWord(s.value)}${s.status === 'withdrawn' ? '</s>' : ''}</span>
+    <span class="log-meta">${esc(strikeStatusLabel(s))} · ${esc(formatDate(new Date(s.createdAt)))}</span>
+  </button></li>`;
+}
+
+function renderBoard(view) {
+  if (!state.me) { view.innerHTML = ''; return; }
+  const users = [...state.users].sort((a, b) => a.firstName.localeCompare(b.firstName, 'de'));
+  const approved = state.rules.filter((r) => r.approvedAt);
+  const proposals = state.rules.filter((r) => !r.approvedAt);
+  const toApprove = proposals.filter((r) => !r.approvedBy.includes(state.me.id)).length;
+  const showAll = view.dataset.logAll === '1';
+  const log = showAll ? state.strikes : state.strikes.slice(0, 12);
+  view.innerHTML = `${CHALK_DEFS}
+  <div class="board">
+    <div class="stone-frame">
+      <div class="slate">
+        <h2 class="chalk chalk-title">Board der Schande</h2>
+        <div class="pins">${users.map(polaroidHtml).join('')}</div>
+        <p class="chalk small board-note">Bei ${FINE_STRIKES} Strichen sind 10 € fällig – erst wenn alle die Bezahlung bestätigen, werden sie weggewischt.</p>
+        ${toApprove ? `<button type="button" class="chalk chalk-link" data-goto="katalog">⚖️ ${toApprove} ${toApprove === 1 ? 'Grund wartet' : 'Gründe warten'} auf deine Beglaubigung</button>` : ''}
+        <div class="chalk-ledge" aria-hidden="true"><i></i><i></i></div>
+      </div>
+    </div>
+
+    <section class="slate slate-small" id="katalog">
+      <div class="chalk-head"><h3 class="chalk">Strafkatalog</h3>
+        <button type="button" class="btn small chalk-btn" id="rule-new">＋ Grund einreichen</button></div>
+      ${proposals.length ? `<h4 class="chalk">Zur Beglaubigung</h4><ul class="rules">${proposals.map(ruleHtml).join('')}</ul>` : ''}
+      ${approved.length ? `<h4 class="chalk">Rechtskräftig</h4><ul class="rules">${approved.map(ruleHtml).join('')}</ul>`
+        : '<p class="chalk small">Noch keine beglaubigten Gründe. Reiche den ersten ein – alle müssen ihn beglaubigen.</p>'}
+    </section>
+
+    <section class="slate slate-small">
+      <div class="chalk-head"><h3 class="chalk">Protokoll</h3></div>
+      ${log.length ? `<ul class="log">${log.map(logRowHtml).join('')}</ul>` : '<p class="chalk small">Noch keine Striche. Erstaunlich.</p>'}
+      ${!showAll && state.strikes.length > log.length ? '<button type="button" class="chalk chalk-link" id="log-all">Alle anzeigen</button>' : ''}
+    </section>
+    <button type="button" class="punish-field" id="punish-btn">
+      <span class="punish-chain" aria-hidden="true"></span>
+      <span class="punish-label">Bestrafen</span>
+      <span class="punish-chain" aria-hidden="true"></span>
+    </button>
+  </div>`;
+
+  $('#punish-btn', view).addEventListener('click', openPunishForm);
+  $('#rule-new', view).addEventListener('click', openRuleForm);
+  const all = $('#log-all', view);
+  if (all) all.addEventListener('click', () => { view.dataset.logAll = '1'; render(); });
+  view.querySelectorAll('[data-goto]').forEach((b) => b.addEventListener('click', () =>
+    document.getElementById(b.dataset.goto).scrollIntoView({ behavior: 'smooth' })));
+  view.querySelectorAll('[data-approve]').forEach((b) => b.addEventListener('click', () => ruleAction('approve_rule', b)));
+  view.querySelectorAll('[data-reject]').forEach((b) => b.addEventListener('click', () => ruleAction('reject_rule', b)));
+  view.querySelectorAll('[data-strike]').forEach((b) => b.addEventListener('click', () => openStrikeDetail(b.dataset.strike)));
+  view.querySelectorAll('[data-fine]').forEach((b) => b.addEventListener('click', () => confirmFine(b.dataset.fine, b)));
+}
+
+async function ruleAction(fn, btn) {
+  const id = btn.dataset.approve || btn.dataset.reject;
+  if (fn === 'reject_rule' && !confirm('Diesen Vorschlag wirklich verwerfen?')) return;
+  btn.disabled = true;
+  try {
+    const r = must(await sb.rpc(fn, { p_rule: id }));
+    if (fn === 'reject_rule') state.rules = state.rules.filter((x) => x.id !== id);
+    else {
+      upsertBy(state.rules, mapRule(r));
+      toast(r.approved_at ? '⚖️ Beglaubigt – der Grund ist jetzt rechtskräftig.' : '✓ Beglaubigt – es fehlen noch weitere Stimmen.');
+    }
+    render();
+  } catch (e) {
+    toast(e.message);
+    btn.disabled = false;
+  }
+}
+
+async function confirmFine(userId, btn) {
+  const u = userById(userId);
+  if (!confirm(`Bestätigst du, dass ${u ? u.firstName : 'die Person'} die 10 € bezahlt hat?`)) return;
+  btn.disabled = true;
+  try {
+    const f = mapFine(must(await sb.rpc('confirm_fine', { p_user: userId })));
+    upsertBy(state.fines, f, true);
+    if (f.settledAt) {
+      await loadUsers();
+      toast('🧽 Bezahlt – 10 Striche wurden weggewischt.');
+    } else {
+      toast('💶 Bestätigt – jetzt müssen die anderen noch bestätigen.');
+      invokeQuiet({ action: 'board', event: 'fine' });
+    }
+    render();
+  } catch (e) {
+    toast(e.message);
+    btn.disabled = false;
+  }
+}
+
+/** Push auslösen, ohne bei Fehlern zu stören */
+function invokeQuiet(body) {
+  sb.functions.invoke('push', { body }).catch(() => {});
+}
+
+/* ---- Neuer Grund (Vorlage) ------------------------------------------- */
+
+function valuePickerHtml(name, selected = 1) {
+  return `<div class="value-pick">${STRIKE_VALUES.map((v) => `<label class="value-opt">
+    <input type="radio" name="${name}" value="${v}" ${v === selected ? 'checked' : ''}><span>${strikeWord(v)}</span></label>`).join('')}</div>`;
+}
+
+function openRuleForm() {
+  openModal(
+    `${judgeHeadHtml('Neuer Grund', 'Gesetzesvorschlag')}
+     <form class="form" id="rule-form">
+       <label class="field"><span>Titel</span><input name="title" maxlength="60" required placeholder="z. B. Geschirr stehen lassen"></label>
+       <label class="field"><span>Beschreibung</span><textarea name="description" maxlength="500" placeholder="Was genau ist der Verstoß?"></textarea></label>
+       <div class="field"><span>Wertigkeit</span>${valuePickerHtml('value')}</div>
+       <p class="hint">Der Grund ist erst rechtskräftig und in der Schnellauswahl, wenn alle ihn beglaubigt haben.</p>
+       <p class="error" id="rule-error"></p>
+       <div class="modal-actions">
+         <button type="button" class="btn" data-close>Abbrechen</button>
+         <button type="submit" class="btn judge-btn">⚖️ Zur Beglaubigung einreichen</button>
+       </div>
+     </form>`,
+    {
+      cls: 'judge',
+      onMount: (modal, close) => {
+        const form = $('#rule-form', modal);
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const btn = form.querySelector('[type=submit]');
+          btn.disabled = true;
+          try {
+            const r = mapRule(must(await sb.rpc('propose_rule', {
+              p_title: form.elements.title.value, p_description: form.elements.description.value, p_value: Number(form.elements.value.value),
+            })));
+            upsertBy(state.rules, r);
+            close();
+            render();
+            if (r.approvedAt) toast('⚖️ Der Grund ist rechtskräftig.');
+            else { toast('📜 Eingereicht – wartet auf die Beglaubigung durch alle.'); invokeQuiet({ action: 'board', event: 'rule', ruleId: r.id }); }
+          } catch (ex) {
+            $('#rule-error', modal).textContent = ex.message;
+            btn.disabled = false;
+          }
+        });
+      },
+    }
+  );
+}
+
+/* ---- Bestrafen (Urteil fällen) --------------------------------------- */
+
+async function compressImage(file, max = 1100, quality = 0.72) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.naturalWidth * scale);
+    c.height = Math.round(img.naturalHeight * scale);
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    let data = c.toDataURL('image/jpeg', quality);
+    if (data.length > 1_400_000) data = c.toDataURL('image/jpeg', 0.5);
+    return data;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function openPunishForm() {
+  let others = state.users.filter((u) => u.id !== state.me.id);
+  if (!others.length) {
+    await loadUsers().catch(() => {});
+    others = state.users.filter((u) => u.id !== state.me.id);
+  }
+  const rules = state.rules.filter((r) => r.approvedAt);
+  if (!others.length) { toast('Es gibt noch niemanden, den du bestrafen könntest.'); return; }
+  let photo = null;
+  openModal(
+    `${judgeHeadHtml('Urteil fällen', 'Im Namen der Familie')}
+     <form class="form" id="punish-form">
+       <div class="field"><span>Angeklagt</span>
+         <div class="defendants">${others.map((u, i) => `<label class="defendant" style="${colorVars(u.color)}">
+           <input type="radio" name="user" value="${esc(u.id)}" ${i === 0 ? 'checked' : ''}>
+           <span><span class="mini-photo">${avatarHtml(u)}</span>${esc(u.firstName)}</span></label>`).join('')}</div>
+       </div>
+       <div class="field"><span>Vergehen</span>
+         ${rules.length ? `<div class="rule-pick">${rules.map((r) => `<label class="rule-opt">
+            <input type="radio" name="rule" value="${esc(r.id)}">
+            <span><b>${esc(r.title)}</b><em>${strikeWord(r.value)}</em>${r.description ? `<small>${esc(r.description)}</small>` : ''}</span></label>`).join('')}</div>`
+          : '<p class="hint">Noch keine beglaubigten Gründe. Reiche zuerst einen im Strafkatalog ein.</p>'}
+       </div>
+       <label class="field"><span>Begründung – warum vergibst du den Strich jetzt?</span>
+         <textarea name="reason" maxlength="500" required placeholder="z. B. Heute Abend schon wieder alles stehen gelassen"></textarea></label>
+       <div class="field"><span>Beweisfoto (optional)</span>
+         <label class="photo-pick"><input type="file" name="photo" accept="image/*"><span>📷 Foto hinzufügen</span></label>
+         <div class="photo-preview" hidden><img alt=""><button type="button" class="btn small" id="photo-clear">Entfernen</button></div>
+       </div>
+       <p class="error" id="punish-error"></p>
+       <div class="modal-actions">
+         <button type="button" class="btn" data-close>Abbrechen</button>
+         <button type="submit" class="btn judge-btn" ${rules.length ? '' : 'disabled'}>⚖️ Urteil verkünden</button>
+       </div>
+     </form>`,
+    {
+      cls: 'judge',
+      onMount: (modal, close) => {
+        const form = $('#punish-form', modal);
+        const prev = $('.photo-preview', modal);
+        const err = $('#punish-error', modal);
+        form.elements.photo.addEventListener('change', async () => {
+          const f = form.elements.photo.files[0];
+          if (!f) return;
+          try {
+            photo = await compressImage(f);
+            prev.querySelector('img').src = photo;
+            prev.hidden = false;
+          } catch {
+            err.textContent = 'Das Foto konnte nicht gelesen werden.';
+          }
+        });
+        $('#photo-clear', modal).addEventListener('click', () => { photo = null; form.elements.photo.value = ''; prev.hidden = true; });
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const rule = form.elements.rule && (form.querySelector('[name=rule]:checked') || {}).value;
+          const reason = form.elements.reason.value.trim();
+          if (!rule) { err.textContent = 'Bitte ein Vergehen aus dem Strafkatalog wählen.'; return; }
+          if (!reason) { err.textContent = 'Bitte begründen, warum du den Strich jetzt vergibst.'; return; }
+          const btn = form.querySelector('[type=submit]');
+          btn.disabled = true;
+          try {
+            const userId = form.querySelector('[name=user]:checked').value;
+            const s = mapStrike(must(await sb.rpc('give_strike', { p_user: userId, p_rule: rule, p_reason: reason, p_photo: photo })));
+            upsertBy(state.strikes, s, true);
+            invokeQuiet({ action: 'strike', event: 'given', strikeId: s.id });
+            close();
+            render();
+            toast(`⚖️ Urteil verkündet: ${strikeWord(s.value)} für ${nameOf(userId)} – wartet auf Anerkennung.`);
+          } catch (ex) {
+            err.textContent = ex.message;
+            btn.disabled = false;
+          }
+        });
+      },
+    }
+  );
+}
+
+/* ---- Fotos ----------------------------------------------------------- */
+
+const photoCache = new Map();
+async function loadStrikePhoto(id, img) {
+  try {
+    if (!photoCache.has(id)) {
+      const row = must(await sb.from('strike_photos').select('data').eq('strike_id', id).maybeSingle());
+      photoCache.set(id, row ? row.data : null);
+    }
+    const data = photoCache.get(id);
+    if (data) { img.src = data; img.closest('.evidence').hidden = false; }
+  } catch { /* ohne Foto weiter */ }
+}
+function evidenceHtml(s) {
+  return s.hasPhoto ? `<figure class="evidence" hidden><img alt="Beweisfoto" data-photo="${esc(s.id)}"><figcaption>Beweisfoto</figcaption></figure>` : '';
+}
+function mountEvidence(root) {
+  root.querySelectorAll('[data-photo]').forEach((img) => loadStrikePhoto(img.dataset.photo, img));
+}
+
+/* ---- Meldung für den Bestraften -------------------------------------- */
+
+let verdictOpen = false;
+const snoozedAppeals = new Set();
+
+function checkVerdicts() {
+  if (!state.me || verdictOpen || $('#modal-root').children.length) return;
+  const mine = state.strikes
+    .filter((s) => s.userId === state.me.id && (s.status === 'pending' || (s.status === 'active' && !s.acknowledgedAt)))
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))[0];
+  if (mine) { openPunishment(mine); return; }
+  const appeal = state.strikes.find((s) => s.givenBy === state.me.id && s.status === 'appealed' && !snoozedAppeals.has(s.id));
+  if (appeal) openJudgement(appeal);
+}
+
+function openPunishment(s) {
+  verdictOpen = true;
+  const judge = nameOf(s.givenBy, 'Das Board');
+  const forced = s.status === 'active' && s.final;
+  const canAppeal = !forced && !s.final && s.givenBy;
+  const again = s.history.some((h) => h.type === 'upheld');
+  openModal(
+    `<div class="hell-sky">${shadowTendrils()}</div>
+     <div class="hell-band" aria-hidden="true"></div>
+     <div class="hell-body">
+       <p class="hell-kicker">${forced ? 'Das Urteil ist rechtskräftig' : again ? 'Dein Einspruch wurde abgewiesen' : `${esc(judge)} hat dich bestraft`}</p>
+       <h2 class="hell-title">VERURTEILT!</h2>
+       <div class="hell-value">+${fmtNum(s.value)}<span>${Number(s.value) === 1 ? 'Strich' : 'Striche'}</span></div>
+       <div class="hell-card">
+         <div class="hell-label">Verstoß</div>
+         <div class="hell-offense">${esc(s.title)}</div>
+         ${s.description ? `<p>${esc(s.description)}</p>` : ''}
+         <div class="hell-label">Begründung von ${esc(judge)}</div>
+         <p class="hell-reason">„${esc(s.reason)}“</p>
+         ${s.verdictText ? `<div class="hell-label">${forced ? 'Urteil (ohne weiteren Einspruch)' : 'Neues Urteil'}</div><p class="hell-reason">„${esc(s.verdictText)}“</p>` : ''}
+         ${evidenceHtml(s)}
+       </div>
+       ${forced ? '<p class="hell-note">🔨 Durchgeboxt – ein weiterer Einspruch ist nicht möglich.</p>' : ''}
+       <form class="hell-appeal" id="appeal-form" hidden>
+         <label class="field"><span>Dein Einspruch</span>
+           <textarea name="text" maxlength="1000" required placeholder="Erkläre dich …"></textarea></label>
+         <p class="error" id="appeal-error"></p>
+         <div class="hell-actions">
+           <button type="button" class="btn hell-ghost" id="appeal-cancel">Zurück</button>
+           <button type="submit" class="btn hell-btn">Einspruch einreichen</button>
+         </div>
+       </form>
+       <div class="hell-actions" id="hell-main">
+         ${canAppeal ? '<button type="button" class="btn hell-ghost" id="appeal-open">⚖️ Einspruch einlegen</button>' : ''}
+         <button type="button" class="btn hell-btn" id="ack">${forced ? 'Hinnehmen' : 'Strich anerkennen'}</button>
+       </div>
+     </div>`,
+    {
+      dismissible: false,
+      full: true,
+      cls: 'hell',
+      onMount: (modal, close) => {
+        mountEvidence(modal);
+        const done = () => { verdictOpen = false; close(); render(); };
+        const form = $('#appeal-form', modal);
+        const main = $('#hell-main', modal);
+        const openBtn = $('#appeal-open', modal);
+        if (openBtn) openBtn.addEventListener('click', () => { form.hidden = false; main.hidden = true; form.elements.text.focus(); });
+        $('#appeal-cancel', modal).addEventListener('click', () => { form.hidden = true; main.hidden = false; });
+        $('#ack', modal).addEventListener('click', async (e) => {
+          e.target.disabled = true;
+          try {
+            upsertBy(state.strikes, mapStrike(must(await sb.rpc('acknowledge_strike', { p_strike: s.id }))));
+            invokeQuiet({ action: 'strike', event: 'acknowledged', strikeId: s.id });
+            await loadUsers().catch(() => {});
+            renderProfileButton();
+            done();
+          } catch (ex) {
+            toast(ex.message);
+            e.target.disabled = false;
+          }
+        });
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const text = form.elements.text.value.trim();
+          if (!text) { $('#appeal-error', modal).textContent = 'Bitte den Einspruch begründen.'; return; }
+          const btn = form.querySelector('[type=submit]');
+          btn.disabled = true;
+          try {
+            upsertBy(state.strikes, mapStrike(must(await sb.rpc('appeal_strike', { p_strike: s.id, p_text: text }))));
+            invokeQuiet({ action: 'strike', event: 'appealed', strikeId: s.id });
+            done();
+            toast(`⚖️ Einspruch eingereicht – ${judge} muss neu entscheiden.`);
+          } catch (ex) {
+            $('#appeal-error', modal).textContent = ex.message;
+            btn.disabled = false;
+          }
+        });
+      },
+    }
+  );
+}
+
+/* ---- Einspruch prüfen (Urheber) -------------------------------------- */
+
+function openJudgement(s) {
+  verdictOpen = true;
+  const who = nameOf(s.userId);
+  openModal(
+    `${judgeHeadHtml('Einspruch', `${who} widerspricht deinem Urteil`, false)}
+     <div class="judge-case">
+       <div class="case-row"><span>Verstoß</span><b>${esc(s.title)} · ${strikeWord(s.value)}</b></div>
+       <div class="case-row"><span>Deine Begründung</span><p>„${esc(s.reason)}“</p></div>
+       ${s.verdictText ? `<div class="case-row"><span>Dein letztes Urteil</span><p>„${esc(s.verdictText)}“</p></div>` : ''}
+       <div class="case-row appeal"><span>Einspruch von ${esc(who)}</span><p>„${esc(s.appealText)}“</p></div>
+       ${evidenceHtml(s)}
+     </div>
+     <form class="form" id="judge-form">
+       <div class="field"><span>Dein Urteil</span>
+         <div class="verdicts">
+           <label class="verdict"><input type="radio" name="decision" value="withdraw"><span><b>🕊️ Zurückziehen</b><small>Dem Einspruch wird stattgegeben, der Strich entfällt.</small></span></label>
+           <label class="verdict"><input type="radio" name="decision" value="uphold"><span><b>⚖️ Neu bewerten</b><small>Strich bleibt (ggf. mit anderer Wertigkeit). ${esc(who)} kann erneut Einspruch einlegen.</small></span></label>
+           <label class="verdict force"><input type="radio" name="decision" value="force"><span><b>🔨 Durchboxen</b><small>Der Strich ist sofort rechtskräftig – kein weiterer Einspruch.</small></span></label>
+         </div>
+       </div>
+       <div class="field" id="new-value" hidden><span>Wertigkeit</span>${valuePickerHtml('value', s.value)}</div>
+       <label class="field"><span>Urteilsbegründung</span>
+         <textarea name="text" maxlength="500" placeholder="Begründe dein Urteil"></textarea></label>
+       <p class="error" id="judge-error"></p>
+       <div class="modal-actions">
+         <button type="button" class="btn" id="judge-later">Später</button>
+         <button type="submit" class="btn judge-btn">⚖️ Urteil verkünden</button>
+       </div>
+     </form>`,
+    {
+      dismissible: false,
+      cls: 'judge',
+      onMount: (modal, close) => {
+        mountEvidence(modal);
+        const form = $('#judge-form', modal);
+        const err = $('#judge-error', modal);
+        let later = false;
+        $('#judge-later', modal).addEventListener('click', () => {
+          later = true;
+          // Bis zum nächsten Start der App nicht erneut zeigen
+          snoozedAppeals.add(s.id);
+          verdictOpen = false;
+          close();
+        });
+        form.addEventListener('change', () => {
+          $('#new-value', modal).hidden = form.elements.decision.value !== 'uphold';
+        });
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          if (later) return;
+          const decision = form.elements.decision.value;
+          const text = form.elements.text.value.trim();
+          if (!decision) { err.textContent = 'Bitte ein Urteil wählen.'; return; }
+          if (decision !== 'withdraw' && !text) { err.textContent = 'Bitte das Urteil begründen.'; return; }
+          const btn = form.querySelector('[type=submit]');
+          btn.disabled = true;
+          try {
+            const r = mapStrike(must(await sb.rpc('decide_strike', {
+              p_strike: s.id, p_decision: decision, p_text: text || null,
+              p_value: decision === 'uphold' ? Number(form.elements.value.value) : null,
+            })));
+            upsertBy(state.strikes, r);
+            invokeQuiet({ action: 'strike', event: 'decided', strikeId: s.id });
+            verdictOpen = false;
+            close();
+            render();
+            toast(decision === 'withdraw' ? '🕊️ Strich zurückgezogen.' : decision === 'force' ? '🔨 Durchgeboxt – der Strich ist rechtskräftig.' : '⚖️ Neues Urteil verkündet.');
+          } catch (ex) {
+            err.textContent = ex.message;
+            btn.disabled = false;
+          }
+        });
+      },
+    }
+  );
+}
+
+/* ---- Akte eines Strichs ---------------------------------------------- */
+
+function openStrikeDetail(id) {
+  const s = state.strikes.find((x) => x.id === id);
+  if (!s) return;
+  const msg = s.messageId && state.messages.find((m) => m.id === s.messageId);
+  openModal(
+    `${judgeHeadHtml(s.title, `Akte · ${nameOf(s.userId)}`)}
+     <div class="judge-case">
+       <div class="case-row"><span>Wertigkeit</span><b>${strikeWord(s.value)}</b></div>
+       <div class="case-row"><span>Status</span><b>${esc(strikeStatusLabel(s))}</b></div>
+       ${s.description ? `<div class="case-row"><span>Verstoß</span><p>${esc(s.description)}</p></div>` : ''}
+       <div class="case-row"><span>Begründung von ${esc(nameOf(s.givenBy, 'automatisch'))}</span><p>„${esc(s.reason)}“</p></div>
+       ${s.appealText ? `<div class="case-row appeal"><span>Einspruch</span><p>„${esc(s.appealText)}“</p></div>` : ''}
+       ${s.verdictText ? `<div class="case-row"><span>Urteil</span><p>„${esc(s.verdictText)}“</p></div>` : ''}
+       ${msg ? `<div class="case-row"><span>Meldung</span><p>${esc(msg.title)}</p></div>` : ''}
+       ${evidenceHtml(s)}
+       ${s.history.length ? `<div class="case-row"><span>Verlauf</span><ol class="history">${s.history.map((h) =>
+         `<li><b>${esc(HISTORY_LABELS[h.type] || h.type)}</b> · ${esc(nameOf(h.by, 'System'))} · ${esc(formatDateTime(h.at))}${h.text ? `<br><small>„${esc(h.text)}“</small>` : ''}</li>`).join('')}</ol></div>` : ''}
+     </div>`,
+    { cls: 'judge', onMount: (modal) => mountEvidence(modal) }
+  );
+}
+
+/* -------------------------------------------------------------------------
  * Rendering & Navigation
  * ---------------------------------------------------------------------- */
 
@@ -1912,7 +2597,7 @@ function render() {
     case 'einstellungen': return renderSettings(view);
     case 'notizen': return renderPlaceholder(view, '📝', 'Notizen', 'Dieser Bereich kommt im nächsten Schritt.');
     case 'kalender': return renderPlaceholder(view, '📅', 'Kalender', 'Dieser Bereich kommt im nächsten Schritt.');
-    case 'schande': return renderPlaceholder(view, '😈', 'Board der Schande', 'Hier werden bald Striche verteilt – sie landen dann auf dem Trainerpass.');
+    case 'schande': return renderBoard(view);
     case 'team': return renderTeam(view);
   }
 }
@@ -1953,15 +2638,27 @@ async function loadMessages() {
   for (const c of must(comments)) addComment(mapComment(c));
 }
 
+async function loadBoard() {
+  const [strikes, rules, fines] = await Promise.all([
+    sb.from('strikes').select('*').order('created_at', { ascending: false }),
+    sb.from('strike_rules').select('*').order('created_at', { ascending: true }),
+    sb.from('fines').select('*').order('created_at', { ascending: false }),
+  ]);
+  state.strikes = must(strikes).map(mapStrike);
+  state.rules = must(rules).map(mapRule);
+  state.fines = must(fines).map(mapFine);
+}
+
 async function loadFamilyCode() {
   state.familyCode = must(await sb.rpc('get_family_code'));
 }
 
 async function refreshAll() {
   try {
-    await Promise.all([loadUsers(), loadMessages()]);
+    await Promise.all([loadUsers(), loadMessages(), loadBoard()]);
     renderProfileButton();
     render();
+    checkVerdicts();
   } catch (e) {
     toast(e.message);
   }
@@ -2013,14 +2710,26 @@ function startRealtime() {
       rerenderMessage(row.message_id);
     })
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'message_comments' }, ({ old }) => removeComment(old.id))
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, async ({ new: row }) => {
-      const before = state.me ? state.me.strikes : 0;
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, async () => {
       await loadUsers().catch(() => {});
-      if (row && state.me && row.id === state.me.id && (row.strikes || 0) > before) {
-        toast(`😈 Du hast einen Strich bekommen (jetzt ${row.strikes}).`);
-      }
       renderProfileButton();
-      if (state.tab === 'team' || state.tab === 'start') render();
+      if (state.tab === 'team' || state.tab === 'start' || state.tab === 'schande') render();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'strikes' }, ({ eventType, new: row, old }) => {
+      if (eventType === 'DELETE') state.strikes = state.strikes.filter((x) => x.id !== old.id);
+      else upsertBy(state.strikes, mapStrike(row), true);
+      if (state.tab === 'schande') render();
+      checkVerdicts();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'strike_rules' }, ({ eventType, new: row, old }) => {
+      if (eventType === 'DELETE') state.rules = state.rules.filter((x) => x.id !== old.id);
+      else upsertBy(state.rules, mapRule(row));
+      if (state.tab === 'schande') render();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'fines' }, ({ eventType, new: row, old }) => {
+      if (eventType === 'DELETE') state.fines = state.fines.filter((x) => x.id !== old.id);
+      else upsertBy(state.fines, mapFine(row), true);
+      if (state.tab === 'schande') render();
     })
     .subscribe((status) => {
       if (status === 'SUBSCRIBED') refreshAll();
@@ -2051,9 +2760,10 @@ document.addEventListener('visibilitychange', () => {
 
 async function startApp() {
   renderProfileButton();
-  await Promise.all([loadUsers(), loadMessages(), loadFamilyCode()]).catch((e) => toast(e.message));
+  await Promise.all([loadUsers(), loadMessages(), loadFamilyCode(), loadBoard()]).catch((e) => toast(e.message));
   renderProfileButton();
   render();
+  checkVerdicts();
   startRealtime();
   syncPushSubscription();
   if (!state.me.gender) openEditProfile();
