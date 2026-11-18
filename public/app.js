@@ -799,7 +799,10 @@ function messageHtml(m) {
   const mine = state.me && m.authorId === state.me.id;
   const author = userById(m.authorId);
   const doneBy = m.doneBy ? userById(m.doneBy) : null;
-  const expanded = state.expanded.has(m.id);
+  const expanded = isExpanded(m);
+  if (expanded) markCommentsSeen(m.id);
+  const unread = expanded ? 0 : unreadComments(m);
+  const pin = prefs.pins[m.id] && Date.parse(prefs.pins[m.id]) > Date.now() ? prefs.pins[m.id] : null;
   const canMarkDone = !mine && m.deleteOnDone && !m.doneBy;
   const options = m.needsAck ? (m.ackOptions || ['Erledigt']) : [];
   const resps = state.responses.get(m.id) || [];
@@ -808,7 +811,7 @@ function messageHtml(m) {
   const portrait = author && PORTRAITS[author.gender]
     ? `<img class="msg-portrait" src="${PORTRAITS[author.gender]}" alt="${esc(fullName(author))}">` : '';
   return `
-  <article class="msg u-${esc(m.urgency)}${expanded ? ' expanded' : ''}${m.doneBy ? ' is-done' : ''}${state.highlight === m.id ? ' flash' : ''}"
+  <article class="msg u-${esc(m.urgency)}${expanded ? ' expanded' : ''}${unread ? ' has-unread' : ''}${m.doneBy ? ' is-done' : ''}${state.highlight === m.id ? ' flash' : ''}"
     id="msg-${esc(m.id)}" data-msg="${esc(m.id)}" tabindex="0" aria-expanded="${expanded}">
     <div class="msg-side">
       <div class="msg-urg">${ballSvg(urgencyInfo(m.urgency).ball, 26)}<span class="badge">${esc(urgencyLabel(m.urgency))}</span></div>
@@ -825,7 +828,8 @@ function messageHtml(m) {
         ${m.needsAck && m.respondBy ? `<span class="more">✉️ Antworten bis ${esc(formatDateTime(m.respondBy))}</span>` : ''}
         ${m.doneBy ? `<span class="done-line">✓ Erledigt von ${esc(doneBy ? doneBy.firstName : 'jemandem')}</span>` : ''}
         ${m.needsAck ? `<span class="count">✉️ ${resps.length ? `${resps.length} Antwort${resps.length === 1 ? '' : 'en'}` : 'Rückmeldung erbeten'}</span>` : ''}
-        ${comments.length ? `<span class="count">💬 ${comments.length} Kommentar${comments.length === 1 ? '' : 'e'}</span>` : ''}
+        ${comments.length ? `<span class="count${unread ? ' unread' : ''}">💬 ${comments.length} Kommentar${comments.length === 1 ? '' : 'e'}${unread ? ` <b>(${unread} neu)</b>` : ''}</span>` : ''}
+        ${pin ? `<span class="pin-line">📌 In „Laufend“ bis ${esc(formatDateTime(pin))}</span>` : ''}
         ${!m.doneBy && m.deleteOnDone ? '<span class="flag">🧹 Wird gelöscht, wenn erledigt</span>' : ''}
         ${m.deleteAt ? `<span class="more">🗑️ Löscht sich <span data-rel="${esc(m.deleteAt)}">${esc(relative(m.deleteAt))}</span> (${esc(formatDateTime(m.deleteAt))})</span>` : ''}
       </div>
@@ -839,6 +843,13 @@ function messageHtml(m) {
         ${resps.length
           ? `<ul class="reply-list">${resps.map((r) => { const u = userById(r.userId); return `<li><b>${esc(u ? u.firstName : '?')}:</b> ${esc(r.option)}</li>`; }).join('')}</ul>`
           : `<p class="hint">${mine ? 'Noch keine Antwort.' : 'Tippe auf eine Antwort.'}</p>`}
+      </div>` : ''}
+      ${m.urgency === 'info' ? `<div class="msg-pin msg-extra">
+        <span class="hint">📌 In „Laufend“ behalten (nur für dich):</span>
+        <div class="chips">
+          ${[['1 Tag', 1], ['3 Tage', 3], ['1 Woche', 7], ['1 Monat', 30]].map(([l, d]) => `<button type="button" class="chip" data-pin="${esc(m.id)}" data-days="${d}">${l}</button>`).join('')}
+          ${pin ? `<button type="button" class="chip" data-pin="${esc(m.id)}" data-days="0">Nicht mehr</button>` : ''}
+        </div>
       </div>` : ''}
       <div class="msg-comments msg-extra">
         ${comments.map((c) => {
@@ -867,6 +878,11 @@ function bindMessage(el) {
     if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); toggleMessage(el); }
   });
   el.querySelectorAll('[data-done]').forEach((b) => b.addEventListener('click', () => markDone(b.dataset.done, b)));
+  el.querySelectorAll('[data-pin]').forEach((b) => b.addEventListener('click', () => {
+    const days = Number(b.dataset.days);
+    setPin(b.dataset.pin, days ? new Date(Date.now() + days * 86400e3).toISOString() : null);
+    toast(days ? `📌 Bleibt ${b.textContent} in „Laufend“` : 'Nicht mehr in „Laufend“');
+  }));
   el.querySelectorAll('[data-reply]').forEach((b) => b.addEventListener('click', () => sendReply(b.dataset.reply, b.dataset.option, b)));
   el.querySelectorAll('[data-del-comment]').forEach((b) => b.addEventListener('click', () => deleteComment(b.dataset.delComment, el.dataset.msg)));
   el.querySelectorAll('[data-comment-form]').forEach((f) => f.addEventListener('submit', (e) => { e.preventDefault(); sendComment(f); }));
@@ -889,6 +905,7 @@ function rerenderMessage(id) {
   const el = document.getElementById(`msg-${id}`);
   const m = state.messages.find((x) => x.id === id);
   if (!el || !m) { render(); return; }
+  if (el.closest('[data-section]') && el.closest('[data-section]').dataset.section !== sectionOf(m)) { render(); return; }
   const input = el.querySelector('.comment-form input');
   const draft = input ? input.value : '';
   const focused = input && document.activeElement === input;
@@ -983,12 +1000,58 @@ function setResponse(r) {
   state.responses.set(r.message_id, list);
 }
 
+/* ---- Pro Gerät gemerkt: gelesene Kommentare, zugeklappte Infos, „Laufend“-Pins, offene Bereiche ---- */
+function lsGet(key, fallback) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
+}
+function lsSet(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* privat */ }
+}
+const prefs = {
+  seen: lsGet('familie.seenComments', {}),          // messageId -> Zeitpunkt des zuletzt gesehenen Kommentars
+  infoClosed: new Set(lsGet('familie.infoClosed', [])), // Infos, die man zugeklappt hat
+  pins: lsGet('familie.pins', {}),                   // messageId -> „in Laufend behalten bis“
+  sections: lsGet('familie.sections', {}),           // Bereich -> offen?
+};
+
+function isExpanded(m) {
+  return m.urgency === 'info' ? !prefs.infoClosed.has(m.id) : state.expanded.has(m.id);
+}
+
+function unreadComments(m) {
+  const seen = prefs.seen[m.id] ? Date.parse(prefs.seen[m.id]) : 0;
+  return (state.comments.get(m.id) || []).filter((c) => (!state.me || c.authorId !== state.me.id) && Date.parse(c.createdAt) > seen).length;
+}
+
+function markCommentsSeen(id) {
+  const list = state.comments.get(id) || [];
+  const last = list.length ? list[list.length - 1].createdAt : new Date().toISOString();
+  if (prefs.seen[id] !== last) { prefs.seen[id] = last; lsSet('familie.seenComments', prefs.seen); }
+}
+
 function toggleMessage(el) {
   const id = el.dataset.msg;
-  const open = !state.expanded.has(id);
+  const m = state.messages.find((x) => x.id === id);
+  if (!m) return;
+  const open = !isExpanded(m);
+  if (m.urgency === 'info') {
+    if (open) prefs.infoClosed.delete(id); else prefs.infoClosed.add(id);
+    lsSet('familie.infoClosed', [...prefs.infoClosed]);
+  }
   if (open) state.expanded.add(id); else state.expanded.delete(id);
-  el.classList.toggle('expanded', open);
-  el.setAttribute('aria-expanded', String(open));
+  if (open) markCommentsSeen(id);
+  // Karte neu aufbauen → beim Zuklappen exakt wieder in der Ausgangsform
+  rerenderMessage(id);
+  if (!open) {
+    const fresh = document.getElementById(`msg-${id}`);
+    if (fresh && fresh.getBoundingClientRect().top < 70) fresh.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
+function setPin(id, until) {
+  if (until) prefs.pins[id] = until; else delete prefs.pins[id];
+  lsSet('familie.pins', prefs.pins);
+  render();
 }
 
 async function markDone(id, btn) {
@@ -1012,6 +1075,49 @@ async function markDone(id, btn) {
   }
 }
 
+/* ---- Bereiche der Startseite ---- */
+const SECTIONS = [
+  { key: 'heute', label: 'Heute', open: true },
+  { key: 'morgen', label: 'Morgen', open: true },
+  { key: 'woche', label: 'Diese Woche', open: true },
+  { key: 'laufend', label: 'Laufend', open: true },
+  { key: 'spaeter', label: 'Später', open: false },
+  { key: 'vergangen', label: 'Vergangen', open: false },
+];
+const URGENCY_RANK = { dringend: 0, wichtig: 1, normal: 2, info: 3 };
+
+function sectionOpen(sec) {
+  return sec.key in prefs.sections ? Boolean(prefs.sections[sec.key]) : sec.open;
+}
+
+function compareMessages(a, b) {
+  const u = (URGENCY_RANK[a.urgency] ?? 2) - (URGENCY_RANK[b.urgency] ?? 2);
+  if (u) return u;
+  return Date.parse(a.eventAt || a.createdAt) - Date.parse(b.eventAt || b.createdAt);
+}
+
+/** Zuordnung nach Startzeitpunkt; laufende Zeiträume/Deadlines und gepinnte Infos → „Laufend“. */
+function sectionOf(m, now = new Date()) {
+  const t = now.getTime();
+  const today = startOfDay(now);
+  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+  const dayAfter = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 2);
+  const weekEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + (7 - ((today.getDay() + 6) % 7))); // nach Sonntag
+  const start = Date.parse(m.eventAt || m.createdAt);
+  const end = m.endAt ? Date.parse(m.endAt) : null;
+  const deadline = m.deadlineAt ? Date.parse(m.deadlineAt) : null;
+  const pin = prefs.pins[m.id] ? Date.parse(prefs.pins[m.id]) : null;
+
+  if (pin && pin > t) return 'laufend';
+  if (start <= t && end && end > t && end >= tomorrow.getTime()) return 'laufend';   // läuft über mehrere Tage
+  if (start < today.getTime() && ((end && end > t) || (deadline && deadline > t))) return 'laufend'; // seit gestern o. früher, noch aktiv
+  if (start >= today.getTime() && start < tomorrow.getTime()) return 'heute';
+  if (start >= tomorrow.getTime() && start < dayAfter.getTime()) return 'morgen';
+  if (start >= dayAfter.getTime() && start < weekEnd.getTime()) return 'woche';
+  if (start >= weekEnd.getTime()) return 'spaeter';
+  return 'vergangen';
+}
+
 function renderAustausch(view) {
   const showBanner = pushSupported && state.me ? Notification.permission === 'default' : false;
   const installHint = isIos && !isStandalone
@@ -1021,10 +1127,35 @@ function renderAustausch(view) {
     ? `<div class="notify-banner"><p>🔔 Benachrichtigungen aktivieren, damit du neue Nachrichten sofort mitbekommst.</p><button class="btn primary small" id="enable-push">Aktivieren</button></div>`
     : '');
   const visible = state.messages.filter((m) => !m.deleteAt || Date.parse(m.deleteAt) > Date.now());
-  const list = visible.length
-    ? `<div class="msg-list">${visible.map(messageHtml).join('')}</div>`
-    : `<div class="empty"><div class="big">💬</div><h2>Noch nichts im Austausch</h2><p>Tippe auf <b>+</b>, um eine Nachricht an alle zu schicken.</p></div>`;
+  let list;
+  if (!visible.length) {
+    list = `<div class="empty"><div class="big">💬</div><h2>Noch nichts im Austausch</h2><p>Tippe auf <b>+</b>, um eine Nachricht an alle zu schicken.</p></div>`;
+  } else {
+    const groups = Object.fromEntries(SECTIONS.map((sec) => [sec.key, []]));
+    for (const m of visible) groups[sectionOf(m)].push(m);
+    if (state.highlight) { const hm = visible.find((m) => m.id === state.highlight); if (hm) prefs.sections[sectionOf(hm)] = true; }
+    list = SECTIONS.filter((sec) => groups[sec.key].length).map((sec) => {
+      const items = groups[sec.key].sort(compareMessages);
+      const open = sectionOpen(sec);
+      const unread = items.reduce((n, m) => n + unreadComments(m), 0);
+      return `<section class="msg-section${open ? ' open' : ''}" data-section="${sec.key}">
+        <button type="button" class="section-head" aria-expanded="${open}">
+          <span class="section-title">${sec.label}</span>
+          <span class="section-count">${items.length}</span>${unread ? '<span class="section-dot" title="Neue Kommentare"></span>' : ''}
+          <span class="section-chevron" aria-hidden="true">▾</span>
+        </button>
+        <div class="msg-list">${open ? items.map(messageHtml).join('') : ''}</div>
+      </section>`;
+    }).join('');
+  }
   view.innerHTML = banner + list;
+  view.querySelectorAll('.section-head').forEach((h) => h.addEventListener('click', () => {
+    const key = h.closest('[data-section]').dataset.section;
+    const sec = SECTIONS.find((x) => x.key === key);
+    prefs.sections[key] = !sectionOpen(sec);
+    lsSet('familie.sections', prefs.sections);
+    render();
+  }));
 
   const pushBtn = $('#enable-push', view);
   if (pushBtn) pushBtn.addEventListener('click', enablePush);
@@ -1032,8 +1163,8 @@ function renderAustausch(view) {
   view.querySelectorAll('[data-msg]').forEach(bindMessage);
 
   if (state.highlight) {
-    const el = document.getElementById(`msg-${state.highlight}`);
-    if (el && !el.classList.contains('expanded')) toggleMessage(el);
+    let el = document.getElementById(`msg-${state.highlight}`);
+    if (el && !el.classList.contains('expanded')) { toggleMessage(el); el = document.getElementById(`msg-${state.highlight}`); }
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     state.highlight = null;
   }
@@ -1068,6 +1199,14 @@ function openNewMessage() {
        <div class="field">
          <div class="field-head"><span>Zeitpunkt</span>${bellToggle('remind', true, 'Beim Beginn des Ereignisses vibrieren')}${helpBtn('remind')}</div>
          <input name="eventAt" type="datetime-local" value="${toLocalInput(now)}" aria-label="Startzeitpunkt" class="dt">
+         <div class="chips time-chips">
+           <button type="button" class="chip" data-time="now">Jetzt</button>
+           <span class="mini">in:</span>
+           <button type="button" class="chip" data-add="60">+1h</button>
+           <button type="button" class="chip" data-add="10">+10min</button>
+           <button type="button" class="chip" data-add="1">+1min</button>
+           <button type="button" class="chip" data-time="allday">Ganzer Tag</button>
+         </div>
        </div>
        <div class="toggle-row"><span>Ereignis?</span>${helpBtn('event')}${switchToggle('hasEnd')}</div>
        <label class="field" id="end-box" hidden><span>Ende des Zeitraums</span><input name="endAt" type="datetime-local" class="dt"></label>
@@ -1100,6 +1239,26 @@ function openNewMessage() {
         const chips = [...form.querySelectorAll('.chip')];
         const setActive = (i) => chips.forEach((c, j) => c.classList.toggle('active', j === i));
         form.addEventListener('click', (e) => {
+          const tbtn = e.target.closest('[data-time], [data-add]');
+          if (tbtn) {
+            e.preventDefault();
+            const field = form.elements.eventAt;
+            const cur = field.value ? new Date(field.value) : new Date();
+            if (tbtn.dataset.time === 'now') field.value = toLocalInput(new Date());
+            else if (tbtn.dataset.add) {
+              // „in:“ zählt ab jetzt; mehrfach tippen addiert (z. B. +1h +10min)
+              const base = cur.getTime() < Date.now() - 60e3 ? new Date() : cur;
+              field.value = toLocalInput(new Date(base.getTime() + Number(tbtn.dataset.add) * 60e3));
+            } else if (tbtn.dataset.time === 'allday') {
+              const d = startOfDay(cur);
+              field.value = toLocalInput(d);
+              form.elements.hasEnd.checked = true;
+              $('#end-box', modal).hidden = false;
+              form.elements.endAt.value = toLocalInput(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59));
+              form.elements.remind.checked = false;
+            }
+            return;
+          }
           const help = e.target.closest('[data-help]');
           if (help) { e.preventDefault(); showHelp(help.dataset.help); return; }
           const chip = e.target.closest('[data-preset]');

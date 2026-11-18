@@ -834,3 +834,37 @@ body.nav-tabs .ds-menu { bottom: calc(var(--tabbar-h) + env(safe-area-inset-bott
 .msg .strike-threat { color: #7a1f8a; font-weight: normal; }
 :root[data-theme="dark"] .msg .strike-threat { color: #e7a6f0; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .msg .strike-threat { color: #e7a6f0; } }
+
+/* ---------- Startseite: auf-/zuklappbare Bereiche ---------- */
+.msg-section { margin-bottom: 14px; }
+.section-head {
+  width: 100%; display: flex; align-items: center; gap: 10px; cursor: pointer;
+  border: 0; background: none; padding: 6px 2px 8px; font: inherit; color: var(--text);
+}
+.section-title {
+  font-family: "Pokemon Solid", "Pokemon DS", sans-serif; font-size: 1.35rem; letter-spacing: .04em;
+  color: #ffcb05; -webkit-text-stroke: 1.5px #3c5aa6; paint-order: stroke fill;
+}
+.section-count {
+  min-width: 26px; height: 26px; padding: 0 8px; border-radius: 999px; display: inline-grid; place-items: center;
+  background: var(--surface); border: 1px solid var(--border); color: var(--muted); font-size: 1rem;
+}
+.section-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); }
+.section-chevron { margin-left: auto; color: var(--muted); transition: transform .2s ease; transform: rotate(-90deg); }
+.msg-section.open .section-chevron { transform: none; }
+.msg-section:not(.open) .msg-list { display: none; }
+
+/* ---------- Ungelesene Kommentare ---------- */
+.msg.has-unread::after {
+  content: ""; position: absolute; top: -6px; right: 30px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--danger); border: 3px solid var(--bg); box-shadow: 0 1px 3px rgba(0,0,0,.25);
+}
+.msg .count.unread b { color: var(--danger); font-weight: normal; }
+
+/* ---------- Infos: in „Laufend“ behalten ---------- */
+.msg-pin { gap: 4px; }
+.msg .pin-line { color: var(--muted); }
+
+/* ---------- Zeitpunkt-Schnellknöpfe ---------- */
+.time-chips { align-items: center; margin-top: 6px; }
+.time-chips .mini { color: var(--muted); padding: 0 2px 0 6px; }
