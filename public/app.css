@@ -1665,3 +1665,12 @@ body.nav-tabs .punish-field { bottom: calc(var(--tabbar-h) + env(safe-area-inset
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .mini-hsv { color: #9cc0ff; } }
 /* Ersatz, falls das Wappen nicht lädt: schlichte blaue Raute */
 .hsv-diamond { display: block; width: 13px; height: 13px; transform: rotate(45deg); background: var(--hsv); border: 2px solid #fff; outline: 1.5px solid #111; }
+/* Feiertagsarten */
+.cal-cell.holiday-regional .cal-hol { color: color-mix(in srgb, var(--hol) 60%, var(--cal-num)); }
+.day-hol { grid-template-columns: auto 1fr; }
+.day-hol > span { grid-row: span 2; font-size: 1.2rem; }
+.day-hol.k-regional { border-style: dotted; color: color-mix(in srgb, var(--hol) 70%, var(--text)); }
+.day-hol.k-church, .day-hol.k-custom { border-color: var(--border); color: var(--text); }
+.mini-hol.k-legal { }
+.mini-hol.k-regional { color: color-mix(in srgb, var(--hol) 55%, var(--muted)); background: transparent; border-style: dotted; }
+.mini-hol.k-church, .mini-hol.k-custom { color: var(--muted); background: transparent; border-color: var(--border); }

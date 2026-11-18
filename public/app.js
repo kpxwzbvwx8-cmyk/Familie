@@ -2228,35 +2228,80 @@ function easterSunday(y) {
   return new Date(y, month - 1, day);
 }
 const holidayCache = new Map();
+/*
+ * Deutscher Feiertagskalender
+ *   kind: 'legal'    – gesetzlicher Feiertag in Hamburg (bzw. bundesweit)
+ *         'regional' – gesetzlicher Feiertag nur in anderen Bundesländern
+ *         'church'   – kirchlicher Feiertag/Gedenktag (evangelisch, katholisch oder beide)
+ *         'custom'   – üblicher Tag ohne gesetzlichen Status (Heiligabend, Silvester …)
+ */
 function holidaysOf(y) {
   if (holidayCache.has(y)) return holidayCache.get(y);
   const e = easterSunday(y);
+  const D = (m, d) => new Date(y, m - 1, d);
+  // 4. Advent = letzter Sonntag vor dem 25.12.
+  const xmas = D(12, 25);
+  const advent4 = addDays(xmas, -(xmas.getDay() === 0 ? 7 : xmas.getDay()));
+  const advent1 = addDays(advent4, -21);
+  // Buß- und Bettag = letzter Mittwoch vor dem 23.11.
+  const nov23 = D(11, 23);
+  const bussTag = addDays(nov23, -(((nov23.getDay() - 3 + 7) % 7) || 7));
+  // Erntedank = erster Sonntag im Oktober
+  const oct1 = D(10, 1);
+  const erntedank = addDays(oct1, (7 - oct1.getDay()) % 7);
   const list = [
-    [new Date(y, 0, 1), 'Neujahr', 'Neujahr', true],
-    [addDays(e, -2), 'Karfreitag', 'Karfreitag', true],
-    [e, 'Ostersonntag', 'Ostern', true],
-    [addDays(e, 1), 'Ostermontag', 'Ostermo.', true],
-    [new Date(y, 4, 1), 'Tag der Arbeit', '1. Mai', true],
-    [addDays(e, 39), 'Christi Himmelfahrt', 'Himmelf.', true],
-    [addDays(e, 49), 'Pfingstsonntag', 'Pfingsten', true],
-    [addDays(e, 50), 'Pfingstmontag', 'Pfingstmo.', true],
-    [new Date(y, 9, 3), 'Tag der Deutschen Einheit', 'Einheit', true],
-    [new Date(y, 9, 31), 'Reformationstag (Hamburg)', 'Reformation', true],
-    [new Date(y, 11, 24), 'Heiligabend', 'Heiligabend', false],
-    [new Date(y, 11, 25), '1. Weihnachtsfeiertag', '1. Weihn.', true],
-    [new Date(y, 11, 26), '2. Weihnachtsfeiertag', '2. Weihn.', true],
-    [new Date(y, 11, 31), 'Silvester', 'Silvester', false],
+    [D(1, 1), 'Neujahr', 'Neujahr', 'legal', 'bundesweit', '🎆'],
+    [D(1, 6), 'Heilige Drei Könige', '3 Könige', 'regional', 'gesetzlich in BW, BY, ST · katholisch', '👑'],
+    [D(3, 8), 'Internationaler Frauentag', 'Frauentag', 'regional', 'gesetzlich in BE, MV', '💐'],
+    [addDays(e, -48), 'Rosenmontag', 'Rosenmo.', 'custom', 'Karneval – kein gesetzlicher Feiertag', '🎭'],
+    [addDays(e, -46), 'Aschermittwoch', 'Aschermi.', 'church', 'Beginn der Fastenzeit · katholisch & evangelisch', '✝️'],
+    [addDays(e, -7), 'Palmsonntag', 'Palmso.', 'church', 'katholisch & evangelisch', '🌿'],
+    [addDays(e, -3), 'Gründonnerstag', 'Gründo.', 'church', 'katholisch & evangelisch', '🍞'],
+    [addDays(e, -2), 'Karfreitag', 'Karfreitag', 'legal', 'bundesweit', '✝️'],
+    [addDays(e, -1), 'Karsamstag', 'Karsa.', 'church', 'katholisch & evangelisch', '🕯️'],
+    [e, 'Ostersonntag', 'Ostern', 'legal', 'gesetzlich in BB · bundesweit gefeiert', '🐣'],
+    [addDays(e, 1), 'Ostermontag', 'Ostermo.', 'legal', 'bundesweit', '🐰'],
+    [D(5, 1), 'Tag der Arbeit', '1. Mai', 'legal', 'bundesweit', '🌷'],
+    [addDays(e, 39), 'Christi Himmelfahrt', 'Himmelf.', 'legal', 'bundesweit', '☁️'],
+    [addDays(e, 49), 'Pfingstsonntag', 'Pfingsten', 'legal', 'gesetzlich in BB · bundesweit gefeiert', '🕊️'],
+    [addDays(e, 50), 'Pfingstmontag', 'Pfingstmo.', 'legal', 'bundesweit', '🕊️'],
+    [addDays(e, 60), 'Fronleichnam', 'Fronleichn.', 'regional', 'gesetzlich in BW, BY, HE, NW, RP, SL · katholisch', '🌼'],
+    [D(8, 15), 'Mariä Himmelfahrt', 'Mariä Himmelf.', 'regional', 'gesetzlich im SL und in Teilen BYs · katholisch', '🌸'],
+    [D(9, 20), 'Weltkindertag', 'Kindertag', 'regional', 'gesetzlich in TH', '🧸'],
+    [erntedank, 'Erntedankfest', 'Erntedank', 'church', 'katholisch & evangelisch', '🌾'],
+    [D(10, 3), 'Tag der Deutschen Einheit', 'Einheit', 'legal', 'bundesweit', '🇩🇪'],
+    [D(10, 31), 'Reformationstag', 'Reformation', 'legal', 'gesetzlich in HH, BB, HB, MV, NI, SN, ST, SH, TH · evangelisch', '📜'],
+    [D(11, 1), 'Allerheiligen', 'Allerheil.', 'regional', 'gesetzlich in BW, BY, NW, RP, SL · katholisch', '🕯️'],
+    [D(11, 2), 'Allerseelen', 'Allerseelen', 'church', 'katholisch', '🕯️'],
+    [D(11, 11), 'Martinstag', 'St. Martin', 'church', 'Laternenumzüge · katholisch & evangelisch', '🏮'],
+    [addDays(advent1, -14), 'Volkstrauertag', 'Volkstrauert.', 'church', 'Gedenktag', '🕊️'],
+    [bussTag, 'Buß- und Bettag', 'Buß- & Bettag', 'regional', 'gesetzlich in SN · evangelisch', '🙏'],
+    [addDays(advent1, -7), 'Totensonntag', 'Totenso.', 'church', 'Ewigkeitssonntag · evangelisch (katholisch: Christkönig)', '🕯️'],
+    [advent1, '1. Advent', '1. Advent', 'church', 'katholisch & evangelisch', '🕯️'],
+    [addDays(advent1, 7), '2. Advent', '2. Advent', 'church', 'katholisch & evangelisch', '🕯️'],
+    [D(12, 6), 'Nikolaus', 'Nikolaus', 'church', 'katholisch & evangelisch', '🎅'],
+    [addDays(advent1, 14), '3. Advent', '3. Advent', 'church', 'katholisch & evangelisch', '🕯️'],
+    [advent4, '4. Advent', '4. Advent', 'church', 'katholisch & evangelisch', '🕯️'],
+    [D(12, 24), 'Heiligabend', 'Heiligabend', 'custom', 'kein gesetzlicher Feiertag', '🎄'],
+    [D(12, 25), '1. Weihnachtsfeiertag', '1. Weihn.', 'legal', 'bundesweit', '🎁'],
+    [D(12, 26), '2. Weihnachtsfeiertag', '2. Weihn.', 'legal', 'bundesweit', '⭐'],
+    [D(12, 31), 'Silvester', 'Silvester', 'custom', 'kein gesetzlicher Feiertag', '🎇'],
   ];
-  const map = new Map(list.map(([d, name, short, legal]) => [d.getTime(), { name, short, legal }]));
+  const rank = { legal: 0, regional: 1, custom: 2, church: 3 };
+  const map = new Map();
+  for (const [d, name, short, kind, note, emoji] of list) {
+    const k = d.getTime();
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push({ name, short, kind, note, emoji, legal: kind === 'legal' });
+  }
+  for (const arr of map.values()) arr.sort((a, b) => rank[a.kind] - rank[b.kind]);
   holidayCache.set(y, map);
   return map;
 }
-const holidayOn = (day) => holidaysOf(day.getFullYear()).get(day.getTime()) || null;
-const HOLIDAY_EMOJI = {
-  Neujahr: '🎆', Karfreitag: '✝️', Ostersonntag: '🐣', Ostermontag: '🐰', 'Tag der Arbeit': '🌷', 'Christi Himmelfahrt': '☁️',
-  Pfingstsonntag: '🕊️', Pfingstmontag: '🕊️', 'Tag der Deutschen Einheit': '🇩🇪', 'Reformationstag (Hamburg)': '📜',
-  Heiligabend: '🎄', '1. Weihnachtsfeiertag': '🎁', '2. Weihnachtsfeiertag': '⭐', Silvester: '🎇',
-};
+/** Alle Feiertage eines Tages (wichtigster zuerst) */
+const holidaysOn = (day) => holidaysOf(day.getFullYear()).get(day.getTime()) || [];
+const holidayOn = (day) => holidaysOn(day)[0] || null;
+const HOLIDAY_KIND = { legal: 'Gesetzlicher Feiertag', regional: 'Feiertag in anderen Bundesländern', church: 'Kirchlicher Feiertag', custom: 'Kein gesetzlicher Feiertag' };
 
 /* ---- Feiertage & HSV kompakt auf Start ------------------------------ */
 
@@ -2276,8 +2321,7 @@ function compactStartItems() {
   for (let i = 0; i < 8; i++) {
     const d = addDays(today, i);
     const sec = daySection(d);
-    const h = holidayOn(d);
-    if (sec && h) out.push({ sec, t: d.getTime(), html: holidayRowHtml(d, h) });
+    if (sec) for (const h of holidaysOn(d)) out.push({ sec, t: d.getTime(), html: holidayRowHtml(d, h) });
   }
   if (hsvEnabled() && state.hsv) {
     for (const m of state.hsv) {
@@ -2292,7 +2336,7 @@ function compactStartItems() {
 }
 function holidayRowHtml(d, h) {
   const date = d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' });
-  return `<div class="mini-row mini-hol${h.legal ? '' : ' soft'}"><span class="mini-ico">${HOLIDAY_EMOJI[h.name] || '🎉'}</span><span class="mini-when">${esc(date)}</span><span class="mini-what">${esc(h.name)}</span></div>`;
+  return `<div class="mini-row mini-hol k-${h.kind}" title="${esc(h.note)}"><span class="mini-ico">${h.emoji || '🎉'}</span><span class="mini-when">${esc(date)}</span><span class="mini-what">${esc(h.name)}</span></div>`;
 }
 function hsvRowHtml(m) {
   const k = new Date(m.kickoff);
@@ -2396,7 +2440,7 @@ function weekHtml(weekStart, month, today) {
     if (state.calDay && sameDay(day, state.calDay)) cls.push('selected');
     if (i >= 5) cls.push('weekend');
     const hol = holidayOn(day);
-    if (hol) cls.push(hol.legal ? 'holiday' : 'holiday-soft');
+    if (hol) cls.push(hol.legal ? 'holiday' : hol.kind === 'regional' ? 'holiday-regional' : 'holiday-soft');
     const games = hsvOnDay(day);
     const here = evs.filter((ev) => { const p = laneOf.get(ev); return p.s <= i && p.e >= i; });
     let bars = '';
@@ -2424,13 +2468,13 @@ function weekHtml(weekStart, month, today) {
 function dayPanelHtml() {
   const day = state.calDay;
   const list = eventsOnDay(day);
-  const hol = holidayOn(day);
+  const hols = holidaysOn(day);
   const games = hsvOnDay(day);
   const label = day.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   return `<section class="cal-info">
     <div class="cal-info-head"><span class="cal-info-tag">INFO</span><span>${esc(label)}</span></div>
     <div class="cal-info-body">
-      ${hol ? `<div class="day-hol${hol.legal ? '' : ' soft'}">🎉 <b>${esc(hol.name)}</b><small>${hol.legal ? 'Gesetzlicher Feiertag' : 'Kein gesetzlicher Feiertag'}</small></div>` : ''}
+      ${hols.map((h) => `<div class="day-hol k-${h.kind}"><span>${h.emoji}</span><b>${esc(h.name)}</b><small>${esc(HOLIDAY_KIND[h.kind])} · ${esc(h.note)}</small></div>`).join('')}
       ${games.map((g) => `<button type="button" class="day-hsv${g.isHome ? ' home' : ''}" data-hsv="${esc(g.id)}">
         <span class="day-hsv-ball">⚽</span>
         <span class="day-ev-time">${esc(formatTimeOnly(g.kickoff))}</span>
