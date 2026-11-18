@@ -1408,6 +1408,10 @@ function renderAustausch(view) {
   view.innerHTML = banner + invitationCardsHtml() + list;
   bindEventCards(view);
   view.querySelectorAll('.mini-hsv[data-hsv]').forEach((b) => b.addEventListener('click', () => openHsvMatch(b.dataset.hsv)));
+  view.querySelectorAll('.mini-hol[data-hol]').forEach((b) => b.addEventListener('click', () => {
+    const name = b.dataset.hol;
+    dsSay(HOLIDAY_INFO[name] || name, { speaker: name });
+  }));
   view.querySelectorAll('.section-head').forEach((h) => h.addEventListener('click', () => {
     const key = h.closest('[data-section]').dataset.section;
     const sec = SECTIONS.find((x) => x.key === key);
@@ -2038,8 +2042,12 @@ function renderSettings(view) {
         <button class="btn small" id="set-hsv">${hsvEnabled() ? 'Ausblenden' : 'Einblenden'}</button>
       </div>
       <div class="setting-row">
-        <div><b>App-Version</b><p class="hint">${esc(CFG.version || 'dev')}</p></div>
+        <div><b>App-Version</b><p class="hint">v${APP_VERSION} · Stand ${esc(CFG.version || 'dev')}</p></div>
         <button class="btn small" id="set-update">Nach Updates suchen</button>
+      </div>
+      <div class="setting-row">
+        <div><b>Update-Log</b><p class="hint">Alle Neuerungen im Tagebuch</p></div>
+        <button class="btn small" id="set-log">📖 Öffnen</button>
       </div>
     </div>`;
   $('#theme-toggle', view).addEventListener('click', () => { toggleTheme(); render(); });
@@ -2047,6 +2055,7 @@ function renderSettings(view) {
   const prof = $('#set-profile', view); if (prof) prof.addEventListener('click', openEditProfile);
   const card = $('#set-card', view); if (card) card.addEventListener('click', () => openTrainerCard(state.me));
   $('#set-update', view).addEventListener('click', checkForUpdate);
+  $('#set-log', view).addEventListener('click', () => openDiary(0));
   $('#set-hsv', view).addEventListener('click', () => { lsSet('familie.hsvOn', !hsvEnabled()); render(); });
   $('#set-nav', view).addEventListener('click', () => setNavMode(getNavMode() === 'tabs' ? 'x' : 'tabs'));
 }
@@ -2336,7 +2345,7 @@ function compactStartItems() {
 }
 function holidayRowHtml(d, h) {
   const date = d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' });
-  return `<div class="mini-row mini-hol k-${h.kind}" title="${esc(h.note)}"><span class="mini-ico">${h.emoji || '🎉'}</span><span class="mini-when">${esc(date)}</span><span class="mini-what">${esc(h.name)}</span></div>`;
+  return `<button type="button" class="mini-row mini-hol k-${h.kind}" data-hol="${esc(h.name)}" title="${esc(h.note)}"><span class="mini-ico">${h.emoji || '🎉'}</span><span class="mini-when">${esc(date)}</span><span class="mini-what">${esc(h.name)}</span></button>`;
 }
 function hsvRowHtml(m) {
   const k = new Date(m.kickoff);
@@ -2404,6 +2413,46 @@ function openHsvMatch(id) {
     { cls: 'hsv-modal' }
   );
 }
+
+/** Kurze Erklärungen zu Herkunft und Geschichte der Feiertage */
+const HOLIDAY_INFO = {
+  'Neujahr': 'Seit Papst Innozenz XII. 1691 beginnt das Jahr offiziell am 1. Januar. Die Römer feierten den Jahresbeginn schon zu Ehren des Gottes Janus – daher der Name Januar.',
+  'Heilige Drei Könige': 'Erinnert an die Sterndeuter aus dem Osten, die dem Jesuskind Gold, Weihrauch und Myrrhe brachten. Sternsinger schreiben dazu den Segen „C+M+B“ an die Türen – „Christus mansionem benedicat“.',
+  'Internationaler Frauentag': 'Entstand 1911 aus der Frauenbewegung, die für Wahlrecht und gleiche Rechte kämpfte. Berlin machte ihn 2019 als erstes Bundesland zum Feiertag, Mecklenburg-Vorpommern folgte 2023.',
+  'Rosenmontag': 'Höhepunkt des Karnevals vor Beginn der Fastenzeit. Der Name kommt vermutlich vom rheinischen „rasen“ (toben) – und hat mit Rosen wenig zu tun.',
+  'Aschermittwoch': 'Beginn der 40-tägigen Fastenzeit vor Ostern. Im Gottesdienst wird ein Aschekreuz auf die Stirn gezeichnet – als Zeichen von Vergänglichkeit und Umkehr.',
+  'Palmsonntag': 'Erinnert an den Einzug Jesu in Jerusalem, bei dem ihm die Menschen mit Palmzweigen zujubelten. Mit ihm beginnt die Karwoche.',
+  'Gründonnerstag': 'Gedenken an das letzte Abendmahl Jesu mit seinen Jüngern. „Grün“ kommt wohl vom alten Wort „greinen“ (weinen) – traditionell isst man trotzdem gern etwas Grünes.',
+  'Karfreitag': 'Gedenktag der Kreuzigung Jesu. „Kar“ kommt vom althochdeutschen „kara“ – Klage, Trauer. Er ist einer der stillen Feiertage, an denen z. B. Tanzveranstaltungen verboten sind.',
+  'Karsamstag': 'Tag der Grabesruhe Jesu zwischen Karfreitag und Ostern. In der Nacht zum Sonntag wird mit der Osternacht und dem Osterfeuer die Auferstehung gefeiert.',
+  'Ostersonntag': 'Das wichtigste Fest des Christentums: die Auferstehung Jesu. Ostern ist der erste Sonntag nach dem ersten Frühlingsvollmond – darum wandert es jedes Jahr.',
+  'Ostermontag': 'Zweiter Osterfeiertag. Er erinnert an die Emmaus-Jünger, denen der auferstandene Jesus begegnete. Als freier Tag ist er in ganz Deutschland gesetzlich.',
+  'Tag der Arbeit': 'Geht auf Streiks der Arbeiterbewegung für den Achtstundentag zurück (Chicago, 1886). In Deutschland ist der 1. Mai seit 1933 gesetzlicher Feiertag.',
+  'Christi Himmelfahrt': '40 Tage nach Ostern: Jesus kehrt zu Gott zurück in den Himmel. Seit dem 19. Jahrhundert auch als „Vatertag“ mit Bollerwagen-Touren bekannt.',
+  'Pfingstsonntag': '50 Tage nach Ostern (griechisch „pentekoste“ = der fünfzigste). Gefeiert wird die Ausgießung des Heiligen Geistes – gilt als Geburtstag der Kirche.',
+  'Pfingstmontag': 'Zweiter Pfingstfeiertag. In vielen Regionen gibt es Pfingstmärkte und Ausflüge – der klassische Start in die Sommersaison.',
+  'Fronleichnam': 'Katholisches Fest der Eucharistie seit dem 13. Jahrhundert. „Fron“ heißt Herr, „lichnam“ Leib – also „Leib des Herrn“. Typisch sind Prozessionen durch geschmückte Straßen.',
+  'Mariä Himmelfahrt': 'Katholisches Fest der Aufnahme Marias in den Himmel, als Glaubenssatz seit 1950. Traditionell werden Kräuterbüschel gesegnet.',
+  'Weltkindertag': 'Von den Vereinten Nationen angeregt, um auf Kinderrechte aufmerksam zu machen. Thüringen hat ihn 2019 als einziges Bundesland zum Feiertag gemacht.',
+  'Erntedankfest': 'Dank für die Ernte des Jahres – ein uralter Brauch. Kirchen werden mit Feldfrüchten geschmückt; gefeiert wird meist am ersten Sonntag im Oktober.',
+  'Tag der Deutschen Einheit': 'Erinnert an die Wiedervereinigung am 3. Oktober 1990, elf Monate nach dem Mauerfall. Er ist der einzige Feiertag, der durch Bundesrecht festgelegt ist.',
+  'Reformationstag': 'Am 31. Oktober 1517 veröffentlichte Martin Luther seine 95 Thesen – der Beginn der Reformation. In Hamburg ist er seit 2018 gesetzlicher Feiertag.',
+  'Allerheiligen': 'Gedenken an alle Heiligen, seit dem 9. Jahrhundert am 1. November. Viele Familien besuchen und schmücken an diesem Tag die Gräber ihrer Angehörigen.',
+  'Allerseelen': 'Katholischer Gedenktag für alle Verstorbenen. Lichter auf den Gräbern – die „Seelenlichter“ – sollen an sie erinnern.',
+  'Martinstag': 'Erinnert an den heiligen Martin von Tours, der seinen Mantel mit einem frierenden Bettler teilte. Kinder ziehen mit Laternen durch die Straßen, dazu gibt es Martinsgans.',
+  'Volkstrauertag': 'Gedenktag für die Opfer von Krieg und Gewaltherrschaft, eingeführt nach dem Ersten Weltkrieg. Er liegt zwei Sonntage vor dem 1. Advent.',
+  'Buß- und Bettag': 'Evangelischer Tag der Besinnung und Umkehr, immer der Mittwoch vor dem Totensonntag. Bundesweit frei bis 1994 – er wurde gestrichen, um die Pflegeversicherung zu finanzieren. Nur Sachsen hat ihn behalten.',
+  'Totensonntag': 'Evangelischer Gedenktag für die Verstorbenen (Ewigkeitssonntag), 1816 vom preußischen König eingeführt. Er ist der letzte Sonntag des Kirchenjahres.',
+  '1. Advent': '„Advent“ heißt Ankunft – die Vorbereitungszeit auf Weihnachten beginnt. Der Adventskranz wurde 1839 in Hamburg von Johann Hinrich Wichern erfunden!',
+  '2. Advent': 'Die zweite Kerze am Adventskranz brennt. Die vier Kerzen stehen für die vier Wochen bis Weihnachten.',
+  '3. Advent': 'Der Sonntag „Gaudete“ – freut euch! In manchen Kirchen wird die dritte Kerze in Rosa entzündet.',
+  '4. Advent': 'Der letzte Adventssonntag: alle vier Kerzen brennen, Weihnachten steht vor der Tür.',
+  'Nikolaus': 'Erinnert an Bischof Nikolaus von Myra (4. Jh.), der heimlich Gaben an Bedürftige verteilte. Daher stellen Kinder am Vorabend ihre Stiefel vor die Tür.',
+  'Heiligabend': 'Der Abend vor Christi Geburt. In Deutschland ist die Bescherung am Abend des 24. üblich – ein Brauch, den Martin Luther mit dem „Christkind“ bekannt machte.',
+  '1. Weihnachtsfeiertag': 'Fest der Geburt Jesu. Der 25. Dezember ist seit dem 4. Jahrhundert Weihnachtstag – nahe an der Wintersonnenwende, wenn das Licht zurückkehrt.',
+  '2. Weihnachtsfeiertag': 'Auch Stephanstag – zur Erinnerung an Stephanus, den ersten christlichen Märtyrer. Ein Tag für Familienbesuche.',
+  'Silvester': 'Benannt nach Papst Silvester I., der am 31. Dezember 335 starb. Mit Feuerwerk und Lärm sollten früher böse Geister vertrieben werden.',
+};
 
 /* ---- Monatsraster ---------------------------------------------------- */
 
@@ -2474,7 +2523,7 @@ function dayPanelHtml() {
   return `<section class="cal-info">
     <div class="cal-info-head"><span class="cal-info-tag">INFO</span><span>${esc(label)}</span></div>
     <div class="cal-info-body">
-      ${hols.map((h) => `<div class="day-hol k-${h.kind}"><span>${h.emoji}</span><b>${esc(h.name)}</b><small>${esc(HOLIDAY_KIND[h.kind])} · ${esc(h.note)}</small></div>`).join('')}
+      ${hols.map((h) => `<div class="day-hol k-${h.kind}"><span>${h.emoji}</span><b>${esc(h.name)}</b><small>${esc(HOLIDAY_KIND[h.kind])} · ${esc(h.note)}</small>${HOLIDAY_INFO[h.name] ? `<p class="day-hol-info">${esc(HOLIDAY_INFO[h.name])}</p>` : ''}</div>`).join('')}
       ${games.map((g) => `<button type="button" class="day-hsv${g.isHome ? ' home' : ''}" data-hsv="${esc(g.id)}">
         <span class="day-hsv-ball">⚽</span>
         <span class="day-ev-time">${esc(formatTimeOnly(g.kickoff))}</span>
@@ -3691,27 +3740,50 @@ const BURN_KEY = 'familie.burned';
 const burning = new Set(); // läuft gerade (falls neu gezeichnet wird)
 
 /** Liefert die Striche, die auf diesem Gerät noch nicht eingebrannt wurden, und merkt sie sich. */
+let burnIntro = null; // Striche, deren Ankündigung gerade angezeigt wird
+
+/**
+ * Neue Striche, die auf diesem Handy noch nicht eingebrannt wurden.
+ * Beim Öffnen des Boards erscheint zuerst eine Textbox – erst danach brennt die Animation.
+ */
 function takeFreshStrikes() {
   // Solange eine Urteils-/Strafmeldung offen ist, warten – sonst verpasst man die Animation
-  if (!state.boardLoaded || verdictOpen) return [];
+  if (!state.boardLoaded || verdictOpen) return { fresh: [], paused: false };
   const visible = state.strikes.filter((s) => s.status !== 'withdrawn');
-  let seen = lsGet(BURN_KEY, null);
+  const seen = lsGet(BURN_KEY, null);
   if (!Array.isArray(seen)) {
     // Erster Start mit dieser Version: Bestehendes nicht animieren
     lsSet(BURN_KEY, visible.map((s) => s.id));
-    return [];
+    return { fresh: [], paused: false };
   }
   const seenSet = new Set(seen);
   const fresh = visible.filter((s) => !seenSet.has(s.id) || burning.has(s.id));
-  for (const s of fresh) {
-    if (!burning.has(s.id)) {
-      burning.add(s.id);
-      setTimeout(() => burning.delete(s.id), 5000);
-    }
-    seenSet.add(s.id);
+  const waiting = fresh.filter((s) => !burning.has(s.id));
+  if (waiting.length && !burnIntro) {
+    burnIntro = waiting.map((s) => s.id);
+    setTimeout(() => announceBurn(waiting), 80);
   }
-  if (fresh.length) lsSet(BURN_KEY, [...seenSet].slice(-500));
-  return fresh;
+  return { fresh, paused: Boolean(burnIntro) };
+}
+
+function announceBurn(list) {
+  const pages = list.map((s) => {
+    const who = s.userId === state.me.id ? 'Du hast' : `${nameOf(s.userId)} hat`;
+    return `${who} ${strikeWord(s.value)} bekommen – „${s.title}“${s.status !== 'active' ? ' (noch vorläufig)' : ''}.`;
+  });
+  pages.push(list.length > 1 ? 'Die Striche werden jetzt in die Tafel eingebrannt …' : 'Der Strich wird jetzt in die Tafel eingebrannt …');
+  dsSay('', { speaker: 'Board der Schande', pages }).then(() => {
+    const seenSet = new Set(lsGet(BURN_KEY, []));
+    for (const id of burnIntro || []) {
+      seenSet.add(id);
+      burning.add(id);
+      setTimeout(() => burning.delete(id), 6000);
+    }
+    lsSet(BURN_KEY, [...seenSet].slice(-500));
+    burnIntro = null;
+    const board = document.querySelector('.board.burn-paused');
+    if (board) board.classList.remove('burn-paused');
+  });
 }
 
 /* ---- Zählen ------------------------------------------------------------ */
@@ -3800,10 +3872,10 @@ function renderBoard(view) {
   const toApprove = proposals.filter((r) => !r.approvedBy.includes(state.me.id)).length;
   const showAll = view.dataset.logAll === '1';
   const log = showAll ? state.strikes : state.strikes.slice(0, 12);
-  const fresh = takeFreshStrikes();
+  const { fresh, paused } = takeFreshStrikes();
   const freshOf = (id) => fresh.filter((s) => s.userId === id).reduce((a, s) => a + s.value, 0);
   view.innerHTML = `${CHALK_DEFS}
-  <div class="board">
+  <div class="board${paused ? ' burn-paused' : ''}">
     <div class="stone-frame">
       <div class="slate">
         <h2 class="chalk chalk-title">Board der Schande</h2>
@@ -4321,6 +4393,170 @@ function openDossier(userId) {
 }
 
 /* -------------------------------------------------------------------------
+ * Tagebuch (wie das Reisetagebuch aus Platin): Willkommen & Update-Log
+ *  blau für Trainer, rosa für Trainerinnen
+ * ---------------------------------------------------------------------- */
+
+const APP_VERSION = '1.0';
+const CHANGELOG = [
+  {
+    version: '1.0', date: '2026-11-18', title: 'Willkommen!',
+    intro: 'Unsere Familien-App ist offiziell gestartet! Alles, was in den letzten zwei Tagen entstanden ist, steckt jetzt in Version 1.0. Ab sofort steht hier im Tagebuch, was sich mit jedem Update ändert.',
+    items: [
+      'Version 1.0 erschienen!',
+      'Dialoge sprechen jetzt wie im Spiel – Buchstabe für Buchstabe',
+      'Ja/Nein-Fragen mit Auswahlpfeil statt grauer Fenster',
+      'Neues per ＋: Info, Meldung oder Termin',
+      'Gefangen! – kleine Animation beim Senden',
+      'Feiertage mit Erklärung zur Herkunft',
+      'Striche werden erst beim Öffnen des Boards eingebrannt',
+      'Dieses Tagebuch mit allen Updates',
+    ],
+  },
+  {
+    version: '0.7', date: '2026-11-18', title: 'Kalender',
+    items: [
+      'Kalender im Pokédex-Stil mit Monatsraster',
+      'Termine mit Ort, ganztägig, Zeitraum und Hinweisen',
+      'Einladungen mit Zu- und Absage auf Start',
+      'Feiertage aller Bundesländer und beider Konfessionen',
+      'HSV-Spielplan mit Anstoßzeiten',
+    ],
+  },
+  {
+    version: '0.6', date: '2026-11-18', title: 'Notizen',
+    items: [
+      'Eigene und gemeinsame Notizen',
+      'Schreiben oder mit dem Finger malen',
+      'Briefpapier wie die Briefe aus Platin',
+      'Hochladen und die anderen benachrichtigen',
+    ],
+  },
+  {
+    version: '0.5', date: '2026-11-18', title: 'Board der Schande',
+    items: [
+      'Kreidetafel mit Polaroids und Strichlisten',
+      'Strafkatalog – beglaubigt von allen',
+      'Bestrafen, Einspruch und Urteil',
+      'Bei 10 Strichen sind 10 € fällig',
+      'Lückenlose Akte mit Zeitstempeln',
+    ],
+  },
+  {
+    version: '0.4', date: '2026-11-18', title: 'Meldungen',
+    items: [
+      'Zeiträume, Deadlines und Erinnerungen',
+      'Rückmeldungen und Kommentare',
+      'Strich androhen bei Nichterfüllung',
+      'Start sortiert nach Heute, Morgen, Woche',
+    ],
+  },
+  {
+    version: '0.3', date: '2026-11-18', title: 'Neuer Start',
+    items: [
+      'Startseite mit Porträts an jeder Meldung',
+      'X-Knopf mit DS-Menü – oder Reiter unten',
+      'Pokéball holt Updates zuverlässig',
+      'Team als Party-Bildschirm mit Level',
+    ],
+  },
+  {
+    version: '0.2', date: '2026-11-17', title: 'Pokémon-Look',
+    items: [
+      'Pixelschrift wie auf dem DS',
+      'Dringlichkeit als Poké-, Super-, Hyper- und Meisterball',
+      'Trainer-Memo, Hell- und Dunkelmodus',
+      'Speedy, Idefix und das Ei sind dabei',
+    ],
+  },
+  {
+    version: '0.1', date: '2026-11-17', title: 'Abenteuer gestartet',
+    items: [
+      'Trainerpass für alle',
+      'Austausch mit Benachrichtigungen',
+      'Läuft als App auf dem iPhone',
+    ],
+  },
+];
+
+function diaryDate(iso) {
+  const d = new Date(`${iso}T12:00:00`);
+  return {
+    date: d.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' }),
+    weekday: d.toLocaleDateString('de-DE', { weekday: 'long' }),
+  };
+}
+
+function diaryPageHtml(entry) {
+  const { date, weekday } = diaryDate(entry.date);
+  return `<div class="diary-page">
+    <div class="diary-line diary-head"><span>${esc(date)}</span><span>${esc(weekday)}</span><span class="diary-ver">v${esc(entry.version)}</span></div>
+    <div class="diary-line diary-title">${esc(entry.title)}</div>
+    ${entry.intro ? `<p class="diary-intro">${esc(entry.intro)}</p>` : ''}
+    ${entry.items.map((t) => `<div class="diary-line">– ${esc(t)}</div>`).join('')}
+    <div class="diary-line"></div><div class="diary-line"></div>
+  </div>`;
+}
+
+/** Tagebuch öffnen; start = Index im CHANGELOG (0 = neueste Version) */
+function openDiary(start = 0, { welcome = false } = {}) {
+  return new Promise((resolve) => {
+    let i = start;
+    const theme = state.me && state.me.gender === 'w' ? 'pink' : 'blue';
+    openModal(
+      `<div class="diary diary-${theme}">
+        <div class="diary-top">
+          <span class="diary-label">${welcome ? 'Neu in der App!' : 'Tagebuch · Updates'}</span>
+          <button class="icon-btn" data-close aria-label="Schließen">✕</button>
+        </div>
+        <div class="diary-sheet" id="diary-sheet"></div>
+        <div class="diary-nav">
+          <button type="button" class="diary-btn" data-dir="1" aria-label="Ältere Version">◀ Älter</button>
+          <span class="diary-count" id="diary-count"></span>
+          <button type="button" class="diary-btn" data-dir="-1" aria-label="Neuere Version">Neuer ▶</button>
+        </div>
+      </div>`,
+      {
+        cls: 'diary-modal',
+        onMount: (modal, close) => {
+          const sheet = $('#diary-sheet', modal);
+          const show = () => {
+            sheet.innerHTML = diaryPageHtml(CHANGELOG[i]);
+            sheet.classList.remove('flip'); void sheet.offsetWidth; sheet.classList.add('flip');
+            $('#diary-count', modal).textContent = `${i + 1} / ${CHANGELOG.length}`;
+            modal.querySelector('[data-dir="1"]').disabled = i >= CHANGELOG.length - 1;
+            modal.querySelector('[data-dir="-1"]').disabled = i <= 0;
+          };
+          modal.querySelectorAll('[data-dir]').forEach((b) => b.addEventListener('click', () => {
+            i = Math.min(CHANGELOG.length - 1, Math.max(0, i + Number(b.dataset.dir)));
+            show();
+          }));
+          let sx = null;
+          sheet.addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; }, { passive: true });
+          sheet.addEventListener('touchend', (e) => {
+            if (sx == null) return;
+            const dx = e.changedTouches[0].clientX - sx; sx = null;
+            if (Math.abs(dx) > 50) { i = Math.min(CHANGELOG.length - 1, Math.max(0, i + (dx < 0 ? 1 : -1))); show(); }
+          });
+          show();
+          new MutationObserver((_, obs) => { if (!modal.isConnected) { obs.disconnect(); resolve(); } })
+            .observe($('#modal-root'), { childList: true });
+        },
+      }
+    );
+  });
+}
+
+/** Beim Start: neue Version einmalig im Tagebuch zeigen */
+async function showWhatsNew() {
+  const seen = lsGet('familie.seenVersion', null);
+  if (seen === APP_VERSION) return false;
+  lsSet('familie.seenVersion', APP_VERSION);
+  await openDiary(0, { welcome: true });
+  return true;
+}
+
+/* -------------------------------------------------------------------------
  * Rendering & Navigation
  * ---------------------------------------------------------------------- */
 
@@ -4547,16 +4783,18 @@ async function startApp() {
   startRealtime();
   syncPushSubscription();
   if (!state.me.gender) openEditProfile();
-  else if (!lsGet('familie.introSeen', false)) {
+  else setTimeout(async () => {
+    await showWhatsNew();
+    if (lsGet('familie.introSeen', false)) return;
     lsSet('familie.introSeen', true);
-    setTimeout(() => dsSay('', { speaker: 'Prof. Familie', pages: [
+    dsSay('', { speaker: 'Prof. Familie', pages: [
       `Hallo ${state.me.firstName}! Willkommen in der Welt der Familie!`,
       'Auf START siehst du alles, was heute, morgen und diese Woche ansteht – Meldungen, Infos und Termine.',
       'Mit dem ＋ unten rechts legst du eine Info, eine Meldung oder einen Termin an.',
       'Über den X-Knopf erreichst du Team, Notizen, Kalender und das gefürchtete Board der Schande.',
       'Siehst du ein ?, tippe darauf – dann erkläre ich dir, was es damit auf sich hat. Viel Spaß!',
-    ] }), 600);
-  }
+    ] });
+  }, 600);
 }
 
 async function init() {

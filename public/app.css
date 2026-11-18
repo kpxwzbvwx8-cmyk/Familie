@@ -1674,3 +1674,55 @@ body.nav-tabs .punish-field { bottom: calc(var(--tabbar-h) + env(safe-area-inset
 .mini-hol.k-legal { }
 .mini-hol.k-regional { color: color-mix(in srgb, var(--hol) 55%, var(--muted)); background: transparent; border-style: dotted; }
 .mini-hol.k-church, .mini-hol.k-custom { color: var(--muted); background: transparent; border-color: var(--border); }
+
+/* =========================================================================
+ * Tagebuch (Platin-Reisetagebuch) – blau für ihn, rosa für sie
+ * ======================================================================= */
+.modal.diary-modal { padding: 0; background: transparent; box-shadow: none; overflow: visible; }
+.diary {
+  --paper: #dcefff; --line: #a8d2f2; --ink: #3a3f4a; --frame: #5aa0dc; --deco: rgba(120, 190, 240, .35); --head: #2f6fb0;
+  border-radius: 14px; overflow: hidden; background: var(--frame); padding: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.25);
+}
+.diary-pink { --paper: #fde6ee; --line: #f2bccd; --ink: #4a3a40; --frame: #e48aa8; --deco: rgba(240, 160, 190, .35); --head: #c0517a; }
+.diary-top { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 8px 10px; color: #fff; }
+.diary-label { font-size: 1.05rem; text-shadow: 1px 1px 0 rgba(0,0,0,.25); letter-spacing: .03em; }
+.diary-top .icon-btn { background: rgba(255,255,255,.85); }
+.diary-sheet {
+  position: relative; overflow: hidden; border-radius: 6px; min-height: 380px; color: var(--ink);
+  background: var(--paper); border: 2px solid rgba(0,0,0,.08);
+}
+/* große, blasse Formen wie auf dem Spielpapier */
+.diary-sheet::before, .diary-sheet::after { content: ""; position: absolute; pointer-events: none; }
+.diary-sheet::before { right: -40px; bottom: -40px; width: 170px; height: 170px; border-radius: 50%; border: 22px solid var(--deco); }
+.diary-sheet::after { right: 70px; bottom: 30px; width: 46px; height: 46px; transform: rotate(45deg); background: var(--deco); border-radius: 6px; }
+.diary-blue .diary-sheet::before { border-radius: 26px; transform: rotate(-28deg); right: -30px; bottom: -60px; width: 120px; height: 220px; border: 0; background: var(--deco); }
+.diary-page { position: relative; z-index: 1; padding: 6px 12px 10px; }
+.diary-page.flip, .diary-sheet.flip .diary-page { animation: diary-flip .25s ease-out; }
+@keyframes diary-flip { from { opacity: 0; transform: translateX(14px); } }
+.diary-line { min-height: 30px; line-height: 30px; padding-left: 14px; border-bottom: 2px solid var(--line); font-size: 1.05rem; overflow-wrap: anywhere; }
+.diary-head { display: flex; gap: 14px; padding-left: 2px; border-bottom-color: var(--head); font-size: 1.1rem; }
+.diary-ver { margin-left: auto; color: var(--head); }
+.diary-title { padding-left: 2px; color: var(--head); font-size: 1.15rem; }
+.diary-intro { margin: 0; padding: 4px 2px 4px 14px; line-height: 30px; font-size: 1.02rem;
+  background: repeating-linear-gradient(transparent 0 28px, var(--line) 28px 30px); }
+.diary-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 4px 4px; }
+.diary-btn { border: 2px solid rgba(255,255,255,.85); background: rgba(255,255,255,.25); color: #fff; border-radius: 10px; padding: 8px 12px; font: inherit; cursor: pointer; text-shadow: 1px 1px 0 rgba(0,0,0,.25); min-height: 40px; }
+.diary-btn:disabled { opacity: .35; cursor: default; }
+.diary-count { color: #fff; text-shadow: 1px 1px 0 rgba(0,0,0,.25); }
+
+/* Feiertags-Erklärung in der Tagesansicht */
+.day-hol-info { grid-column: 2; margin: 4px 0 0; font-size: .9rem; line-height: 1.45; color: var(--text); opacity: .85; }
+.mini-hol { cursor: pointer; }
+
+/* Board: Einbrennen wartet, bis die Ankündigung bestätigt ist */
+.board.burn-paused .tally path.burn,
+.board.burn-paused .tally .embers path,
+.board.burn-paused .tally .scorch path.burn-scorch,
+.board.burn-paused .burn-plus,
+.board.burn-paused .pins.has-burn::after,
+.board.burn-paused .pin-col.burning .polaroid { animation-play-state: paused; }
+.modal.diary-modal { max-height: none; overflow: visible; }
+.diary { display: flex; flex-direction: column; max-height: calc(100dvh - env(safe-area-inset-top) - 40px); }
+.diary-sheet { flex: 1 1 auto; overflow: hidden; min-height: 240px; display: flex; flex-direction: column; }
+.diary-sheet .diary-page { flex: 1 1 auto; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.diary-nav { flex: none; padding-bottom: calc(4px + env(safe-area-inset-bottom)); }
