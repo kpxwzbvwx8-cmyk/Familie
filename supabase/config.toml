@@ -362,3 +362,7 @@ verify_jwt = true
 [functions.ics]
 # Wird als normaler Link geöffnet (ohne Authorization-Header); der Token kommt als ?t=… und wird in der Funktion geprüft.
 verify_jwt = false
+
+[functions.tick]
+# Wird von pg_cron ohne Anmeldung aufgerufen; geschützt durch ein Geheimnis in app_secrets.
+verify_jwt = false

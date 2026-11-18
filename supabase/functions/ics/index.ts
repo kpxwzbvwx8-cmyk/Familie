@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
   if (!msg) return new Response('Nachricht nicht gefunden', { status: 404, headers: cors });
 
   const start = msg.event_at ?? msg.created_at;
-  const end = new Date(Date.parse(start) + 60 * 60 * 1000);
+  const end = msg.end_at ? new Date(msg.end_at) : new Date(Date.parse(start) + 60 * 60 * 1000);
   const author = msg.author ? `${msg.author.first_name} ${msg.author.last_name}` : 'Unbekannt';
   const desc = [msg.description, `Dringlichkeit: ${URGENCY_LABELS[msg.urgency] ?? msg.urgency}`, `Von: ${author}`]
     .filter(Boolean)

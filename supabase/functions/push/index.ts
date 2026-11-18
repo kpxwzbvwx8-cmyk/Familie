@@ -1,24 +1,9 @@
-// Web-Push: liefert den öffentlichen VAPID-Schlüssel und verschickt Benachrichtigungen
-// über neue Nachrichten im Austausch an alle anderen Familienmitglieder.
-import * as webpush from 'jsr:@negrel/webpush@0.5.0';
+// Web-Push für den Austausch:
+//  key    – öffentlicher VAPID-Schlüssel (und Einrichtung des Minuten-Takts)
+//  notify – neue Meldung an alle anderen
+//  done   – Meldung als erledigt markieren (bzw. löschen) und den Urheber benachrichtigen
 import { admin, bearer, cors, json, memberFromToken, URGENCY_LABELS } from '../_shared/common.ts';
-
-let cachedKeys: CryptoKeyPair | null = null;
-
-async function getVapidKeys(): Promise<CryptoKeyPair> {
-  if (cachedKeys) return cachedKeys;
-  const read = async () => (await admin.from('app_secrets').select('value').eq('key', 'vapid').maybeSingle()).data;
-  let row = await read();
-  if (!row) {
-    // Beim allerersten Aufruf werden die Schlüssel erzeugt und gespeichert.
-    const keys = await webpush.generateVapidKeys({ extractable: true });
-    const exported = await webpush.exportVapidKeys(keys);
-    await admin.from('app_secrets').insert({ key: 'vapid', value: exported });
-    row = await read(); // falls parallel jemand anderes schneller war
-  }
-  cachedKeys = await webpush.importVapidKeys(row!.value as webpush.ExportedVapidKeys, { extractable: false });
-  return cachedKeys;
-}
+import { ensureTickConfig, publicKey, sendPush } from '../_shared/webpush.ts';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
@@ -26,57 +11,51 @@ Deno.serve(async (req) => {
   try {
     const me = await memberFromToken(bearer(req));
     if (!me) return json({ error: 'Nicht angemeldet' }, 401);
-
     const body = await req.json().catch(() => ({}));
-    const vapidKeys = await getVapidKeys();
+    const origin = req.headers.get('Origin');
+    await ensureTickConfig().catch((e) => console.warn('tick-Konfiguration', e));
+    const meName = `${me.first_name} ${me.last_name}`;
 
     if (body.action === 'key') {
-      return json({ publicKey: await webpush.exportApplicationServerKey(vapidKeys) });
+      return json({ publicKey: await publicKey() });
     }
 
     if (body.action === 'notify') {
-      const { data: msg } = await admin
-        .from('messages')
-        .select('*')
-        .eq('id', body.messageId)
-        .eq('author_id', me.id)
-        .maybeSingle();
+      const { data: msg } = await admin.from('messages').select('*')
+        .eq('id', body.messageId).eq('author_id', me.id).maybeSingle();
       if (!msg) return json({ error: 'Nachricht nicht gefunden' }, 404);
-
-      const { data: subs } = await admin.from('push_subscriptions').select('*').neq('user_id', me.id);
-      const origin = req.headers.get('Origin');
-      const appServer = await webpush.ApplicationServer.new({
-        contactInformation: origin && origin.startsWith('https://') ? origin : 'mailto:familie@users.noreply.github.com',
-        vapidKeys,
-      });
-
-      const payload = JSON.stringify({
+      const result = await sendPush({
         title: `${URGENCY_LABELS[msg.urgency] ?? msg.urgency}: ${msg.title}`,
-        body: `${me.first_name} ${me.last_name}${msg.description ? ' – ' + msg.description.slice(0, 140) : ''}`,
+        body: `${meName}${msg.description ? ' – ' + msg.description.slice(0, 140) : ''}`,
         tag: msg.id,
-        url: `?tab=austausch&msg=${msg.id}`,
+        url: `?tab=start&msg=${msg.id}`,
         urgency: msg.urgency,
-      });
+      }, { exceptUser: me.id, high: msg.urgency === 'dringend', contact: origin });
+      return json(result);
+    }
 
-      let sent = 0;
-      const gone: string[] = [];
-      await Promise.all(
-        (subs ?? []).map(async (s) => {
-          try {
-            await appServer.subscribe(s.subscription).pushTextMessage(payload, {
-              urgency: msg.urgency === 'dringend' ? webpush.Urgency.High : webpush.Urgency.Normal,
-              ttl: 60 * 60 * 24,
-            });
-            sent++;
-          } catch (err) {
-            const status = err instanceof webpush.PushMessageError ? err.response.status : 0;
-            if (status === 404 || status === 410) gone.push(s.endpoint);
-            else console.warn('Push fehlgeschlagen', status, String(err));
-          }
-        }),
-      );
-      if (gone.length) await admin.from('push_subscriptions').delete().in('endpoint', gone);
-      return json({ sent, removed: gone.length });
+    if (body.action === 'done') {
+      const { data: msg } = await admin.from('messages').select('*').eq('id', body.messageId).maybeSingle();
+      if (!msg) return json({ error: 'Meldung nicht gefunden' }, 404);
+      if (msg.author_id === me.id) return json({ error: 'Der Urheber kann die eigene Meldung nicht als erledigt markieren' }, 400);
+      if (!msg.needs_ack && !msg.delete_on_done) return json({ error: 'Für diese Meldung ist keine Rückmeldung vorgesehen' }, 400);
+      if (msg.done_by) return json({ error: 'Schon erledigt' }, 409);
+
+      if (msg.delete_on_done) {
+        await admin.from('messages').delete().eq('id', msg.id);
+      } else {
+        await admin.from('messages').update({ done_by: me.id, done_at: new Date().toISOString() }).eq('id', msg.id);
+      }
+      await sendPush({
+        title: msg.delete_on_done ? `Geschlossen: ${msg.title}` : `Erledigt: ${msg.title}`,
+        body: msg.delete_on_done
+          ? `${meName} hat die Meldung erledigt – sie wurde gelöscht.`
+          : `${meName} hat die Meldung als erledigt markiert.`,
+        tag: `done-${msg.id}`,
+        url: `?tab=start&msg=${msg.id}`,
+        urgency: 'info',
+      }, { toUsers: [msg.author_id], contact: origin });
+      return json({ ok: true, deleted: msg.delete_on_done });
     }
 
     return json({ error: 'Unbekannte Aktion' }, 400);

@@ -23,6 +23,7 @@ const state = {
   familyCode: null,
   tab: 'start',
   highlight: null,
+  expanded: new Set(),
 };
 
 const TABS = {
@@ -135,8 +136,14 @@ function mapMessage(r) {
     title: r.title,
     description: r.description || '',
     eventAt: r.event_at,
+    endAt: r.end_at || null,
     deleteAt: r.delete_at,
     createdAt: r.created_at,
+    remindAtStart: Boolean(r.remind_at_start),
+    needsAck: Boolean(r.needs_ack),
+    deleteOnDone: Boolean(r.delete_on_done),
+    doneBy: r.done_by || null,
+    doneAt: r.done_at || null,
   };
 }
 
@@ -715,27 +722,115 @@ function icsUrl(m) {
   return `${CFG.supabaseUrl}/functions/v1/ics?id=${encodeURIComponent(m.id)}&t=${encodeURIComponent(token)}`;
 }
 
+const HELP = {
+  notify: 'Wenn die Glocke an ist, bekommen alle anderen beim Absenden sofort eine Benachrichtigung. '
+    + 'Ist sie aus, wird beim Absenden niemand benachrichtigt – spätere Benachrichtigungen (Erinnerung zum Beginn, Rückmeldungen) kommen trotzdem.',
+  remind: 'Wenn die Glocke an ist, bekommen alle zum Beginn des Ereignisses eine Benachrichtigung – das Handy vibriert bzw. klingelt (je nach Einstellungen des Handys). '
+    + 'Das funktioniert auch, wenn die App geschlossen ist.',
+  ack: 'Die anderen sehen in der aufgeklappten Meldung den Knopf „Erledigt“. Tippt jemand darauf, bekommst du eine Benachrichtigung. '
+    + 'Die Meldung bleibt stehen (mit Haken) – löschen kannst danach nur du.',
+  doneDelete: 'Die anderen können die Meldung in der aufgeklappten Ansicht als erledigt markieren. '
+    + 'Sie wird dann für alle gelöscht und du bekommst eine Benachrichtigung, dass sie geschlossen wurde.',
+};
+
+function helpBtn(key) {
+  return `<button type="button" class="help-btn" data-help="${key}" aria-label="Erklärung">?</button>`;
+}
+
+function bellToggle(name, checked, label) {
+  return `<label class="bell-toggle" title="${esc(label)}">
+    <input type="checkbox" name="${name}"${checked ? ' checked' : ''} aria-label="${esc(label)}">
+    <span class="bell-on" aria-hidden="true">🔔</span><span class="bell-off" aria-hidden="true">🔕</span>
+  </label>`;
+}
+
+function switchToggle(name, checked = false) {
+  return `<label class="switch"><input type="checkbox" role="switch" name="${name}"${checked ? ' checked' : ''}><span aria-hidden="true"></span></label>`;
+}
+
+function showHelp(key) {
+  openModal(
+    `<div class="modal-head"><h2>Erklärung</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+     <p class="help-text">${esc(HELP[key] || '')}</p>
+     <div class="modal-actions"><button class="btn primary" data-close>Verstanden</button></div>`
+  );
+}
+
+function formatTimeOnly(iso) {
+  return new Date(iso).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatRange(start, end) {
+  if (!start) return '';
+  if (!end) return formatDateTime(start);
+  const a = new Date(start); const b = new Date(end);
+  const sameDay = a.toDateString() === b.toDateString();
+  return sameDay ? `${formatDateTime(start)} – ${formatTimeOnly(end)}` : `${formatDateTime(start)} – ${formatDateTime(end)}`;
+}
+
 function messageHtml(m) {
   const mine = state.me && m.authorId === state.me.id;
   const author = userById(m.authorId);
+  const doneBy = m.doneBy ? userById(m.doneBy) : null;
+  const expanded = state.expanded.has(m.id);
+  const canMarkDone = !mine && (m.needsAck || m.deleteOnDone) && !m.doneBy;
+  const portrait = author && PORTRAITS[author.gender]
+    ? `<img class="msg-portrait" src="${PORTRAITS[author.gender]}" alt="${esc(fullName(author))}">` : '';
   return `
-  <article class="msg u-${esc(m.urgency)}${state.highlight === m.id ? ' flash' : ''}${author && PORTRAITS[author.gender] ? ' has-portrait' : ''}" id="msg-${esc(m.id)}">
+  <article class="msg u-${esc(m.urgency)}${expanded ? ' expanded' : ''}${m.doneBy ? ' is-done' : ''}${state.highlight === m.id ? ' flash' : ''}"
+    id="msg-${esc(m.id)}" data-msg="${esc(m.id)}" tabindex="0" aria-expanded="${expanded}">
+    <div class="msg-side">
+      <div class="msg-urg">${ballSvg(urgencyInfo(m.urgency).ball, 26)}<span class="badge">${esc(urgencyLabel(m.urgency))}</span></div>
+      ${portrait}
+    </div>
     <div class="msg-body">
-    <div class="msg-head">${ballSvg(urgencyInfo(m.urgency).ball, 26)}<span class="badge">${esc(urgencyLabel(m.urgency))}</span></div>
-    <h3>${esc(m.title)}</h3>
-    ${m.description ? `<p class="desc">${esc(m.description)}</p>` : ''}
-    <div class="msg-meta">
-      <span class="author"><span class="dot" style="--c:${esc(author ? author.color : '#888888')}"></span>${esc(author ? fullName(author) : 'Unbekannt')} · <span data-rel="${esc(m.createdAt)}">${esc(relative(m.createdAt))}</span></span>
-      ${m.eventAt ? `<span>🕒 Zeitpunkt: ${esc(formatDateTime(m.eventAt))}</span>` : ''}
-      ${m.deleteAt ? `<span>🗑️ Löscht sich <span data-rel="${esc(m.deleteAt)}">${esc(relative(m.deleteAt))}</span> (${esc(formatDateTime(m.deleteAt))})</span>` : ''}
+      <h3>${esc(m.title)}</h3>
+      ${m.description ? `<p class="desc">${esc(m.description)}</p>` : ''}
+      <div class="msg-meta">
+        <span class="author"><span class="dot" style="--c:${esc(author ? author.color : '#888888')}"></span>${esc(author ? fullName(author) : 'Unbekannt')} · <span data-rel="${esc(m.createdAt)}">${esc(relative(m.createdAt))}</span></span>
+        ${m.eventAt ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt))}${m.remindAtStart ? ' <span title="Erinnerung zum Beginn">🔔</span>' : ''}</span>` : ''}
+        ${m.doneBy ? `<span class="done-line">✓ Erledigt von ${esc(doneBy ? doneBy.firstName : 'jemandem')}</span>` : ''}
+        ${!m.doneBy && m.needsAck ? '<span class="flag">✉️ Rückmeldung erbeten</span>' : ''}
+        ${!m.doneBy && m.deleteOnDone ? '<span class="flag">🧹 Wird gelöscht, wenn erledigt</span>' : ''}
+        ${m.deleteAt ? `<span class="more">🗑️ Löscht sich <span data-rel="${esc(m.deleteAt)}">${esc(relative(m.deleteAt))}</span> (${esc(formatDateTime(m.deleteAt))})</span>` : ''}
+      </div>
+      <div class="msg-actions">
+        ${canMarkDone ? `<button class="btn small primary" data-done="${esc(m.id)}">✓ Erledigt</button>` : ''}
+        <a class="btn small" href="${esc(icsUrl(m))}" target="_blank" rel="noopener" title="In Kalender übernehmen">📅 In Kalender</a>
+        ${mine ? `<button class="btn small danger" data-delete="${esc(m.id)}">Löschen</button>` : ''}
+      </div>
+      <span class="msg-chevron" aria-hidden="true">▾</span>
     </div>
-    <div class="msg-actions">
-      <a class="btn small" href="${esc(icsUrl(m))}" target="_blank" rel="noopener" title="In Kalender übernehmen">📅 In Kalender</a>
-      ${mine ? `<button class="btn small danger" data-delete="${esc(m.id)}">Löschen</button>` : ''}
-    </div>
-    </div>
-    ${author && PORTRAITS[author.gender] ? `<img class="msg-portrait" src="${PORTRAITS[author.gender]}" alt="${esc(fullName(author))}">` : ''}
   </article>`;
+}
+
+function toggleMessage(el) {
+  const id = el.dataset.msg;
+  const open = !state.expanded.has(id);
+  if (open) state.expanded.add(id); else state.expanded.delete(id);
+  el.classList.toggle('expanded', open);
+  el.setAttribute('aria-expanded', String(open));
+}
+
+async function markDone(id, btn) {
+  btn.disabled = true;
+  try {
+    const r = await sb.functions.invoke('push', { body: { action: 'done', messageId: id } });
+    if (r.error) {
+      let msg = 'Das hat nicht geklappt.';
+      try { msg = (await r.error.context.json()).error || msg; } catch { /* egal */ }
+      throw new Error(msg);
+    }
+    if (r.data && r.data.deleted) { removeMessage(id); toast('Erledigt – die Meldung wurde geschlossen ✓'); }
+    else {
+      const m = state.messages.find((x) => x.id === id);
+      if (m) { m.doneBy = state.me.id; m.doneAt = new Date().toISOString(); render(); }
+      toast('Als erledigt markiert ✓');
+    }
+  } catch (e) {
+    toast(e.message);
+    btn.disabled = false;
+  }
 }
 
 function renderAustausch(view) {
@@ -755,6 +850,17 @@ function renderAustausch(view) {
   const pushBtn = $('#enable-push', view);
   if (pushBtn) pushBtn.addEventListener('click', enablePush);
 
+  view.querySelectorAll('[data-msg]').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('a, button')) return;
+      toggleMessage(el);
+    });
+    el.addEventListener('keydown', (e) => {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); toggleMessage(el); }
+    });
+  });
+  view.querySelectorAll('[data-done]').forEach((b) => b.addEventListener('click', () => markDone(b.dataset.done, b)));
+
   view.querySelectorAll('[data-delete]').forEach((b) =>
     b.addEventListener('click', async () => {
       if (!confirm('Nachricht wirklich löschen?')) return;
@@ -769,6 +875,7 @@ function renderAustausch(view) {
 
   if (state.highlight) {
     const el = document.getElementById(`msg-${state.highlight}`);
+    if (el && !el.classList.contains('expanded')) toggleMessage(el);
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     state.highlight = null;
   }
@@ -777,13 +884,12 @@ function renderAustausch(view) {
 function openNewMessage() {
   const now = new Date();
   const presets = [
-    { label: 'Nie', fn: () => '' },
     { label: 'In 1 Stunde', fn: () => toLocalInput(new Date(Date.now() + 3600e3)) },
     { label: 'Heute Abend', fn: () => { const d = new Date(); d.setHours(23, 59, 0, 0); return toLocalInput(d); } },
     { label: 'Morgen', fn: () => toLocalInput(new Date(Date.now() + 86400e3)) },
     { label: 'In 1 Woche', fn: () => toLocalInput(new Date(Date.now() + 7 * 86400e3)) },
-    { label: 'Nach Zeitpunkt', fn: (form) => {
-      const v = form.elements.eventAt.value;
+    { label: 'Nach Ereignis', fn: (form) => {
+      const v = form.elements.endAt.value || form.elements.eventAt.value;
       if (!v) return null;
       return toLocalInput(new Date(new Date(v).getTime() + 3600e3));
     } },
@@ -793,7 +899,7 @@ function openNewMessage() {
     `<div class="modal-head"><h2>Neue Nachricht</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
      <form class="form" id="msg-form" novalidate>
        <fieldset class="field">
-         <legend>Dringlichkeit</legend>
+         <div class="field-head"><legend>Dringlichkeit</legend>${bellToggle('notify', true, 'Beim Absenden benachrichtigen')}${helpBtn('notify')}</div>
          <div class="segmented">
            ${URGENCIES.map((u) => `<label class="u-${u.key}" style="--u:var(--u-${u.key})" title="${u.ballName}"><input type="radio" name="urgency" value="${u.key}"${u.key === 'normal' ? ' checked' : ''}><span>${ballSvg(u.ball, 28)}<em>${u.label}</em></span></label>`).join('')}
          </div>
@@ -801,13 +907,21 @@ function openNewMessage() {
        <label class="field"><span>Titel</span><input name="title" required maxlength="120" placeholder="Worum geht's?"></label>
        <label class="field"><span>Beschreibung</span><textarea name="description" maxlength="4000" placeholder="Details …"></textarea></label>
        <label class="field"><span>Urheber</span><input value="${esc(fullName(state.me))}" readonly></label>
-       <label class="field"><span>Zeitpunkt</span><input name="eventAt" type="datetime-local" value="${toLocalInput(now)}"></label>
        <div class="field">
-         <span>Automatisch löschen am</span>
-         <input name="deleteAt" type="datetime-local" min="${toLocalInput(now)}">
-         <div class="chips">${presets.map((p, i) => `<button type="button" class="chip${i === 0 ? ' active' : ''}" data-preset="${i}">${p.label}</button>`).join('')}</div>
+         <div class="field-head"><span>Zeitpunkt</span>${bellToggle('remind', false, 'Beim Beginn des Ereignisses vibrieren')}${helpBtn('remind')}</div>
+         <div class="range">
+           <label><span class="mini">von</span><input name="eventAt" type="datetime-local" value="${toLocalInput(now)}"></label>
+           <label><span class="mini">bis (optional – für Zeiträume)</span><input name="endAt" type="datetime-local"></label>
+         </div>
+       </div>
+       <div class="toggle-row"><span>Automatisch löschen?</span>${switchToggle('autoDelete')}</div>
+       <div class="field" id="auto-delete-box" hidden>
+         <input name="deleteAt" type="datetime-local" min="${toLocalInput(now)}" aria-label="Automatisch löschen am">
+         <div class="chips">${presets.map((p, i) => `<button type="button" class="chip" data-preset="${i}">${p.label}</button>`).join('')}</div>
          <p class="hint">Die Nachricht verschwindet zu diesem Zeitpunkt für alle.</p>
        </div>
+       <div class="toggle-row"><span>Rückmeldung?</span>${helpBtn('ack')}${switchToggle('needsAck')}</div>
+       <div class="toggle-row"><span>Löschen, wenn erledigt?</span>${helpBtn('doneDelete')}${switchToggle('deleteOnDone')}</div>
        <p class="error" id="msg-error"></p>
        <div class="modal-actions">
          <button type="button" class="btn" data-close>Abbrechen</button>
@@ -820,6 +934,8 @@ function openNewMessage() {
         const chips = [...form.querySelectorAll('.chip')];
         const setActive = (i) => chips.forEach((c, j) => c.classList.toggle('active', j === i));
         form.addEventListener('click', (e) => {
+          const help = e.target.closest('[data-help]');
+          if (help) { e.preventDefault(); showHelp(help.dataset.help); return; }
           const chip = e.target.closest('[data-preset]');
           if (!chip) return;
           const i = Number(chip.dataset.preset);
@@ -828,7 +944,13 @@ function openNewMessage() {
           form.elements.deleteAt.value = v;
           setActive(i);
         });
-        form.elements.deleteAt.addEventListener('input', () => setActive(form.elements.deleteAt.value ? -1 : 0));
+        form.elements.deleteAt.addEventListener('input', () => setActive(-1));
+        form.elements.autoDelete.addEventListener('change', () => {
+          $('#auto-delete-box', modal).hidden = !form.elements.autoDelete.checked;
+          if (form.elements.autoDelete.checked && !form.elements.deleteAt.value) {
+            form.elements.deleteAt.value = presets[2].fn(form); setActive(2);
+          }
+        });
         if (!isIos) form.elements.title.focus();
         form.addEventListener('submit', async (e) => {
           e.preventDefault();
@@ -836,9 +958,16 @@ function openNewMessage() {
           const err = $('#msg-error', modal);
           const toIso = (v) => (v ? new Date(v).toISOString() : null);
           const title = f.get('title').trim();
-          const deleteAt = toIso(f.get('deleteAt'));
+          const eventAt = toIso(f.get('eventAt'));
+          const endAt = toIso(f.get('endAt'));
+          const deleteAt = form.elements.autoDelete.checked ? toIso(f.get('deleteAt')) : null;
+          const remind = form.elements.remind.checked;
           err.textContent = '';
           if (!title) { err.textContent = 'Bitte einen Titel angeben.'; return; }
+          if (endAt && !eventAt) { err.textContent = 'Für einen Zeitraum bitte auch den Beginn angeben.'; return; }
+          if (endAt && Date.parse(endAt) < Date.parse(eventAt)) { err.textContent = 'Das Ende liegt vor dem Beginn.'; return; }
+          if (remind && !eventAt) { err.textContent = 'Für die Erinnerung bitte einen Zeitpunkt angeben.'; return; }
+          if (form.elements.autoDelete.checked && !deleteAt) { err.textContent = 'Bitte ein Löschdatum wählen.'; return; }
           if (deleteAt && Date.parse(deleteAt) <= Date.now()) { err.textContent = 'Das Löschdatum muss in der Zukunft liegen.'; return; }
           const btn = form.querySelector('[type=submit]');
           btn.disabled = true;
@@ -847,13 +976,19 @@ function openNewMessage() {
               urgency: f.get('urgency'),
               title,
               description: f.get('description').trim(),
-              event_at: toIso(f.get('eventAt')),
+              event_at: eventAt,
+              end_at: endAt,
               delete_at: deleteAt,
+              remind_at_start: remind,
+              needs_ack: form.elements.needsAck.checked,
+              delete_on_done: form.elements.deleteOnDone.checked,
             }).select().single());
             upsertMessage(mapMessage(row));
             close();
-            sb.functions.invoke('push', { body: { action: 'notify', messageId: row.id } })
-              .then((r) => r.error && console.warn('Benachrichtigung fehlgeschlagen', r.error));
+            if (form.elements.notify.checked) {
+              sb.functions.invoke('push', { body: { action: 'notify', messageId: row.id } })
+                .then((r) => r.error && console.warn('Benachrichtigung fehlgeschlagen', r.error));
+            }
             if (pushSupported && Notification.permission === 'default') enablePush();
           } catch (ex) {
             err.textContent = ex.message;
@@ -1285,6 +1420,15 @@ function startRealtime() {
           state.highlight = m.id;
           setTab('start');
         });
+      }
+    })
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, ({ new: row }) => {
+      const before = state.messages.find((x) => x.id === row.id);
+      const m = mapMessage(row);
+      upsertMessage(m);
+      if (before && !before.doneBy && m.doneBy && state.me && m.authorId === state.me.id) {
+        const who = userById(m.doneBy);
+        toast(`✓ ${who ? who.firstName : 'Jemand'} hat „${m.title}“ erledigt`);
       }
     })
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, ({ old }) => removeMessage(old.id))
