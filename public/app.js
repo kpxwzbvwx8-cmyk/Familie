@@ -738,7 +738,7 @@ function icsUrl(m) {
 }
 
 const HELP = {
-  strike: 'Wird die Meldung bis zur Deadline nicht erfüllt, droht ein Strich auf dem Board der Schande. Die Androhung steht gut sichtbar in der Meldung – die automatische Vergabe der Striche folgt in einem späteren Update.',
+  strike: 'Wird die Meldung bis zur Deadline nicht erfüllt, droht ein Strich auf dem Board der Schande. Eine Meldung mit Androhung ist automatisch dringend. Die Androhung steht gut sichtbar in der Meldung – die automatische Vergabe der Striche folgt in einem späteren Update.',
   autoDelete: 'Die Meldung verschwindet zum eingestellten Zeitpunkt automatisch für alle – praktisch für Dinge, die sich danach erledigt haben.',
   event: 'Für Termine mit Dauer: Zusätzlich zum Start gibst du das Ende des Zeitraums an (von Minuten bis Jahren). Der Zeitraum wird auch so in den Kalender übernommen.',
   deadline: 'Bis wann etwas erledigt sein muss. Die Deadline steht gut sichtbar in der Meldung.',
@@ -1283,6 +1283,16 @@ function openNewMessage() {
               form.elements[field].value = toLocalInput(new Date(base.getTime() + 3600e3));
             }
           }));
+        // Strich androhen macht die Meldung automatisch dringend
+        const forceUrgent = () => {
+          if (form.elements.hasDeadline.checked && form.elements.threatStrike.checked) {
+            const r = form.querySelector('input[name=urgency][value=dringend]');
+            if (!r.checked) { r.checked = true; toast('😈 Mit Strich-Androhung ist die Meldung automatisch dringend.'); }
+          }
+        };
+        form.elements.threatStrike.addEventListener('change', forceUrgent);
+        form.elements.hasDeadline.addEventListener('change', forceUrgent);
+        form.querySelectorAll('input[name=urgency]').forEach((r) => r.addEventListener('change', () => setTimeout(forceUrgent, 0)));
         const exclusive = ['autoDelete', 'needsAck', 'deleteOnDone'];
         const syncBoxes = () => {
           $('#auto-delete-box', modal).hidden = !form.elements.autoDelete.checked;
@@ -1344,7 +1354,7 @@ function openNewMessage() {
           btn.disabled = true;
           try {
             const row = must(await sb.from('messages').insert({
-              urgency: f.get('urgency'),
+              urgency: form.elements.hasDeadline.checked && form.elements.threatStrike.checked ? 'dringend' : f.get('urgency'),
               title,
               description: f.get('description').trim(),
               event_at: eventAt,
