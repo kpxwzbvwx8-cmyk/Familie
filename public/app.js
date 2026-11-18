@@ -1879,6 +1879,10 @@ function renderSettings(view) {
         <span class="row-btns"><button class="btn small" id="set-card">Ansehen</button><button class="btn small" id="set-profile">Bearbeiten</button></span>
       </div>` : ''}
       <div class="setting-row">
+        <div><b>HSV-Spiele im Kalender</b><p class="hint">${hsvEnabled() ? 'an' : 'aus'}</p></div>
+        <button class="btn small" id="set-hsv">${hsvEnabled() ? 'Ausblenden' : 'Einblenden'}</button>
+      </div>
+      <div class="setting-row">
         <div><b>App-Version</b><p class="hint">${esc(CFG.version || 'dev')}</p></div>
         <button class="btn small" id="set-update">Nach Updates suchen</button>
       </div>
@@ -1888,6 +1892,7 @@ function renderSettings(view) {
   const prof = $('#set-profile', view); if (prof) prof.addEventListener('click', openEditProfile);
   const card = $('#set-card', view); if (card) card.addEventListener('click', () => openTrainerCard(state.me));
   $('#set-update', view).addEventListener('click', checkForUpdate);
+  $('#set-hsv', view).addEventListener('click', () => { lsSet('familie.hsvOn', !hsvEnabled()); render(); });
   $('#set-nav', view).addEventListener('click', () => setNavMode(getNavMode() === 'tabs' ? 'x' : 'tabs'));
 }
 
@@ -2058,6 +2063,98 @@ function eventsOnDay(day) {
     .sort((a, b) => (b.allDay - a.allDay) || Date.parse(a.startAt) - Date.parse(b.startAt));
 }
 
+/* ---- Feiertage (bundesweit + Hamburg) -------------------------------- */
+
+function easterSunday(y) {
+  const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4;
+  const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31), day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(y, month - 1, day);
+}
+const holidayCache = new Map();
+function holidaysOf(y) {
+  if (holidayCache.has(y)) return holidayCache.get(y);
+  const e = easterSunday(y);
+  const list = [
+    [new Date(y, 0, 1), 'Neujahr', 'Neujahr', true],
+    [addDays(e, -2), 'Karfreitag', 'Karfreitag', true],
+    [e, 'Ostersonntag', 'Ostern', true],
+    [addDays(e, 1), 'Ostermontag', 'Ostermo.', true],
+    [new Date(y, 4, 1), 'Tag der Arbeit', '1. Mai', true],
+    [addDays(e, 39), 'Christi Himmelfahrt', 'Himmelf.', true],
+    [addDays(e, 49), 'Pfingstsonntag', 'Pfingsten', true],
+    [addDays(e, 50), 'Pfingstmontag', 'Pfingstmo.', true],
+    [new Date(y, 9, 3), 'Tag der Deutschen Einheit', 'Einheit', true],
+    [new Date(y, 9, 31), 'Reformationstag (Hamburg)', 'Reformation', true],
+    [new Date(y, 11, 24), 'Heiligabend', 'Heiligabend', false],
+    [new Date(y, 11, 25), '1. Weihnachtsfeiertag', '1. Weihn.', true],
+    [new Date(y, 11, 26), '2. Weihnachtsfeiertag', '2. Weihn.', true],
+    [new Date(y, 11, 31), 'Silvester', 'Silvester', false],
+  ];
+  const map = new Map(list.map(([d, name, short, legal]) => [d.getTime(), { name, short, legal }]));
+  holidayCache.set(y, map);
+  return map;
+}
+const holidayOn = (day) => holidaysOf(day.getFullYear()).get(day.getTime()) || null;
+
+/* ---- HSV-Spielplan ---------------------------------------------------- */
+
+const HSV_KEY = 'familie.hsv';
+const hsvEnabled = () => lsGet('familie.hsvOn', true) !== false;
+function loadHsv(force = false) {
+  const cached = lsGet(HSV_KEY, null);
+  if (cached && Array.isArray(cached.matches)) state.hsv = cached.matches;
+  if (!force && cached && Date.now() - cached.at < 3 * 3600e3) return Promise.resolve();
+  if (state.hsvLoading) return state.hsvLoading;
+  state.hsvLoading = sb.functions.invoke('hsv', { body: {} })
+    .then((r) => {
+      if (r.error || !r.data || !Array.isArray(r.data.matches)) return;
+      state.hsv = r.data.matches;
+      lsSet(HSV_KEY, { at: Date.now(), matches: state.hsv });
+      if (state.tab === 'kalender') render();
+    })
+    .catch(() => {})
+    .finally(() => { state.hsvLoading = null; });
+  return state.hsvLoading;
+}
+function hsvOnDay(day) {
+  if (!hsvEnabled() || !state.hsv) return [];
+  const t = day.getTime();
+  return state.hsv.filter((m) => startOfDay(new Date(m.kickoff)).getTime() === t);
+}
+const hsvOpponent = (m) => (m.isHome ? m.away : m.home);
+const hsvTitle = (m) => `${m.home} – ${m.away}`;
+function hsvShort(name) {
+  return String(name).replace(/^(1\. |FC |SV |VfL |VfB |TSG |SC |SG |SpVgg |FSV |Borussia |Eintracht |Hertha )/, '').replace(/ (FC|04|05|1846|1899|1900|1907|1910|09)$/, '').slice(0, 14);
+}
+
+function openHsvMatch(id) {
+  const m = (state.hsv || []).find((x) => String(x.id) === String(id));
+  if (!m) return;
+  const when = new Date(m.kickoff).toLocaleString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const crest = (url, name) => url ? `<img src="${esc(url)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : `<span class="hsv-crest-fallback">${esc(name.slice(0, 1))}</span>`;
+  openModal(
+    `<div class="hsv-detail">
+      <div class="hsv-head">
+        <span class="hsv-tag">⚽ ${esc(m.league)}${m.round ? ` · ${esc(m.round)}` : ''}</span>
+        <button class="icon-btn" data-close aria-label="Schließen">✕</button>
+      </div>
+      <div class="hsv-vs">
+        <div class="hsv-team">${crest(m.homeIcon, m.home)}<b>${esc(m.home)}</b></div>
+        <div class="hsv-score">${m.finished && m.result ? esc(m.result) : 'vs.'}</div>
+        <div class="hsv-team">${crest(m.awayIcon, m.away)}<b>${esc(m.away)}</b></div>
+      </div>
+      <div class="ev-rows">
+        <div class="ev-row"><span>🕒</span><b>${esc(when)} Uhr</b></div>
+        <div class="ev-row"><span>🏟️</span><b>${m.isHome ? 'Heimspiel' : 'Auswärtsspiel'}${m.stadium ? ` · ${esc(m.stadium)}` : ''}${m.city ? `, ${esc(m.city)}` : ''}</b></div>
+        ${m.finished ? '' : '<p class="hint">Anstoßzeiten können sich ändern, bis die Spiele endgültig terminiert sind – der Kalender aktualisiert sich automatisch.</p>'}
+      </div>
+    </div>`,
+    { cls: 'hsv-modal' }
+  );
+}
+
 /* ---- Monatsraster ---------------------------------------------------- */
 
 function calState() {
@@ -2092,6 +2189,9 @@ function weekHtml(weekStart, month, today) {
     if (sameDay(day, today)) cls.push('today');
     if (state.calDay && sameDay(day, state.calDay)) cls.push('selected');
     if (i >= 5) cls.push('weekend');
+    const hol = holidayOn(day);
+    if (hol) cls.push(hol.legal ? 'holiday' : 'holiday-soft');
+    const games = hsvOnDay(day);
     const here = evs.filter((ev) => { const p = laneOf.get(ev); return p.s <= i && p.e >= i; });
     let bars = '';
     for (let l = 0; l < MAX; l++) {
@@ -2105,10 +2205,11 @@ function weekHtml(weekStart, month, today) {
         ? `<span class="cal-bar-label" style="--span:${span}">${eventHeads(ev, 'bar-head')}<span>${esc(ev.title)}</span></span>` : ''}</span>`;
     }
     const more = here.filter((ev) => laneOf.get(ev).l >= MAX).length;
-    html += `<button type="button" class="${cls.join(' ')}" data-day="${day.getTime()}" aria-label="${esc(day.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' }))}${here.length ? `, ${here.length} Termin${here.length === 1 ? '' : 'e'}` : ''}">
-      <span class="cal-num">${day.getDate()}</span>
+    html += `<button type="button" class="${cls.join(' ')}" data-day="${day.getTime()}" aria-label="${esc(day.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' }))}${hol ? `, ${esc(hol.name)}` : ''}${games.length ? ', HSV-Spiel' : ''}${here.length ? `, ${here.length} Termin${here.length === 1 ? '' : 'e'}` : ''}">
+      <span class="cal-num">${day.getDate()}${hol ? `<em class="cal-hol">${esc(hol.short)}</em>` : ''}</span>
       <span class="cal-bars">${bars}</span>
       ${more ? `<span class="cal-more">+${more}</span>` : ''}
+      ${games.map((g) => `<span class="cal-hsv${g.isHome ? ' home' : ''}">⚽ ${esc(formatTimeOnly(g.kickoff))}</span>`).join('')}
     </button>`;
   }
   return html;
@@ -2117,10 +2218,18 @@ function weekHtml(weekStart, month, today) {
 function dayPanelHtml() {
   const day = state.calDay;
   const list = eventsOnDay(day);
+  const hol = holidayOn(day);
+  const games = hsvOnDay(day);
   const label = day.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   return `<section class="cal-info">
     <div class="cal-info-head"><span class="cal-info-tag">INFO</span><span>${esc(label)}</span></div>
     <div class="cal-info-body">
+      ${hol ? `<div class="day-hol${hol.legal ? '' : ' soft'}">🎉 <b>${esc(hol.name)}</b><small>${hol.legal ? 'Gesetzlicher Feiertag' : 'Kein gesetzlicher Feiertag'}</small></div>` : ''}
+      ${games.map((g) => `<button type="button" class="day-hsv${g.isHome ? ' home' : ''}" data-hsv="${esc(g.id)}">
+        <span class="day-hsv-ball">⚽</span>
+        <span class="day-ev-time">${esc(formatTimeOnly(g.kickoff))}</span>
+        <span class="day-ev-main"><b>${esc(hsvTitle(g))}</b><small>${esc(g.league)}${g.round ? ` · ${esc(g.round)}` : ''} · ${g.isHome ? 'Heimspiel' : 'Auswärts'}${g.finished && g.result ? ` · ${esc(g.result)}` : ''}</small></span>
+      </button>`).join('')}
       ${list.length ? list.map((ev) => {
         const inv = myInvite(ev);
         return `<button type="button" class="day-ev" data-event="${esc(ev.id)}" style="--c:${eventColor(ev)}">
@@ -2129,7 +2238,7 @@ function dayPanelHtml() {
           <span class="day-ev-main"><b>${esc(ev.title)}</b>${ev.location ? `<small>📍 ${esc(ev.location)}</small>` : ''}</span>
           ${inv && inv.status === 'pending' ? '<span class="day-ev-badge">Einladung</span>' : ''}
         </button>`;
-      }).join('') : '<p class="cal-empty">Keine Termine an diesem Tag.</p>'}
+      }).join('') : (games.length ? '' : '<p class="cal-empty">Keine Termine an diesem Tag.</p>')}
       <button type="button" class="cal-add" id="cal-add">＋ Termin am ${esc(day.toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' }))}</button>
     </div>
   </section>`;
@@ -2143,6 +2252,7 @@ function renderCalendar(view) {
     return;
   }
   calState();
+  if (hsvEnabled() && !state.hsvRequested) { state.hsvRequested = true; loadHsv(); }
   const m = state.calMonth;
   const today = startOfDay(new Date());
   const first = new Date(m.getFullYear(), m.getMonth(), 1);
@@ -2162,7 +2272,7 @@ function renderCalendar(view) {
       <div class="cal-week">${WEEKDAYS.map((d, i) => `<span${i >= 5 ? ' class="weekend"' : ''}>${d}</span>`).join('')}</div>
       <div class="cal-grid" id="cal-grid">${grid}</div>
       <div class="cal-foot">
-        <span class="cal-legend">${['m', 'w', 'both'].map((g) => `<span style="--c:${GENDER_COLORS[g]}">${g === 'both' ? `<img src="${CAL_HEADS.m}" alt=""><img src="${CAL_HEADS.w}" alt="">` : `<img src="${CAL_HEADS[g]}" alt="">`}${GENDER_NAMES[g]}</span>`).join('')}</span>
+        <span class="cal-legend">${['m', 'w', 'both'].map((g) => `<span style="--c:${GENDER_COLORS[g]}">${g === 'both' ? `<img src="${CAL_HEADS.m}" alt=""><img src="${CAL_HEADS.w}" alt="">` : `<img src="${CAL_HEADS[g]}" alt="">`}${GENDER_NAMES[g]}</span>`).join('')}${hsvEnabled() ? '<span class="leg-hsv">⚽ HSV</span>' : ''}<span class="leg-hol">Feiertag</span></span>
         <button type="button" class="cal-today" id="cal-today">Heute</button>
       </div>
     </div>
@@ -2185,6 +2295,7 @@ function renderCalendar(view) {
   }));
   $('#cal-add', view).addEventListener('click', () => openEventForm({ day: state.calDay }));
   view.querySelectorAll('[data-event]').forEach((b) => b.addEventListener('click', () => openEventDetail(b.dataset.event)));
+  view.querySelectorAll('[data-hsv]').forEach((b) => b.addEventListener('click', () => openHsvMatch(b.dataset.hsv)));
   // Wischen wechselt den Monat
   const grid2 = $('#cal-grid', view);
   let sx = null, sy = null;

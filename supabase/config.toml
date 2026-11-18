@@ -366,3 +366,7 @@ verify_jwt = false
 [functions.tick]
 # Wird von pg_cron ohne Anmeldung aufgerufen; geschützt durch ein Geheimnis in app_secrets.
 verify_jwt = false
+
+[functions.hsv]
+# HSV-Spielplan (öffentliche Daten von OpenLigaDB, zwischengespeichert); nur für angemeldete Mitglieder.
+verify_jwt = true

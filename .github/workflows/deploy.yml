@@ -47,7 +47,7 @@ jobs:
       - name: Datenbank aktualisieren
         run: npx supabase db push --password "$SUPABASE_DB_PASSWORD" --include-all
       - name: Edge Functions veröffentlichen
-        run: npx supabase functions deploy push ics tick --project-ref "$PROJECT_REF" --use-api
+        run: npx supabase functions deploy push ics tick hsv --project-ref "$PROJECT_REF" --use-api
 
   pages:
     name: Web-App veröffentlichen
