@@ -8,6 +8,7 @@
 //  strike  – Board der Schande: Urteil, Einspruch, Entscheidung, Anerkennung
 //  board   – Board der Schande: neuer Grund zur Beglaubigung, Bezahlung bestätigt
 //  note    – Notizen: Beteiligte über eine Änderung benachrichtigen
+//  event / eventResponse / eventComment – Kalender: Einladung & Änderung, Zu-/Absage, Kommentar
 import { admin, bearer, cors, json, memberFromToken, URGENCY_LABELS } from '../_shared/common.ts';
 import { ensureTickConfig, publicKey, sendPush } from '../_shared/webpush.ts';
 
@@ -214,6 +215,61 @@ Deno.serve(async (req) => {
         tag: `note-${note.id}`,
         url: `?tab=notizen&note=${note.id}`,
         urgency: 'info',
+      }, { toUsers: recipients, contact: origin });
+      return json(r);
+    }
+
+    if (body.action === 'event') {
+      // Ersteller hat einen Termin gespeichert: neue Einladungen verschicken, Zugesagte über Änderungen informieren
+      const { data: ev } = await admin.from('events').select('*').eq('id', body.eventId).eq('owner_id', me.id).maybeSingle();
+      if (!ev) return json({ error: 'Termin nicht gefunden' }, 404);
+      const { data: inv } = await admin.from('event_invites').select('user_id, status').eq('event_id', ev.id);
+      const fresh: string[] = (body.invited ?? []).filter((id: string) => (inv ?? []).some((i) => i.user_id === id && i.status === 'pending'));
+      const when = ev.all_day
+        ? new Date(ev.start_at).toLocaleDateString('de-DE', { timeZone: 'Europe/Berlin', weekday: 'short', day: '2-digit', month: '2-digit' }) + ' (ganztägig)'
+        : new Date(ev.start_at).toLocaleString('de-DE', { timeZone: 'Europe/Berlin', weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+      let sent = 0;
+      if (fresh.length) {
+        sent += (await sendPush({
+          title: `📨 Einladung: ${ev.title}`, body: `${meName} lädt dich ein – ${when}. Zusagen oder absagen?`,
+          tag: `event-${ev.id}`, url: `?tab=start&event=${ev.id}`, urgency: 'wichtig',
+        }, { toUsers: fresh, high: true, contact: origin })).sent;
+      }
+      if (body.changed) {
+        const acc = (inv ?? []).filter((i) => i.status === 'accepted').map((i) => i.user_id).filter((id) => !fresh.includes(id));
+        if (acc.length) sent += (await sendPush({
+          title: `📅 Geändert: ${ev.title}`, body: `${meName} hat den Termin geändert – ${when}.`,
+          tag: `event-${ev.id}`, url: `?tab=kalender&event=${ev.id}`, urgency: 'info',
+        }, { toUsers: acc, contact: origin })).sent;
+      }
+      return json({ sent });
+    }
+
+    if (body.action === 'eventResponse') {
+      const { data: inv } = await admin.from('event_invites').select('status').eq('event_id', body.eventId).eq('user_id', me.id).maybeSingle();
+      const { data: ev } = await admin.from('events').select('id, title, owner_id').eq('id', body.eventId).maybeSingle();
+      if (!inv || !ev) return json({ error: 'Einladung nicht gefunden' }, 404);
+      const r = await sendPush({
+        title: inv.status === 'accepted' ? `✅ Zugesagt: ${ev.title}` : `❌ Abgesagt: ${ev.title}`,
+        body: `${meName} hat ${inv.status === 'accepted' ? 'zugesagt' : 'abgesagt'}.`,
+        tag: `event-${ev.id}`, url: `?tab=kalender&event=${ev.id}`, urgency: 'info',
+      }, { toUsers: [ev.owner_id], contact: origin });
+      return json(r);
+    }
+
+    if (body.action === 'eventComment') {
+      const { data: c } = await admin.from('event_comments').select('*').eq('id', body.commentId).eq('author_id', me.id).maybeSingle();
+      if (!c) return json({ error: 'Kommentar nicht gefunden' }, 404);
+      const { data: ev } = await admin.from('events').select('id, title, owner_id').eq('id', c.event_id).maybeSingle();
+      if (!ev) return json({ error: 'Termin nicht gefunden' }, 404);
+      const { data: inv } = await admin.from('event_invites').select('user_id').eq('event_id', ev.id).neq('status', 'declined');
+      const { data: others } = await admin.from('event_comments').select('author_id').eq('event_id', ev.id);
+      const recipients = [...new Set([ev.owner_id, ...(inv ?? []).map((i) => i.user_id), ...(others ?? []).map((o) => o.author_id)])]
+        .filter((id) => id !== me.id);
+      if (!recipients.length) return json({ sent: 0 });
+      const r = await sendPush({
+        title: `💬 ${ev.title}`, body: `${me.first_name}: ${c.body.slice(0, 140)}`,
+        tag: `event-${ev.id}`, url: `?tab=kalender&event=${ev.id}`, urgency: 'info',
       }, { toUsers: recipients, contact: origin });
       return json(r);
     }

@@ -27,6 +27,9 @@ const state = {
   responses: new Map(), // messageId -> [{ userId, option, createdAt }]
   comments: new Map(),  // messageId -> [{ id, authorId, body, createdAt }]
   notes: [],            // Notizen (eigene + gemeinsame)
+  events: [],           // Kalendertermine
+  invites: [],          // Einladungen zu Terminen
+  eventComments: [],    // Kommentare zu Terminen
   strikes: [],          // Board der Schande: alle Striche (neueste zuerst)
   rules: [],            // Strafkatalog inkl. Vorschläge
   fines: [],            // Strafen (10 € je 10 Striche)
@@ -861,7 +864,7 @@ function messageHtml(m) {
       </div>
       <div class="msg-actions">
         ${canMarkDone ? `<button class="btn small primary" data-done="${esc(m.id)}">✓ Erledigt</button>` : ''}
-        ${isCalSubscribed() ? '' : `<a class="btn small" href="${esc(icsUrl(m))}" target="_blank" rel="noopener" title="In Kalender übernehmen">📅 In Kalender</a>`}
+        <a class="btn small" href="${esc(icsUrl(m))}" target="_blank" rel="noopener" title="In Kalender übernehmen">📅 In Kalender</a>
         ${mine ? `<button class="btn small danger" data-delete="${esc(m.id)}">Löschen</button>` : ''}
       </div>
       ${m.needsAck ? `<div class="msg-replies msg-extra">
@@ -1221,28 +1224,35 @@ function renderAustausch(view) {
     ? `<div class="notify-banner"><p>🔔 Benachrichtigungen aktivieren, damit du neue Nachrichten sofort mitbekommst.</p><button class="btn primary small" id="enable-push">Aktivieren</button></div>`
     : '');
   const visible = state.messages.filter((m) => !m.deleteAt || Date.parse(m.deleteAt) > Date.now());
+  const evItems = state.events.map((ev) => ({ ev, sec: eventSection(ev) })).filter((x) => x.sec);
   let list;
-  if (!visible.length) {
+  if (!visible.length && !evItems.length) {
     list = `<div class="empty"><div class="big">💬</div><h2>Noch nichts im Austausch</h2><p>Tippe auf <b>+</b>, um eine Nachricht an alle zu schicken.</p></div>`;
   } else {
     const groups = Object.fromEntries(SECTIONS.map((sec) => [sec.key, []]));
-    for (const m of visible) groups[sectionOf(m)].push(m);
+    for (const m of visible) groups[sectionOf(m)].push({ m });
+    for (const x of evItems) groups[x.sec].push({ ev: x.ev });
     if (state.highlight) { const hm = visible.find((m) => m.id === state.highlight); if (hm) prefs.sections[sectionOf(hm)] = true; }
+    // Termine stehen zwischen „dringend“ und „wichtig“, untereinander nach Beginn
+    const rank = (x) => (x.ev ? 0.5 : (URGENCY_RANK[x.m.urgency] ?? 2));
+    const time = (x) => Date.parse(x.ev ? x.ev.startAt : (x.m.eventAt || x.m.createdAt));
+    const cmp = (a, b) => (a.ev || b.ev ? rank(a) - rank(b) || time(a) - time(b) : compareMessages(a.m, b.m));
     list = SECTIONS.filter((sec) => groups[sec.key].length).map((sec) => {
-      const items = groups[sec.key].sort(compareMessages);
+      const items = groups[sec.key].sort(cmp);
       const open = sectionOpen(sec);
-      const unread = items.reduce((n, m) => n + unreadComments(m), 0);
+      const unread = items.reduce((n, x) => n + (x.m ? unreadComments(x.m) : 0), 0);
       return `<section class="msg-section${open ? ' open' : ''}" data-section="${sec.key}">
         <button type="button" class="section-head" aria-expanded="${open}">
           <span class="section-title">${sec.label}</span>
           <span class="section-count">${items.length}</span>${unread ? '<span class="section-dot" title="Neue Kommentare"></span>' : ''}
           <span class="section-chevron" aria-hidden="true">▾</span>
         </button>
-        <div class="msg-list">${open ? items.map(messageHtml).join('') : ''}</div>
+        <div class="msg-list">${open ? items.map((x) => (x.ev ? eventCardHtml(x.ev) : messageHtml(x.m))).join('') : ''}</div>
       </section>`;
     }).join('');
   }
-  view.innerHTML = banner + list;
+  view.innerHTML = banner + invitationCardsHtml() + list;
+  bindEventCards(view);
   view.querySelectorAll('.section-head').forEach((h) => h.addEventListener('click', () => {
     const key = h.closest('[data-section]').dataset.section;
     const sec = SECTIONS.find((x) => x.key === key);
@@ -1837,10 +1847,6 @@ function renderSettings(view) {
         <span class="row-btns"><button class="btn small" id="set-card">Ansehen</button><button class="btn small" id="set-profile">Bearbeiten</button></span>
       </div>` : ''}
       <div class="setting-row">
-        <div><b>Apple-Kalender</b><p class="hint">${isCalSubscribed() ? 'abonniert' : 'nicht abonniert'}</p></div>
-        <button class="btn small" id="set-cal">${isCalSubscribed() ? 'Verwalten' : 'Abonnieren'}</button>
-      </div>
-      <div class="setting-row">
         <div><b>App-Version</b><p class="hint">${esc(CFG.version || 'dev')}</p></div>
         <button class="btn small" id="set-update">Nach Updates suchen</button>
       </div>
@@ -1850,7 +1856,6 @@ function renderSettings(view) {
   const prof = $('#set-profile', view); if (prof) prof.addEventListener('click', openEditProfile);
   const card = $('#set-card', view); if (card) card.addEventListener('click', () => openTrainerCard(state.me));
   $('#set-update', view).addEventListener('click', checkForUpdate);
-  $('#set-cal', view).addEventListener('click', () => setTab('kalender'));
   $('#set-nav', view).addEventListener('click', () => setNavMode(getNavMode() === 'tabs' ? 'x' : 'tabs'));
 }
 
@@ -1920,128 +1925,645 @@ function renderPlaceholder(view, icon, title, text) {
 }
 
 /* -------------------------------------------------------------------------
- * Kalender: Abo für den Apple-Kalender + Terminübersicht
+ * Kalender (Pokédex-Stil)
+ *  – Monatsraster, Tag antippen → Tagesübersicht, nochmal tippen → neuer Termin
+ *  – Termine: Titel, Ort, ganztägig / Zeitpunkt / Zeitraum (auch mehrtägig),
+ *    Beschreibung, Hinweise (wie Apple + benutzerdefiniert), Einladungen
+ *  – Farbe + Sprite zeigen, für wen der Termin gilt: Er / Sie / beide
  * ---------------------------------------------------------------------- */
 
-const CAL_SUB_KEY = 'familie.calSubscribed';
-const isCalSubscribed = () => lsGet(CAL_SUB_KEY, false) === true;
+const CAL_SPRITES = { m: asset('img/cal-m.png'), w: asset('img/cal-w.png') };
+const CAL_HEADS = { m: asset('img/cal-m-head.png'), w: asset('img/cal-w-head.png') };
+const GENDER_COLORS = { m: '#3b78d8', w: '#e0568c', both: '#8a5bd6' };
+const GENDER_NAMES = { m: 'Er', w: 'Sie', both: 'Beide' };
+const WEEKDAYS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
 
-async function calendarFeedUrl(reset = false) {
-  if (!reset && state.calFeedToken) return feedUrls(state.calFeedToken);
-  state.calFeedToken = must(await sb.rpc('calendar_feed_token', { p_reset: reset }));
-  return feedUrls(state.calFeedToken);
-}
-function feedUrls(token) {
-  const https = `${CFG.supabaseUrl}/functions/v1/ics?feed=${encodeURIComponent(token)}`;
-  return { https, webcal: https.replace(/^https?:/, 'webcal:') };
+const REMINDERS_TIMED = [
+  ['none', 'Ohne'], ['o:0', 'Zum Zeitpunkt des Ereignisses'], ['o:5', '5 Minuten vorher'], ['o:10', '10 Minuten vorher'],
+  ['o:15', '15 Minuten vorher'], ['o:30', '30 Minuten vorher'], ['o:60', '1 Stunde vorher'], ['o:120', '2 Stunden vorher'],
+  ['o:1440', '1 Tag vorher'], ['o:2880', '2 Tage vorher'], ['o:10080', '1 Woche vorher'], ['custom', 'Benutzerdefiniert …'],
+];
+const REMINDERS_ALLDAY = [
+  ['none', 'Ohne'], ['d:0', 'Am Tag des Ereignisses (9:00)'], ['d:1', '1 Tag vorher (9:00)'], ['d:2', '2 Tage vorher (9:00)'],
+  ['d:7', '1 Woche vorher (9:00)'], ['custom', 'Benutzerdefiniert …'],
+];
+const specToValue = (r) => (r.k === 'offset' ? `o:${r.m}` : r.k === 'day' ? `d:${r.d}` : 'custom');
+function reminderLabel(r, allDay) {
+  if (r.k === 'custom') return `Am ${formatDateTime(r.at)} Uhr`;
+  const v = specToValue(r);
+  const hit = (allDay ? REMINDERS_ALLDAY : REMINDERS_TIMED).find(([k]) => k === v)
+    || REMINDERS_TIMED.find(([k]) => k === v) || REMINDERS_ALLDAY.find(([k]) => k === v);
+  return hit ? hit[1] : '';
 }
 
-/** Ende eines Termins wie im Kalender: Ende des Zeitraums, sonst Deadline, sonst 1 Stunde */
-function eventEnd(m) {
-  const e = m.endAt || m.deadlineAt;
-  return e && Date.parse(e) > Date.parse(m.eventAt) ? Date.parse(e) : Date.parse(m.eventAt) + 3600e3;
-}
+/* ---- Daten ------------------------------------------------------------ */
 
-function agendaHtml() {
-  const now = Date.now();
-  const list = state.messages
-    .filter((m) => m.eventAt && (!m.deleteAt || Date.parse(m.deleteAt) > now) && eventEnd(m) >= startOfDay(new Date()).getTime())
-    .sort((a, b) => Date.parse(a.eventAt) - Date.parse(b.eventAt))
-    .slice(0, 60);
-  if (!list.length) return '<p class="hint">Keine anstehenden Termine.</p>';
-  const days = new Map();
-  for (const m of list) {
-    const d = new Date(Math.max(Date.parse(m.eventAt), startOfDay(new Date()).getTime()));
-    const key = startOfDay(d).getTime();
-    if (!days.has(key)) days.set(key, []);
-    days.get(key).push(m);
-  }
-  const today = startOfDay(new Date()).getTime();
-  const dayLabel = (t) => {
-    const diff = Math.round((t - today) / 86400e3);
-    const base = new Date(t).toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
-    return diff === 0 ? `Heute · ${base}` : diff === 1 ? `Morgen · ${base}` : base;
+function mapEvent(r) {
+  return {
+    id: r.id, ownerId: r.owner_id, title: r.title, location: r.location || '', description: r.description || '',
+    allDay: Boolean(r.all_day), startAt: r.start_at, endAt: r.end_at,
+    reminders: Array.isArray(r.reminders) ? r.reminders : [], createdAt: r.created_at, updatedAt: r.updated_at,
   };
-  return [...days].map(([t, items]) => `<section class="agenda-day">
-    <h3>${esc(dayLabel(t))}</h3>
-    ${items.map((m) => {
-      const running = Date.parse(m.eventAt) < t;
-      const sd = new Date(m.eventAt), ed = new Date(eventEnd(m));
-      const allDay = sd.getHours() === 0 && sd.getMinutes() === 0 && ed.getHours() === 23 && ed.getMinutes() === 59;
-      return `<button type="button" class="agenda-item u-${esc(m.urgency)}" data-open-msg="${esc(m.id)}">
-        <span class="agenda-time">${allDay ? 'ganztags' : running ? 'läuft' : esc(formatTimeOnly(m.eventAt))}</span>
-        <span class="agenda-main"><b>${m.deadlineAt && !m.endAt ? '⏳ ' : ''}${esc(m.title)}</b>
-          <small>${esc(formatRange(m.eventAt, new Date(eventEnd(m)).toISOString()))}</small></span>
-        ${ballSvg(urgencyInfo(m.urgency).ball, 20)}
-      </button>`;
-    }).join('')}
-  </section>`).join('');
+}
+async function loadEvents() {
+  const [ev, inv, com] = await Promise.all([
+    sb.from('events').select('*').order('start_at', { ascending: true }),
+    sb.from('event_invites').select('*'),
+    sb.from('event_comments').select('*').order('created_at', { ascending: true }),
+  ]);
+  state.events = must(ev).map(mapEvent);
+  state.invites = must(inv).map((r) => ({ eventId: r.event_id, userId: r.user_id, status: r.status, respondedAt: r.responded_at }));
+  state.eventComments = must(com).map((r) => ({ id: r.id, eventId: r.event_id, authorId: r.author_id, body: r.body, createdAt: r.created_at }));
+  state.eventsLoaded = true;
+}
+const invitesOf = (ev) => state.invites.filter((i) => i.eventId === ev.id);
+const myInvite = (ev) => state.me && state.invites.find((i) => i.eventId === ev.id && i.userId === state.me.id);
+/** Für wen gilt der Termin? Ersteller + alle, die zugesagt haben */
+function eventPeople(ev) {
+  const ids = [ev.ownerId, ...invitesOf(ev).filter((i) => i.status === 'accepted').map((i) => i.userId)];
+  return [...new Set(ids)].map(userById).filter(Boolean);
+}
+function eventGenders(ev) {
+  const g = new Set(eventPeople(ev).map((u) => u.gender));
+  return ['m', 'w'].filter((x) => g.has(x));
+}
+function eventColor(ev) {
+  const g = eventGenders(ev);
+  return GENDER_COLORS[g.length > 1 ? 'both' : g[0] || 'both'];
+}
+const eventHeads = (ev, cls = 'ev-head') => eventGenders(ev).map((g) => `<img class="${cls}" src="${CAL_HEADS[g]}" alt="">`).join('');
+const eventSprites = (ev) => eventGenders(ev).map((g) => `<img class="ev-sprite" src="${CAL_SPRITES[g]}" alt="">`).join('');
+
+/** Ende für die Tagesberechnung (ein Termin bis 0:00 zählt nicht mehr zum Folgetag) */
+const evStartDay = (ev) => startOfDay(new Date(ev.startAt));
+const evEndDay = (ev) => {
+  const e = Date.parse(ev.endAt);
+  return startOfDay(new Date(e > Date.parse(ev.startAt) ? e - 1000 : e));
+};
+const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+const sameDay = (a, b) => a.getTime() === b.getTime();
+
+function eventTimeText(ev, short = false) {
+  const s = new Date(ev.startAt), e = new Date(ev.endAt);
+  const sd = evStartDay(ev), ed = evEndDay(ev);
+  const dateFmt = (d) => d.toLocaleDateString('de-DE', short ? { day: 'numeric', month: 'numeric' } : { weekday: 'short', day: 'numeric', month: 'numeric' });
+  if (ev.allDay) return sameDay(sd, ed) ? `${dateFmt(sd)} · ganztägig` : `${dateFmt(sd)} – ${dateFmt(ed)} · ganztägig`;
+  if (s.getTime() === e.getTime()) return `${dateFmt(s)}, ${formatTimeOnly(ev.startAt)}`;
+  if (sameDay(sd, ed)) return `${dateFmt(s)}, ${formatTimeOnly(ev.startAt)} – ${formatTimeOnly(ev.endAt)}`;
+  return `${dateFmt(s)}, ${formatTimeOnly(ev.startAt)} – ${dateFmt(e)}, ${formatTimeOnly(ev.endAt)}`;
+}
+/** Uhrzeit-Anzeige an einem bestimmten Tag */
+function eventTimeOnDay(ev, day) {
+  if (ev.allDay) return 'ganztags';
+  const sd = evStartDay(ev), ed = evEndDay(ev);
+  if (!sameDay(sd, day) && !sameDay(ed, day)) return 'ganztags';
+  if (!sameDay(sd, day)) return `bis ${formatTimeOnly(ev.endAt)}`;
+  return formatTimeOnly(ev.startAt);
+}
+function eventsOnDay(day) {
+  const t = day.getTime();
+  return state.events.filter((ev) => evStartDay(ev).getTime() <= t && evEndDay(ev).getTime() >= t)
+    .sort((a, b) => (b.allDay - a.allDay) || Date.parse(a.startAt) - Date.parse(b.startAt));
+}
+
+/* ---- Monatsraster ---------------------------------------------------- */
+
+function calState() {
+  if (!state.calMonth) {
+    const t = startOfDay(new Date());
+    state.calMonth = new Date(t.getFullYear(), t.getMonth(), 1);
+    state.calDay = t;
+  }
+}
+
+function weekHtml(weekStart, month, today) {
+  const weekEnd = addDays(weekStart, 6);
+  const evs = state.events.filter((ev) => evStartDay(ev) <= weekEnd && evEndDay(ev) >= weekStart)
+    .sort((a, b) => evStartDay(a) - evStartDay(b) || (evEndDay(b) - evStartDay(b)) - (evEndDay(a) - evStartDay(a)) || Date.parse(a.startAt) - Date.parse(b.startAt));
+  // Spuren vergeben, damit mehrtägige Termine durchgehend in einer Zeile liegen
+  const lanes = [];
+  const laneOf = new Map();
+  for (const ev of evs) {
+    const s = Math.max(0, Math.round((evStartDay(ev) - weekStart) / 86400e3));
+    const e = Math.min(6, Math.round((evEndDay(ev) - weekStart) / 86400e3));
+    let l = lanes.findIndex((last) => last < s);
+    if (l < 0) { l = lanes.length; lanes.push(-1); }
+    lanes[l] = e;
+    laneOf.set(ev, { l, s, e });
+  }
+  const MAX = 3;
+  let html = '';
+  for (let i = 0; i < 7; i++) {
+    const day = addDays(weekStart, i);
+    const cls = ['cal-cell'];
+    if (day.getMonth() !== month) cls.push('other');
+    if (sameDay(day, today)) cls.push('today');
+    if (state.calDay && sameDay(day, state.calDay)) cls.push('selected');
+    if (i >= 5) cls.push('weekend');
+    const here = evs.filter((ev) => { const p = laneOf.get(ev); return p.s <= i && p.e >= i; });
+    let bars = '';
+    for (let l = 0; l < MAX; l++) {
+      const ev = here.find((x) => laneOf.get(x).l === l);
+      if (!ev) { bars += '<span class="cal-bar no-ev"></span>'; continue; }
+      const p = laneOf.get(ev);
+      const realStart = sameDay(evStartDay(ev), day), realEnd = sameDay(evEndDay(ev), day);
+      const label = realStart || i === 0;
+      const span = p.e - i + 1;
+      bars += `<span class="cal-bar${realStart ? ' b-start' : ''}${realEnd ? ' b-end' : ''}" style="--c:${eventColor(ev)}">${label
+        ? `<span class="cal-bar-label" style="--span:${span}">${eventHeads(ev, 'bar-head')}<span>${esc(ev.title)}</span></span>` : ''}</span>`;
+    }
+    const more = here.filter((ev) => laneOf.get(ev).l >= MAX).length;
+    html += `<button type="button" class="${cls.join(' ')}" data-day="${day.getTime()}" aria-label="${esc(day.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' }))}${here.length ? `, ${here.length} Termin${here.length === 1 ? '' : 'e'}` : ''}">
+      <span class="cal-num">${day.getDate()}</span>
+      <span class="cal-bars">${bars}</span>
+      ${more ? `<span class="cal-more">+${more}</span>` : ''}
+    </button>`;
+  }
+  return html;
+}
+
+function dayPanelHtml() {
+  const day = state.calDay;
+  const list = eventsOnDay(day);
+  const label = day.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  return `<section class="cal-info">
+    <div class="cal-info-head"><span class="cal-info-tag">INFO</span><span>${esc(label)}</span></div>
+    <div class="cal-info-body">
+      ${list.length ? list.map((ev) => {
+        const inv = myInvite(ev);
+        return `<button type="button" class="day-ev" data-event="${esc(ev.id)}" style="--c:${eventColor(ev)}">
+          <span class="day-ev-heads">${eventHeads(ev)}</span>
+          <span class="day-ev-time">${esc(eventTimeOnDay(ev, day))}</span>
+          <span class="day-ev-main"><b>${esc(ev.title)}</b>${ev.location ? `<small>📍 ${esc(ev.location)}</small>` : ''}</span>
+          ${inv && inv.status === 'pending' ? '<span class="day-ev-badge">Einladung</span>' : ''}
+        </button>`;
+      }).join('') : '<p class="cal-empty">Keine Termine an diesem Tag.</p>'}
+      <button type="button" class="cal-add" id="cal-add">＋ Termin am ${esc(day.toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' }))}</button>
+    </div>
+  </section>`;
 }
 
 function renderCalendar(view) {
   if (!state.me) { view.innerHTML = ''; return; }
-  const subscribed = isCalSubscribed();
-  view.innerHTML = `<div class="calendar-page">
-    <section class="cal-sub${subscribed ? ' done' : ''}">
-      <div class="cal-sub-head"><img src="${asset('img/menu/cal.png')}" alt="" class="cal-icon"><div>
-        <h2>Apple-Kalender</h2>
-        <p class="hint">${subscribed
-          ? '✓ Abonniert – neue und geänderte Termine erscheinen automatisch in deinem Kalender „Familie“.'
-          : 'Einmal abonnieren – danach landen alle Termine, Ereignisse und Deadlines automatisch in deinem iPhone-Kalender.'}</p>
-      </div></div>
-      <div class="cal-sub-actions">
-        <button type="button" class="btn ${subscribed ? '' : 'primary'}" id="cal-subscribe">📅 ${subscribed ? 'Erneut abonnieren' : 'Im Kalender abonnieren'}</button>
-        <button type="button" class="btn" id="cal-copy">🔗 Link kopieren</button>
+  if (!state.eventsLoaded) {
+    view.innerHTML = '<div class="empty"><p>Kalender wird geladen …</p></div>';
+    loadEvents().then(render).catch((e) => toast(e.message));
+    return;
+  }
+  calState();
+  const m = state.calMonth;
+  const today = startOfDay(new Date());
+  const first = new Date(m.getFullYear(), m.getMonth(), 1);
+  const gridStart = addDays(first, -((first.getDay() + 6) % 7));
+  const last = new Date(m.getFullYear(), m.getMonth() + 1, 0);
+  const weeks = Math.ceil((((first.getDay() + 6) % 7) + last.getDate()) / 7);
+  let grid = '';
+  for (let w = 0; w < weeks; w++) grid += weekHtml(addDays(gridStart, w * 7), m.getMonth(), today);
+  const title = m.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
+  view.innerHTML = `<div class="cal-page">
+    <div class="cal-dex">
+      <div class="cal-head">
+        <button type="button" class="cal-nav" data-month="-1" aria-label="Vorheriger Monat">◀</button>
+        <h2 class="cal-title">${esc(title)}</h2>
+        <button type="button" class="cal-nav" data-month="1" aria-label="Nächster Monat">▶</button>
       </div>
-      <details class="cal-help">
-        <summary>So funktioniert's</summary>
-        <ol>
-          <li>Tippe auf <b>Im Kalender abonnieren</b> und bestätige mit <b>Abonnieren</b>.</li>
-          <li>Wähle bei <i>Account</i> am besten <b>iCloud</b> – dann ist der Kalender auch auf iPad/Mac da.</li>
-          <li>Unter <i>Automatisch aktualisieren</i> „Alle 15 Minuten“ wählen.</li>
-        </ol>
-        <p class="hint">Klappt der Knopf nicht: Link kopieren → Einstellungen → Apps → Kalender → Kalenderaccounts → Account hinzufügen → Andere → Kalenderabo hinzufügen → Link einfügen.</p>
-        <p class="hint">Das iPhone holt Änderungen selbst ab (je nach Einstellung alle 15 Minuten bis stündlich). Im Kalender sind die Termine nur lesbar – geändert wird hier in der App.</p>
-        <button type="button" class="btn small danger" id="cal-reset">Link erneuern (alter Link wird ungültig)</button>
-      </details>
-    </section>
-    <h2 class="section-title cal-agenda-title">Anstehende Termine</h2>
-    <div class="agenda">${agendaHtml()}</div>
+      <div class="cal-week">${WEEKDAYS.map((d, i) => `<span${i >= 5 ? ' class="weekend"' : ''}>${d}</span>`).join('')}</div>
+      <div class="cal-grid" id="cal-grid">${grid}</div>
+      <div class="cal-foot">
+        <span class="cal-legend">${['m', 'w', 'both'].map((g) => `<span style="--c:${GENDER_COLORS[g]}">${g === 'both' ? `<img src="${CAL_HEADS.m}" alt=""><img src="${CAL_HEADS.w}" alt="">` : `<img src="${CAL_HEADS[g]}" alt="">`}${GENDER_NAMES[g]}</span>`).join('')}</span>
+        <button type="button" class="cal-today" id="cal-today">Heute</button>
+      </div>
+    </div>
+    ${dayPanelHtml()}
   </div>`;
 
-  const sub = $('#cal-subscribe', view);
-  sub.addEventListener('click', async () => {
-    sub.disabled = true;
-    try {
-      const { webcal } = await calendarFeedUrl();
-      lsSet(CAL_SUB_KEY, true);
-      location.href = webcal;
-      setTimeout(render, 800);
-    } catch (e) { toast(e.message); }
-    sub.disabled = false;
+  view.querySelectorAll('[data-month]').forEach((b) => b.addEventListener('click', () => shiftMonth(Number(b.dataset.month))));
+  $('#cal-today', view).addEventListener('click', () => {
+    const t = startOfDay(new Date());
+    state.calMonth = new Date(t.getFullYear(), t.getMonth(), 1);
+    state.calDay = t;
+    render();
   });
-  $('#cal-copy', view).addEventListener('click', async () => {
-    try {
-      const { webcal } = await calendarFeedUrl();
-      await navigator.clipboard.writeText(webcal);
-      toast('🔗 Kalender-Link kopiert.');
-    } catch (e) {
-      try { const { webcal } = await calendarFeedUrl(); prompt('Kalender-Link:', webcal); } catch { toast(e.message); }
-    }
-  });
-  $('#cal-reset', view).addEventListener('click', async () => {
-    if (!confirm('Neuen Link erzeugen? Das bisherige Abo im Kalender bekommt dann keine Termine mehr und muss neu abonniert werden.')) return;
-    try {
-      await calendarFeedUrl(true);
-      lsSet(CAL_SUB_KEY, false);
-      toast('🔁 Neuer Link erzeugt – bitte neu abonnieren.');
-      render();
-    } catch (e) { toast(e.message); }
-  });
-  view.querySelectorAll('[data-open-msg]').forEach((b) => b.addEventListener('click', () => {
-    state.highlight = b.dataset.openMsg;
-    setTab('start');
+  view.querySelectorAll('[data-day]').forEach((b) => b.addEventListener('click', () => {
+    const d = new Date(Number(b.dataset.day));
+    if (state.calDay && sameDay(d, state.calDay)) { openEventForm({ day: d }); return; } // zweites Tippen → neuer Termin
+    state.calDay = d;
+    if (d.getMonth() !== state.calMonth.getMonth()) state.calMonth = new Date(d.getFullYear(), d.getMonth(), 1);
+    render();
   }));
+  $('#cal-add', view).addEventListener('click', () => openEventForm({ day: state.calDay }));
+  view.querySelectorAll('[data-event]').forEach((b) => b.addEventListener('click', () => openEventDetail(b.dataset.event)));
+  // Wischen wechselt den Monat
+  const grid2 = $('#cal-grid', view);
+  let sx = null, sy = null;
+  grid2.addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
+  grid2.addEventListener('touchend', (e) => {
+    if (sx == null) return;
+    const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
+    sx = null;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) shiftMonth(dx < 0 ? 1 : -1);
+  });
+}
+
+function shiftMonth(n) {
+  const m = state.calMonth;
+  state.calMonth = new Date(m.getFullYear(), m.getMonth() + n, 1);
+  const sel = state.calDay;
+  if (!sel || sel.getMonth() !== state.calMonth.getMonth() || sel.getFullYear() !== state.calMonth.getFullYear()) {
+    const t = startOfDay(new Date());
+    state.calDay = t.getMonth() === state.calMonth.getMonth() && t.getFullYear() === state.calMonth.getFullYear() ? t : state.calMonth;
+  }
+  render();
+}
+
+/* ---- Termin anlegen / bearbeiten ------------------------------------ */
+
+const toDateInput = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+function reminderRowHtml(allDay, spec = null) {
+  const opts = allDay ? REMINDERS_ALLDAY : REMINDERS_TIMED;
+  const v = spec ? specToValue(spec) : 'none';
+  return `<div class="rem-row">
+    <select class="rem-sel" aria-label="Hinweis">${opts.map(([k, l]) => `<option value="${k}"${k === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
+    <input type="datetime-local" class="rem-at dt"${spec && spec.k === 'custom' ? ` value="${toLocalInput(new Date(spec.at))}"` : ' hidden'} aria-label="Hinweis am">
+    <button type="button" class="rem-del" aria-label="Hinweis entfernen">✕</button>
+  </div>`;
+}
+
+function openEventForm({ day = null, event = null } = {}) {
+  const ev = event;
+  const base = day || startOfDay(new Date());
+  const now = new Date();
+  let start, end;
+  if (ev) { start = new Date(ev.startAt); end = new Date(ev.endAt); } else {
+    start = new Date(base.getFullYear(), base.getMonth(), base.getDate(), sameDay(base, startOfDay(now)) ? Math.min(now.getHours() + 1, 23) : 10, 0);
+    end = new Date(start.getTime() + 3600e3);
+  }
+  const allDay = ev ? ev.allDay : false;
+  const invited = ev ? invitesOf(ev).map((i) => i.userId) : [];
+  const others = state.users.filter((u) => u.id !== state.me.id);
+  const rems = ev && ev.reminders.length ? ev.reminders : [null];
+
+  openModal(
+    `<div class="modal-head ev-form-head"><h2>${ev ? 'Termin bearbeiten' : 'Neuer Termin'}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+     <form class="form" id="ev-form" novalidate>
+       <label class="field"><span>Titel</span><input name="title" maxlength="120" required placeholder="z. B. Zahnarzt" value="${esc(ev ? ev.title : '')}"></label>
+       <label class="field"><span>Ort</span><input name="location" maxlength="200" placeholder="optional" value="${esc(ev ? ev.location : '')}"></label>
+       <div class="toggle-row"><span>Ganztägig</span>${switchToggle('allDay', allDay)}</div>
+       <div class="ev-times">
+         <label class="field"><span>Beginn</span><input name="start" class="dt" type="${allDay ? 'date' : 'datetime-local'}" value="${allDay ? toDateInput(start) : toLocalInput(start)}"></label>
+         <label class="field"><span>Ende</span><input name="end" class="dt" type="${allDay ? 'date' : 'datetime-local'}" value="${allDay ? toDateInput(end) : toLocalInput(end)}"></label>
+       </div>
+       <label class="field"><span>Beschreibung</span><textarea name="description" maxlength="4000" placeholder="optional">${esc(ev ? ev.description : '')}</textarea></label>
+       ${others.length ? `<div class="field"><span>Einladen</span>
+         <div class="ev-invite">${others.map((u) => `<label class="ev-inv" style="--c:${GENDER_COLORS[u.gender] || GENDER_COLORS.both}">
+           <input type="checkbox" name="invite" value="${esc(u.id)}"${invited.includes(u.id) ? ' checked' : ''}>
+           <span>${u.gender && CAL_HEADS[u.gender] ? `<img src="${CAL_HEADS[u.gender]}" alt="">` : ''}${esc(u.firstName)}</span></label>`).join('')}</div>
+         <p class="hint">Eingeladene bekommen die Einladung auf ihren Start-Bildschirm. Nach der Zusage gelten die Hinweise auch für sie.</p>
+       </div>` : ''}
+       <div class="field"><span>Hinweise</span>
+         <div class="rem-list" id="rem-list">${rems.map((r) => reminderRowHtml(allDay, r)).join('')}</div>
+         <button type="button" class="btn small rem-add" id="rem-add">＋ Hinweis</button>
+         <p class="hint">Hinweise kommen als Benachrichtigung der App – für dich und alle, die zugesagt haben.</p>
+       </div>
+       <p class="error" id="ev-error"></p>
+       <div class="modal-actions">
+         ${ev ? '<button type="button" class="btn danger" id="ev-delete">Löschen</button>' : ''}
+         <button type="button" class="btn" data-close>Abbrechen</button>
+         <button type="submit" class="btn primary">${ev ? 'Speichern' : 'Anlegen'}</button>
+       </div>
+     </form>`,
+    {
+      onMount: (modal, close) => {
+        const form = $('#ev-form', modal);
+        const remList = $('#rem-list', modal);
+        const isAllDay = () => form.elements.allDay.checked;
+        const readStart = () => {
+          const v = form.elements.start.value;
+          if (!v) return null;
+          return isAllDay() ? new Date(`${v}T00:00:00`) : new Date(v);
+        };
+        const syncCustomMax = () => {
+          const s = readStart();
+          remList.querySelectorAll('.rem-at').forEach((i) => { if (s) i.max = toLocalInput(s); });
+        };
+        const syncRows = () => {
+          remList.querySelectorAll('.rem-row').forEach((row) => {
+            row.querySelector('.rem-at').hidden = row.querySelector('.rem-sel').value !== 'custom';
+            row.querySelector('.rem-del').hidden = remList.children.length <= 1;
+          });
+          $('#rem-add', modal).hidden = remList.children.length >= 6;
+          syncCustomMax();
+        };
+        form.elements.allDay.addEventListener('change', () => {
+          const s = readStart() || base;
+          const eRaw = form.elements.end.value;
+          const e = eRaw ? (form.elements.end.type === 'date' ? new Date(`${eRaw}T00:00:00`) : new Date(eRaw)) : s;
+          const ad = isAllDay();
+          form.elements.start.type = ad ? 'date' : 'datetime-local';
+          form.elements.end.type = ad ? 'date' : 'datetime-local';
+          if (ad) { form.elements.start.value = toDateInput(s); form.elements.end.value = toDateInput(e); } else {
+            const st = new Date(s.getFullYear(), s.getMonth(), s.getDate(), 10, 0);
+            form.elements.start.value = toLocalInput(st);
+            form.elements.end.value = toLocalInput(new Date(Math.max(st.getTime() + 3600e3, new Date(e.getFullYear(), e.getMonth(), e.getDate(), 11, 0).getTime())));
+          }
+          // Hinweise auf die passenden Auswahlmöglichkeiten umstellen
+          const n = remList.children.length;
+          remList.innerHTML = Array.from({ length: n }, () => reminderRowHtml(ad)).join('');
+          syncRows();
+        });
+        // Ende nie vor dem Beginn
+        form.elements.start.addEventListener('change', () => {
+          const s = readStart();
+          if (!s) return;
+          const eRaw = form.elements.end.value;
+          const e = eRaw ? (isAllDay() ? new Date(`${eRaw}T00:00:00`) : new Date(eRaw)) : null;
+          if (!e || e < s) form.elements.end.value = isAllDay() ? toDateInput(s) : toLocalInput(new Date(s.getTime() + 3600e3));
+          syncCustomMax();
+        });
+        remList.addEventListener('change', (e) => {
+          if (e.target.classList.contains('rem-sel')) {
+            const row = e.target.closest('.rem-row');
+            const at = row.querySelector('.rem-at');
+            if (e.target.value === 'custom' && !at.value) {
+              const s = readStart() || new Date();
+              at.value = toLocalInput(new Date(s.getTime() - 3600e3));
+            }
+            syncRows();
+          }
+        });
+        remList.addEventListener('click', (e) => {
+          const del = e.target.closest('.rem-del');
+          if (del) { del.closest('.rem-row').remove(); syncRows(); }
+        });
+        $('#rem-add', modal).addEventListener('click', () => {
+          remList.insertAdjacentHTML('beforeend', reminderRowHtml(isAllDay()));
+          syncRows();
+        });
+        syncRows();
+        const delBtn = $('#ev-delete', modal);
+        if (delBtn) delBtn.addEventListener('click', async () => {
+          if (!confirm('Termin wirklich löschen?')) return;
+          try {
+            must(await sb.from('events').delete().eq('id', ev.id));
+            state.events = state.events.filter((x) => x.id !== ev.id);
+            close();
+            render();
+            toast('🗑️ Termin gelöscht.');
+          } catch (ex) { toast(ex.message); }
+        });
+        if (!ev && !isIos) form.elements.title.focus();
+
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const err = $('#ev-error', modal);
+          err.textContent = '';
+          const title = form.elements.title.value.trim();
+          if (!title) { err.textContent = 'Bitte einen Titel angeben.'; return; }
+          const ad = isAllDay();
+          const sv = form.elements.start.value, evv = form.elements.end.value;
+          if (!sv || !evv) { err.textContent = 'Bitte Beginn und Ende angeben.'; return; }
+          const s = ad ? new Date(`${sv}T00:00:00`) : new Date(sv);
+          const en = ad ? new Date(`${evv}T23:59:59`) : new Date(evv);
+          if (en < s) { err.textContent = 'Das Ende liegt vor dem Beginn.'; return; }
+          const reminders = [];
+          for (const row of remList.querySelectorAll('.rem-row')) {
+            const v = row.querySelector('.rem-sel').value;
+            if (v === 'none') continue;
+            if (v === 'custom') {
+              const at = row.querySelector('.rem-at').value;
+              if (!at) { err.textContent = 'Bitte für den benutzerdefinierten Hinweis Datum und Uhrzeit wählen.'; return; }
+              const atD = new Date(at);
+              if (atD > s) { err.textContent = 'Ein Hinweis darf nicht nach dem Beginn des Termins liegen.'; return; }
+              reminders.push({ k: 'custom', at: atD.toISOString() });
+            } else if (v.startsWith('o:')) reminders.push({ k: 'offset', m: Number(v.slice(2)) });
+            else if (v.startsWith('d:')) reminders.push({ k: 'day', d: Number(v.slice(2)) });
+          }
+          const unique = [...new Map(reminders.map((r) => [JSON.stringify(r), r])).values()];
+          const invitees = [...form.querySelectorAll('[name=invite]:checked')].map((i) => i.value);
+          const btn = form.querySelector('[type=submit]');
+          btn.disabled = true;
+          try {
+            const row = must(await sb.rpc('save_event', {
+              p_id: ev ? ev.id : null, p_title: title, p_location: form.elements.location.value,
+              p_description: form.elements.description.value.trim(), p_all_day: ad,
+              p_start: s.toISOString(), p_end: en.toISOString(), p_reminders: unique, p_invitees: invitees,
+            }));
+            const saved = mapEvent(row);
+            upsertBy(state.events, saved);
+            await loadEvents().catch(() => {});
+            const fresh = invitees.filter((id) => !invited.includes(id));
+            if (fresh.length || ev) invokeQuiet({ action: 'event', eventId: saved.id, invited: fresh, changed: Boolean(ev) });
+            close();
+            state.calDay = startOfDay(s);
+            state.calMonth = new Date(s.getFullYear(), s.getMonth(), 1);
+            render();
+            toast(ev ? '📅 Termin gespeichert.' : fresh.length ? '📨 Termin angelegt – Einladung verschickt.' : '📅 Termin angelegt.');
+          } catch (ex) {
+            err.textContent = ex.message;
+            btn.disabled = false;
+          }
+        });
+      },
+    }
+  );
+}
+
+/* ---- Termin ansehen -------------------------------------------------- */
+
+const INVITE_STATUS = { pending: '⏳ Eingeladen – Antwort offen', accepted: '✅ Zugesagt', declined: '❌ Abgesagt' };
+
+function eventDetailHtml(ev) {
+  const owner = userById(ev.ownerId);
+  const mine = ev.ownerId === state.me.id;
+  const inv = myInvite(ev);
+  const comments = state.eventComments.filter((c) => c.eventId === ev.id);
+  return `<div class="ev-detail" style="--c:${eventColor(ev)}">
+    <div class="ev-banner">
+      <div class="ev-banner-sprites">${eventSprites(ev)}</div>
+      <div class="ev-banner-text">
+        <span class="ev-tag">📅 TERMIN · ${esc(GENDER_NAMES[eventGenders(ev).length > 1 ? 'both' : eventGenders(ev)[0] || 'both'])}</span>
+        <h2>${esc(ev.title)}</h2>
+      </div>
+      <button class="icon-btn" data-close aria-label="Schließen">✕</button>
+    </div>
+    <div class="ev-rows">
+      <div class="ev-row"><span>🕒</span><b>${esc(eventTimeText(ev))}</b></div>
+      ${ev.location ? `<div class="ev-row"><span>📍</span><b>${esc(ev.location)}</b></div>` : ''}
+      ${ev.description ? `<div class="ev-row"><span>📝</span><p>${esc(ev.description)}</p></div>` : ''}
+      <div class="ev-row"><span>👤</span><div class="ev-people">
+        <div>${owner ? esc(fullName(owner)) : 'Unbekannt'} <small>· Ersteller</small></div>
+        ${invitesOf(ev).map((i) => { const u = userById(i.userId); return `<div>${esc(u ? fullName(u) : '?')} <small>· ${INVITE_STATUS[i.status]}</small></div>`; }).join('')}
+      </div></div>
+      ${ev.reminders.length ? `<div class="ev-row"><span>🔔</span><div class="ev-people">${ev.reminders.map((r) => `<div>${esc(reminderLabel(r, ev.allDay))}</div>`).join('')}
+        <small class="hint">${mine || (inv && inv.status === 'accepted') ? 'Gilt auch für dich.' : 'Gilt nur für den Ersteller und alle, die zugesagt haben.'}</small></div></div>` : ''}
+    </div>
+    ${inv ? `<div class="ev-answer">
+      ${inv.status === 'pending' ? '<span>Du bist eingeladen:</span>' : `<span>${INVITE_STATUS[inv.status]}</span>`}
+      <div class="ev-answer-btns">
+        ${inv.status !== 'accepted' ? `<button type="button" class="btn primary" data-respond="1">✅ Zusagen</button>` : ''}
+        ${inv.status !== 'declined' ? `<button type="button" class="btn" data-respond="0">❌ Absagen</button>` : ''}
+      </div>
+    </div>` : ''}
+    <div class="ev-comments">
+      <h3>Kommentare</h3>
+      ${comments.length ? comments.map((c) => { const u = userById(c.authorId); const own = c.authorId === state.me.id; return `<div class="comment${own ? ' own' : ''}">
+        <span class="c-head"><b>${esc(u ? u.firstName : '?')}</b> · <span>${esc(relative(c.createdAt))}</span>${own ? ` <button class="c-del" data-del-ev-comment="${esc(c.id)}" aria-label="Kommentar löschen">✕</button>` : ''}</span>
+        <p>${esc(c.body)}</p></div>`; }).join('') : '<p class="hint">Noch keine Kommentare.</p>'}
+      <form class="comment-form" id="ev-comment-form">
+        <input name="body" maxlength="1000" placeholder="Kommentar schreiben …" autocomplete="off" aria-label="Kommentar">
+        <button class="btn small primary" type="submit">Senden</button>
+      </form>
+    </div>
+    ${mine ? '<div class="modal-actions"><button type="button" class="btn danger" id="ev-del">Löschen</button><button type="button" class="btn primary" id="ev-edit">✏️ Bearbeiten</button></div>' : ''}
+  </div>`;
+}
+
+function openEventById(id) {
+  const go = () => (state.events.some((e) => e.id === id) ? openEventDetail(id) : toast('Diesen Termin gibt es nicht mehr.'));
+  if (state.eventsLoaded) go(); else loadEvents().then(go).catch((e) => toast(e.message));
+}
+
+function openEventDetail(id) {
+  const ev = state.events.find((e) => e.id === id);
+  if (!ev) return;
+  openModal(eventDetailHtml(ev), {
+    cls: 'ev-modal',
+    onMount: (modal, close) => {
+      const bind = () => {
+        const cur = state.events.find((e) => e.id === id);
+        if (!cur) { close(); return; }
+        const edit = $('#ev-edit', modal);
+        if (edit) edit.addEventListener('click', () => { close(); openEventForm({ event: cur }); });
+        const del = $('#ev-del', modal);
+        if (del) del.addEventListener('click', async () => {
+          if (!confirm('Termin wirklich löschen?')) return;
+          try {
+            must(await sb.from('events').delete().eq('id', cur.id));
+            state.events = state.events.filter((x) => x.id !== cur.id);
+            close(); render(); toast('🗑️ Termin gelöscht.');
+          } catch (ex) { toast(ex.message); }
+        });
+        modal.querySelectorAll('[data-respond]').forEach((b) => b.addEventListener('click', () => respondEvent(cur.id, b.dataset.respond === '1', b)));
+        modal.querySelectorAll('[data-del-ev-comment]').forEach((b) => b.addEventListener('click', async () => {
+          try {
+            must(await sb.from('event_comments').delete().eq('id', b.dataset.delEvComment));
+            state.eventComments = state.eventComments.filter((c) => c.id !== b.dataset.delEvComment);
+            refresh();
+          } catch (ex) { toast(ex.message); }
+        }));
+        const form = $('#ev-comment-form', modal);
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const body = form.elements.body.value.trim();
+          if (!body) return;
+          form.querySelector('button').disabled = true;
+          try {
+            const row = must(await sb.from('event_comments').insert({ event_id: cur.id, body }).select().single());
+            state.eventComments.push({ id: row.id, eventId: row.event_id, authorId: row.author_id, body: row.body, createdAt: row.created_at });
+            invokeQuiet({ action: 'eventComment', commentId: row.id });
+            refresh();
+            $('#ev-comment-form input', modal).focus();
+          } catch (ex) { toast(ex.message); form.querySelector('button').disabled = false; }
+        });
+      };
+      const refresh = () => {
+        const cur = state.events.find((e) => e.id === id);
+        if (!cur) { close(); return; }
+        modal.innerHTML = eventDetailHtml(cur);
+        bind();
+      };
+      modal.addEventListener('event-remote', refresh);
+      bind();
+    },
+  });
+}
+
+async function respondEvent(id, accept, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const r = must(await sb.rpc('respond_event', { p_event: id, p_accept: accept }));
+    const i = state.invites.find((x) => x.eventId === id && x.userId === state.me.id);
+    if (i) { i.status = r.status; i.respondedAt = r.responded_at; }
+    invokeQuiet({ action: 'eventResponse', eventId: id });
+    toast(accept ? '✅ Zugesagt – der Termin steht jetzt auch in deinem Kalender.' : '❌ Abgesagt.');
+    render();
+    document.querySelectorAll('.modal.ev-modal').forEach((m) => m.dispatchEvent(new Event('event-remote')));
+  } catch (e) {
+    toast(e.message);
+    if (btn) btn.disabled = false;
+  }
+}
+
+/* ---- Termine auf der Startseite -------------------------------------- */
+
+/** In welchen Start-Bereich gehört ein Termin? (null = nicht auf Start) */
+function eventSection(ev, now = new Date()) {
+  const t = now.getTime();
+  const today = startOfDay(now);
+  const tomorrow = addDays(today, 1), dayAfter = addDays(today, 2);
+  const weekEnd = addDays(today, 7 - ((today.getDay() + 6) % 7));
+  const s = Date.parse(ev.startAt), e = Date.parse(ev.endAt);
+  const sd = evStartDay(ev).getTime(), ed = evEndDay(ev).getTime();
+  if (e < t && !(ev.allDay && ed >= today.getTime())) return null;      // vorbei
+  if (sd < today.getTime() && ed >= tomorrow.getTime()) return 'laufend'; // läuft über mehrere Tage
+  if (sd <= today.getTime() && ed >= today.getTime()) return 'heute';
+  if (s >= tomorrow.getTime() && s < dayAfter.getTime()) return 'morgen';
+  if (s >= dayAfter.getTime() && s < weekEnd.getTime()) return 'woche';
+  return null;
+}
+
+function eventCardHtml(ev) {
+  const inv = myInvite(ev);
+  const comments = state.eventComments.filter((c) => c.eventId === ev.id).length;
+  const pendingOthers = invitesOf(ev).filter((i) => i.status === 'pending').length;
+  return `<article class="ev-card" data-event-card="${esc(ev.id)}" tabindex="0" style="--c:${eventColor(ev)}">
+    <div class="ev-card-side">${eventHeads(ev, 'ev-card-head')}</div>
+    <div class="ev-card-body">
+      <span class="ev-tag">📅 TERMIN</span>
+      <h3>${esc(ev.title)}</h3>
+      <div class="ev-card-meta">
+        <span>🕒 ${esc(eventTimeText(ev, true))}</span>
+        ${ev.location ? `<span>📍 ${esc(ev.location)}</span>` : ''}
+        ${inv && inv.status === 'accepted' ? '<span>✅ Du hast zugesagt</span>' : ''}
+        ${pendingOthers && ev.ownerId === state.me.id ? `<span>⏳ ${pendingOthers} Antwort${pendingOthers === 1 ? '' : 'en'} offen</span>` : ''}
+        ${comments ? `<span>💬 ${comments}</span>` : ''}
+      </div>
+    </div>
+  </article>`;
+}
+
+function invitationCardsHtml() {
+  if (!state.me) return '';
+  const now = Date.now();
+  const list = state.invites.filter((i) => i.userId === state.me.id && i.status === 'pending')
+    .map((i) => state.events.find((e) => e.id === i.eventId))
+    .filter((ev) => ev && Date.parse(ev.endAt) > now);
+  if (!list.length) return '';
+  return `<section class="invites">${list.map((ev) => {
+    const owner = userById(ev.ownerId);
+    return `<article class="invite-card" style="--c:${eventColor(ev)}">
+      <div class="invite-top"><span class="invite-stamp">📨 EINLADUNG</span><span>von ${esc(owner ? owner.firstName : '?')}</span></div>
+      <button type="button" class="invite-main" data-event-card="${esc(ev.id)}">
+        <span class="invite-heads">${eventHeads(ev, 'ev-card-head')}</span>
+        <span><b>${esc(ev.title)}</b><small>🕒 ${esc(eventTimeText(ev))}${ev.location ? ` · 📍 ${esc(ev.location)}` : ''}</small></span>
+      </button>
+      <div class="invite-btns">
+        <button type="button" class="btn primary" data-invite-accept="${esc(ev.id)}">✅ Zusagen</button>
+        <button type="button" class="btn" data-invite-decline="${esc(ev.id)}">❌ Absagen</button>
+      </div>
+    </article>`;
+  }).join('')}</section>`;
+}
+
+function bindEventCards(view) {
+  view.querySelectorAll('[data-event-card]').forEach((el) => {
+    const open = () => openEventDetail(el.dataset.eventCard);
+    el.addEventListener('click', open);
+    el.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
+  });
+  view.querySelectorAll('[data-invite-accept]').forEach((b) => b.addEventListener('click', () => respondEvent(b.dataset.inviteAccept, true, b)));
+  view.querySelectorAll('[data-invite-decline]').forEach((b) => b.addEventListener('click', () => respondEvent(b.dataset.inviteDecline, false, b)));
 }
 
 /* -------------------------------------------------------------------------
@@ -3443,6 +3965,7 @@ function setTab(tab) {
   url.searchParams.set('tab', tab);
   url.searchParams.delete('msg');
   url.searchParams.delete('note');
+  url.searchParams.delete('event');
   url.searchParams.delete('code');
   history.replaceState(null, '', url);
   render();
@@ -3490,13 +4013,24 @@ async function loadFamilyCode() {
 
 async function refreshAll() {
   try {
-    await Promise.all([loadUsers(), loadMessages(), loadBoard(), loadNotes()]);
+    await Promise.all([loadUsers(), loadMessages(), loadBoard(), loadNotes(), loadEvents()]);
     renderProfileButton();
     render();
     checkVerdicts();
   } catch (e) {
     toast(e.message);
   }
+}
+
+// Termine neu laden (gebündelt, falls mehrere Änderungen gleichzeitig kommen)
+let eventsReload = null;
+function refreshEvents() {
+  clearTimeout(eventsReload);
+  eventsReload = setTimeout(async () => {
+    await loadEvents().catch(() => {});
+    if ((state.tab === 'kalender' || state.tab === 'start') && !document.querySelector('.modal-backdrop:not(.bd-ev-modal)')) render();
+    document.querySelectorAll('.modal.ev-modal').forEach((m) => m.dispatchEvent(new Event('event-remote')));
+  }, 250);
 }
 
 let channel;
@@ -3556,6 +4090,9 @@ function startRealtime() {
       if (state.tab === 'schande') render();
       checkVerdicts();
     })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'events' }, () => refreshEvents())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'event_invites' }, () => refreshEvents())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'event_comments' }, () => refreshEvents())
     .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, async () => {
       await loadNotes().catch(() => {});
       const ed = document.querySelector('.modal.note-modal');
@@ -3601,8 +4138,9 @@ document.addEventListener('visibilitychange', () => {
 
 async function startApp() {
   renderProfileButton();
-  await Promise.all([loadUsers(), loadMessages(), loadFamilyCode(), loadBoard(), loadNotes()]).catch((e) => toast(e.message));
+  await Promise.all([loadUsers(), loadMessages(), loadFamilyCode(), loadBoard(), loadNotes(), loadEvents()]).catch((e) => toast(e.message));
   if (state.openNote) { const id = state.openNote; state.openNote = null; openNoteById(id); }
+  if (state.openEvent) { const id = state.openEvent; state.openEvent = null; openEventById(id); }
   renderProfileButton();
   render();
   checkVerdicts();
@@ -3625,6 +4163,7 @@ async function init() {
   if (TABS[startTab]) state.tab = startTab;
   if (params.get('msg')) state.highlight = params.get('msg');
   if (params.get('note')) state.openNote = params.get('note');
+  if (params.get('event')) state.openEvent = params.get('event');
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch((e) => console.warn('SW-Registrierung fehlgeschlagen', e));
@@ -3632,6 +4171,7 @@ async function init() {
       if (e.data && e.data.type === 'open-message') {
         const id = String(e.data.id || '');
         if (id.startsWith('note-')) { setTab('notizen'); openNoteById(id.slice(5)); return; }
+        if (id.startsWith('event-')) { openEventById(id.slice(6)); return; }
         if (/^(strike|board)-/.test(id)) { setTab('schande'); return; }
         state.highlight = id.replace(/^(done|resp|comment|review|start|frist)-/, '').slice(0, 36);
         setTab('start');
