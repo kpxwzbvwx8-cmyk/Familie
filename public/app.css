@@ -1644,3 +1644,24 @@ body.nav-tabs .punish-field { bottom: calc(var(--tabbar-h) + env(safe-area-inset
 .view.scene-in { animation: scene-in .22s ease-out; }
 @keyframes scene-in { from { opacity: 0; transform: translateY(6px); } }
 @media (prefers-reduced-motion: reduce) { .view.scene-in { animation: none; } }
+
+/* ---------- Start: Feiertage & HSV als schlanke Zeilen ---------- */
+.mini-rows { display: grid; gap: 4px; margin: 0 0 10px; }
+.mini-row {
+  display: grid; grid-template-columns: 22px auto 1fr; align-items: center; gap: 8px; width: 100%; min-height: 30px;
+  padding: 3px 10px; border-radius: 999px; font: inherit; font-size: .92rem; text-align: left; color: var(--muted);
+  border: 1px solid transparent; background: transparent;
+}
+.mini-ico { display: grid; place-items: center; width: 22px; height: 22px; font-size: .95rem; }
+.mini-ico img { width: 20px; height: 20px; object-fit: contain; }
+.mini-when { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mini-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini-hol { color: color-mix(in srgb, var(--hol) 75%, var(--muted)); background: color-mix(in srgb, var(--hol) 6%, transparent); border-color: color-mix(in srgb, var(--hol) 18%, transparent); }
+.mini-hol.soft { color: var(--muted); background: transparent; border-color: var(--border); }
+.mini-hsv { cursor: pointer; color: color-mix(in srgb, var(--hsv) 80%, var(--muted)); background: color-mix(in srgb, var(--hsv) 6%, transparent); border-color: color-mix(in srgb, var(--hsv) 20%, transparent); }
+.mini-hsv .mini-when { font-weight: 700; }
+.mini-hsv:active { background: color-mix(in srgb, var(--hsv) 14%, transparent); }
+:root[data-theme="dark"] .mini-hsv { color: #9cc0ff; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .mini-hsv { color: #9cc0ff; } }
+/* Ersatz, falls das Wappen nicht lädt: schlichte blaue Raute */
+.hsv-diamond { display: block; width: 13px; height: 13px; transform: rotate(45deg); background: var(--hsv); border: 2px solid #fff; outline: 1.5px solid #111; }

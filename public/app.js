@@ -1377,33 +1377,37 @@ function renderAustausch(view) {
   const visible = state.messages.filter((m) => !m.deleteAt || Date.parse(m.deleteAt) > Date.now());
   const evItems = state.events.map((ev) => ({ ev, sec: eventSection(ev) })).filter((x) => x.sec);
   let list;
-  if (!visible.length && !evItems.length) {
+  if (!visible.length && !evItems.length && !compactStartItems().length) {
     list = emptyStateHtml('Hier ist gerade nichts los! Tippe unten rechts auf ＋ für eine Info, eine Meldung oder einen Termin.');
   } else {
     const groups = Object.fromEntries(SECTIONS.map((sec) => [sec.key, []]));
     for (const m of visible) groups[sectionOf(m)].push({ m });
     for (const x of evItems) groups[x.sec].push({ ev: x.ev });
+    const compact = Object.fromEntries(SECTIONS.map((sec) => [sec.key, []]));
+    for (const c of compactStartItems()) compact[c.sec].push(c);
     if (state.highlight) { const hm = visible.find((m) => m.id === state.highlight); if (hm) prefs.sections[sectionOf(hm)] = true; }
     // Termine stehen zwischen „dringend“ und „wichtig“, untereinander nach Beginn
     const rank = (x) => (x.ev ? 0.5 : (URGENCY_RANK[x.m.urgency] ?? 2));
     const time = (x) => Date.parse(x.ev ? x.ev.startAt : (x.m.eventAt || x.m.createdAt));
     const cmp = (a, b) => (a.ev || b.ev ? rank(a) - rank(b) || time(a) - time(b) : compareMessages(a.m, b.m));
-    list = SECTIONS.filter((sec) => groups[sec.key].length).map((sec) => {
+    list = SECTIONS.filter((sec) => groups[sec.key].length || compact[sec.key].length).map((sec) => {
+      const minis = compact[sec.key].sort((a, b) => a.t - b.t);
       const items = groups[sec.key].sort(cmp);
       const open = sectionOpen(sec);
       const unread = items.reduce((n, x) => n + (x.m ? unreadComments(x.m) : 0), 0);
       return `<section class="msg-section${open ? ' open' : ''}" data-section="${sec.key}">
         <button type="button" class="section-head" aria-expanded="${open}">
           <span class="section-title">${sec.label}</span>
-          <span class="section-count">${items.length}</span>${unread ? '<span class="section-dot" title="Neue Kommentare"></span>' : ''}
+          ${items.length ? `<span class="section-count">${items.length}</span>` : ''}${unread ? '<span class="section-dot" title="Neue Kommentare"></span>' : ''}
           <span class="section-chevron" aria-hidden="true">▾</span>
         </button>
-        <div class="msg-list">${open ? items.map((x) => (x.ev ? eventCardHtml(x.ev) : messageHtml(x.m))).join('') : ''}</div>
+        <div class="msg-list">${open ? (minis.length ? `<div class="mini-rows">${minis.map((c) => c.html).join('')}</div>` : '') + items.map((x) => (x.ev ? eventCardHtml(x.ev) : messageHtml(x.m))).join('') : ''}</div>
       </section>`;
     }).join('');
   }
   view.innerHTML = banner + invitationCardsHtml() + list;
   bindEventCards(view);
+  view.querySelectorAll('.mini-hsv[data-hsv]').forEach((b) => b.addEventListener('click', () => openHsvMatch(b.dataset.hsv)));
   view.querySelectorAll('.section-head').forEach((h) => h.addEventListener('click', () => {
     const key = h.closest('[data-section]').dataset.section;
     const sec = SECTIONS.find((x) => x.key === key);
@@ -2248,6 +2252,57 @@ function holidaysOf(y) {
   return map;
 }
 const holidayOn = (day) => holidaysOf(day.getFullYear()).get(day.getTime()) || null;
+const HOLIDAY_EMOJI = {
+  Neujahr: '🎆', Karfreitag: '✝️', Ostersonntag: '🐣', Ostermontag: '🐰', 'Tag der Arbeit': '🌷', 'Christi Himmelfahrt': '☁️',
+  Pfingstsonntag: '🕊️', Pfingstmontag: '🕊️', 'Tag der Deutschen Einheit': '🇩🇪', 'Reformationstag (Hamburg)': '📜',
+  Heiligabend: '🎄', '1. Weihnachtsfeiertag': '🎁', '2. Weihnachtsfeiertag': '⭐', Silvester: '🎇',
+};
+
+/* ---- Feiertage & HSV kompakt auf Start ------------------------------ */
+
+/** Bereich auf Start für einen Tag (nur Heute / Morgen / Diese Woche) */
+function daySection(day) {
+  const today = startOfDay(new Date());
+  const diff = Math.round((day - today) / 86400e3);
+  const weekEnd = addDays(today, 7 - ((today.getDay() + 6) % 7));
+  if (diff === 0) return 'heute';
+  if (diff === 1) return 'morgen';
+  if (diff > 1 && day < weekEnd) return 'woche';
+  return null;
+}
+function compactStartItems() {
+  const out = [];
+  const today = startOfDay(new Date());
+  for (let i = 0; i < 8; i++) {
+    const d = addDays(today, i);
+    const sec = daySection(d);
+    const h = holidayOn(d);
+    if (sec && h) out.push({ sec, t: d.getTime(), html: holidayRowHtml(d, h) });
+  }
+  if (hsvEnabled() && state.hsv) {
+    for (const m of state.hsv) {
+      const k = new Date(m.kickoff);
+      const sec = daySection(startOfDay(k));
+      if (!sec) continue;
+      if (m.finished && sec !== 'heute') continue;
+      out.push({ sec, t: k.getTime(), html: hsvRowHtml(m) });
+    }
+  }
+  return out;
+}
+function holidayRowHtml(d, h) {
+  const date = d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' });
+  return `<div class="mini-row mini-hol${h.legal ? '' : ' soft'}"><span class="mini-ico">${HOLIDAY_EMOJI[h.name] || '🎉'}</span><span class="mini-when">${esc(date)}</span><span class="mini-what">${esc(h.name)}</span></div>`;
+}
+function hsvRowHtml(m) {
+  const k = new Date(m.kickoff);
+  const sameDayToday = startOfDay(k).getTime() === startOfDay(new Date()).getTime();
+  const when = sameDayToday ? formatTimeOnly(m.kickoff) : `${k.toLocaleDateString('de-DE', { weekday: 'short' })} ${formatTimeOnly(m.kickoff)}`;
+  const icon = m.isHome ? m.homeIcon : m.awayIcon;
+  const crest = icon ? `<img src="${esc(icon)}" alt="HSV" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('i'),{className:'hsv-diamond'}))">` : '<i class="hsv-diamond"></i>';
+  const vs = m.isHome ? `vs. ${hsvShort(m.away)}` : `@ ${hsvShort(m.home)}`;
+  return `<button type="button" class="mini-row mini-hsv" data-hsv="${esc(m.id)}"><span class="mini-ico">${crest}</span><span class="mini-when">${esc(when)}</span><span class="mini-what">${esc(vs)}${m.finished && m.result ? ` · ${esc(m.result)}` : ''}</span></button>`;
+}
 
 /* ---- HSV-Spielplan ---------------------------------------------------- */
 
@@ -2263,7 +2318,7 @@ function loadHsv(force = false) {
       if (r.error || !r.data || !Array.isArray(r.data.matches)) return;
       state.hsv = r.data.matches;
       lsSet(HSV_KEY, { at: Date.now(), matches: state.hsv });
-      if (state.tab === 'kalender') render();
+      if ((state.tab === 'kalender' || state.tab === 'start') && !document.querySelector('.modal-backdrop')) render();
     })
     .catch(() => {})
     .finally(() => { state.hsvLoading = null; });
@@ -4444,6 +4499,7 @@ async function startApp() {
   renderProfileButton();
   render();
   checkVerdicts();
+  if (hsvEnabled()) { state.hsvRequested = true; loadHsv(); }
   startRealtime();
   syncPushSubscription();
   if (!state.me.gender) openEditProfile();
