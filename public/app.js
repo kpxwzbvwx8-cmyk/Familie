@@ -1227,7 +1227,7 @@ function renderAustausch(view) {
   const evItems = state.events.map((ev) => ({ ev, sec: eventSection(ev) })).filter((x) => x.sec);
   let list;
   if (!visible.length && !evItems.length) {
-    list = `<div class="empty"><div class="big">💬</div><h2>Noch nichts im Austausch</h2><p>Tippe auf <b>+</b>, um eine Nachricht an alle zu schicken.</p></div>`;
+    list = `<div class="empty"><div class="big">💬</div><h2>Noch nichts los</h2><p>Tippe auf <b>+</b> für eine Info, eine Meldung oder einen Termin.</p></div>`;
   } else {
     const groups = Object.fromEntries(SECTIONS.map((sec) => [sec.key, []]));
     for (const m of visible) groups[sectionOf(m)].push({ m });
@@ -1274,7 +1274,39 @@ function renderAustausch(view) {
   }
 }
 
-function openNewMessage() {
+/** ＋ auf Start: Auswahl im Stil des Kampfmenüs – Info, Meldung oder Termin */
+function openCreateMenu() {
+  const calIcon = `<img src="${asset('img/menu/cal.png')}" alt="" class="cm-cal">`;
+  const items = [
+    { key: 'info', label: 'Info', sub: 'Zum Wissen – ohne Handlungsbedarf', icon: ballSvg('master', 44), cls: 'cm-info' },
+    { key: 'meldung', label: 'Meldung', sub: 'Etwas, das passieren muss', icon: ballSvg('poke', 44), cls: 'cm-msg' },
+    { key: 'termin', label: 'Termin', sub: 'Eintrag in den Kalender', icon: calIcon, cls: 'cm-event' },
+  ];
+  openModal(
+    `<div class="cm">
+       <div class="cm-box"><p>Was möchtest du anlegen?</p><span class="cm-arrow" aria-hidden="true">▼</span></div>
+       <div class="cm-grid">${items.map((it, i) => `<button type="button" class="cm-btn ${it.cls}" data-create="${it.key}" style="--i:${i}">
+         <span class="cm-icon">${it.icon}</span>
+         <span class="cm-text"><b>${it.label}</b><small>${it.sub}</small></span>
+       </button>`).join('')}</div>
+       <button type="button" class="cm-cancel" data-close><span class="ds-key ds-key-a">B</span> Zurück</button>
+     </div>`,
+    {
+      cls: 'create-menu',
+      onMount: (modal, close) => {
+        modal.addEventListener('click', (e) => {
+          const b = e.target.closest('[data-create]');
+          if (!b) return;
+          close();
+          if (b.dataset.create === 'termin') openEventForm({ day: startOfDay(new Date()) });
+          else openNewMessage(b.dataset.create === 'info' ? 'info' : 'normal');
+        });
+      },
+    }
+  );
+}
+
+function openNewMessage(preset = 'normal') {
   const now = new Date();
   // Schnellwahl für Deadline & Löschdatum: Morgen · in: +1d +1h +10min +1min · Nächste Woche
   const quickChips = (target) => `<div class="chips time-chips" data-target="${target}">
@@ -1302,12 +1334,12 @@ function openNewMessage() {
   };
 
   openModal(
-    `<div class="modal-head"><h2>Neue Nachricht</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+    `<div class="modal-head"><h2>${preset === 'info' ? 'Neue Info' : 'Neue Meldung'}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
      <form class="form" id="msg-form" novalidate>
        <fieldset class="field">
          <div class="field-head"><legend>Dringlichkeit</legend>${bellToggle('notify', true, 'Beim Absenden benachrichtigen')}${helpBtn('notify')}</div>
          <div class="segmented">
-           ${URGENCIES.map((u) => `<label class="u-${u.key}" style="--u:var(--u-${u.key})" title="${u.ballName}"><input type="radio" name="urgency" value="${u.key}"${u.key === 'normal' ? ' checked' : ''}><span>${ballSvg(u.ball, 28)}<em>${u.label}</em></span></label>`).join('')}
+           ${URGENCIES.map((u) => `<label class="u-${u.key}" style="--u:var(--u-${u.key})" title="${u.ballName}"><input type="radio" name="urgency" value="${u.key}"${u.key === preset ? ' checked' : ''}><span>${ballSvg(u.ball, 28)}<em>${u.label}</em></span></label>`).join('')}
          </div>
        </fieldset>
        <label class="field"><span>Titel</span><input name="title" required maxlength="120" placeholder="Worum geht's?"></label>
@@ -4150,7 +4182,7 @@ async function startApp() {
 }
 
 async function init() {
-  $('#fab').addEventListener('click', () => (state.tab === 'notizen' ? openNoteEditor() : openNewMessage()));
+  $('#fab').addEventListener('click', () => (state.tab === 'notizen' ? openNoteEditor() : openCreateMenu()));
   $('#update-btn').addEventListener('click', checkForUpdate);
   setupMenu();
   darkQuery.addEventListener('change', syncThemeToggle);
