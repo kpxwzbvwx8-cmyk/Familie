@@ -75,6 +75,9 @@ jobs:
           JS
           # Cache-Version des Service Workers pro Veröffentlichung erneuern
           sed -i "s/const CACHE = 'familie-[^']*'/const CACHE = 'familie-${GITHUB_SHA::8}'/" public/sw.js
+          # App-Dateien mit Versionsanhang einbinden, damit das Handy keine alten Dateien nimmt
+          sed -i -E "s/(app\.css|app\.js|config\.js)\"/\1?v=${GITHUB_SHA::8}\"/g" public/index.html
+          grep -n '?v=' public/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

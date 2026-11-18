@@ -565,3 +565,5 @@ select {
   pointer-events: none;
 }
 @media (max-width: 380px) { .msg-portrait { height: 88px; } }
+
+.app-version { text-align: center; color: var(--muted); margin: 18px 0 0; font-size: 1rem; }

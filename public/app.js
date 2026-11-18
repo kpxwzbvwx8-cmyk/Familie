@@ -5,6 +5,9 @@
  * ======================================================================= */
 
 const CFG = window.FAMILIE_CONFIG || {};
+// Versionsanhang, damit das Handy nach einer Veröffentlichung neue Bilder lädt
+const V = CFG.version && CFG.version !== 'dev' ? `?v=${CFG.version}` : '';
+const asset = (path) => path + V;
 const configured = Boolean(CFG.supabaseUrl && CFG.supabaseKey && window.supabase);
 const sb = configured
   ? window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, {
@@ -252,7 +255,7 @@ const POKEMON = [
     firstName: 'Speedy',
     lastName: '',
     gender: 'm',
-    sprite: 'img/speedy.png',
+    sprite: asset('img/speedy.png'),
     color: '#8d6e63', // braun
     birthday: '2016-06-15',
     strikes: 0,
@@ -269,7 +272,7 @@ const POKEMON = [
     firstName: 'Idefix',
     lastName: '',
     gender: 'm',
-    sprite: 'img/idefix.png',
+    sprite: asset('img/idefix.png'),
     color: '#ececf0', // weiß
     birthday: '2020-01-01',
     strikes: 0,
@@ -311,9 +314,9 @@ const TRAINER_SVG = `
   <circle cx="26" cy="19" r="1.6" fill="#222"/><circle cx="34" cy="19" r="1.6" fill="#222"/>
 </svg>`;
 
-const SPRITES = { m: 'img/trainer-m.png', w: 'img/trainer-w.png' };
+const SPRITES = { m: asset('img/trainer-m.png'), w: asset('img/trainer-w.png') };
 // Porträts des Urhebers an Meldungen im Austausch
-const PORTRAITS = { m: 'img/portrait-m.png', w: 'img/portrait-w.png' };
+const PORTRAITS = { m: asset('img/portrait-m.png'), w: asset('img/portrait-w.png') };
 
 function avatarHtml(u) {
   if (u.sprite) return `<img class="sprite" src="${esc(u.sprite)}" alt="">`;
@@ -915,7 +918,8 @@ function renderTeam(view) {
         <button class="btn small" id="share-invite">Einladen</button>
       </div>`
     : '';
-  view.innerHTML = grid + invite;
+  const version = `<p class="app-version">App-Version: ${esc(CFG.version || 'dev')}</p>`;
+  view.innerHTML = grid + invite + version;
   view.querySelectorAll('[data-user]').forEach((b) =>
     b.addEventListener('click', () => openTrainerCard(userById(b.dataset.user)))
   );
@@ -976,7 +980,7 @@ function eggInfo(now = new Date()) {
 function eggTileHtml() {
   const e = eggInfo();
   return `<button class="team-tile egg-tile" data-egg>
-    <span class="avatar"><img class="sprite" src="img/egg.png" alt=""></span>
+    <span class="avatar"><img class="sprite" src="${asset('img/egg.png')}" alt=""></span>
     <span class="name">${esc(EGG.name)}</span>
     <span class="meta">SSW ${esc(e.ssw)} · ${e.remaining > 0 ? `${e.remaining} T` : 'bald!'}</span>
   </button>`;
@@ -991,7 +995,7 @@ function openEggMemo() {
        <div class="memo-body">
          <div class="memo-left">
            <div class="memo-name"><span class="ball"></span>Ei</div>
-           <div class="memo-egg"><img class="sprite" src="img/egg.png" alt="Ei"></div>
+           <div class="memo-egg"><img class="sprite" src="${asset('img/egg.png')}" alt="Ei"></div>
            <div class="memo-item"><span>Name</span><b>${esc(EGG.name)}</b></div>
          </div>
          <div class="memo-right">
@@ -1042,6 +1046,20 @@ function toggleTheme() {
  * Update-Prüfung
  * ---------------------------------------------------------------------- */
 
+/** Alten Service Worker abmelden, Zwischenspeicher leeren und die neue Version frisch laden. */
+async function hardRefresh(version) {
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+    }
+    if (window.caches) await Promise.all((await caches.keys()).map((k) => caches.delete(k)));
+  } catch { /* weiter mit Neuladen */ }
+  const url = new URL(location.href);
+  url.searchParams.set('v', version || String(Date.now()));
+  setTimeout(() => location.replace(url.toString()), 400);
+}
+
 async function checkForUpdate() {
   const btn = $('#update-btn');
   if (btn.classList.contains('spinning')) return;
@@ -1053,12 +1071,7 @@ async function checkForUpdate() {
     const remote = m ? m[1] : null;
     if (remote && remote !== CFG.version) {
       toast('Neue Version gefunden – wird installiert …');
-      if ('serviceWorker' in navigator) {
-        const reg = await navigator.serviceWorker.getRegistration();
-        if (reg) await reg.update().catch(() => {});
-      }
-      if (window.caches) await Promise.all((await caches.keys()).map((k) => caches.delete(k)));
-      setTimeout(() => location.reload(), 600);
+      await hardRefresh(remote);
       return;
     }
     if (state.me) await refreshAll();
@@ -1214,7 +1227,7 @@ async function init() {
   if (params.get('msg')) state.highlight = params.get('msg');
 
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW-Registrierung fehlgeschlagen', e));
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch((e) => console.warn('SW-Registrierung fehlgeschlagen', e));
     navigator.serviceWorker.addEventListener('message', (e) => {
       if (e.data && e.data.type === 'open-message') {
         state.highlight = e.data.id;
