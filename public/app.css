@@ -549,17 +549,18 @@ select {
 .pokemon-tile .avatar { background: rgba(255,255,255,.55); }
 .pokemon-tile .avatar .sprite { height: 38px; width: auto; align-self: center; margin: 0; }
 
-/* ---------- Porträt des Urhebers an Meldungen (rechts) ---------- */
+/* ---------- Porträt des Urhebers an Meldungen (links) ---------- */
 .msg.has-portrait {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 6px;
+  display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 10px;
   padding-bottom: 0; overflow: hidden; position: relative;
 }
-.msg.has-portrait .msg-body { padding-bottom: 12px; min-width: 0; }
+.msg.has-portrait .msg-body { grid-column: 2; grid-row: 1; padding-bottom: 12px; min-width: 0; }
 .msg-portrait {
-  align-self: end; justify-self: end;
+  grid-column: 1; grid-row: 1;
+  align-self: end; justify-self: start;
   height: 104px; width: auto; max-width: 30vw;
-  margin-right: -14px;            /* bündig an der rechten Kachelkante */
-  object-fit: cover; object-position: left bottom;
+  margin-left: -14px;             /* bündig an der linken Kachelkante */
+  object-fit: cover; object-position: right bottom;
   image-rendering: pixelated;
   pointer-events: none;
 }
