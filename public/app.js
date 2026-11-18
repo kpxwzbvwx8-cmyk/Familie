@@ -738,7 +738,7 @@ function icsUrl(m) {
 }
 
 const HELP = {
-  strike: 'Wird die Meldung nicht erfüllt, droht ein Strich auf dem Board der Schande. Die Androhung steht gut sichtbar in der Meldung – die automatische Vergabe der Striche folgt in einem späteren Update.',
+  strike: 'Wird die Meldung bis zur Deadline nicht erfüllt, droht ein Strich auf dem Board der Schande. Die Androhung steht gut sichtbar in der Meldung – die automatische Vergabe der Striche folgt in einem späteren Update.',
   autoDelete: 'Die Meldung verschwindet zum eingestellten Zeitpunkt automatisch für alle – praktisch für Dinge, die sich danach erledigt haben.',
   event: 'Für Termine mit Dauer: Zusätzlich zum Start gibst du das Ende des Zeitraums an (von Minuten bis Jahren). Der Zeitraum wird auch so in den Kalender übernommen.',
   deadline: 'Bis wann etwas erledigt sein muss. Die Deadline steht gut sichtbar in der Meldung.',
@@ -1211,7 +1211,10 @@ function openNewMessage() {
        <div class="toggle-row"><span>Ereignis?</span>${helpBtn('event')}${switchToggle('hasEnd')}</div>
        <label class="field" id="end-box" hidden><span>Ende des Zeitraums</span><input name="endAt" type="datetime-local" class="dt"></label>
        <div class="toggle-row"><span>Deadline?</span>${helpBtn('deadline')}${switchToggle('hasDeadline')}</div>
-       <label class="field" id="deadline-box" hidden><span>Deadline</span><input name="deadlineAt" type="datetime-local" class="dt"></label>
+       <div class="field" id="deadline-box" hidden>
+         <label class="field"><span>Deadline</span><input name="deadlineAt" type="datetime-local" class="dt"></label>
+         <div class="toggle-row strike-row"><span>😈 Strich androhen?</span>${helpBtn('strike')}${switchToggle('threatStrike')}</div>
+       </div>
        <div class="toggle-row"><span>Automatisch löschen?</span>${helpBtn('autoDelete')}${switchToggle('autoDelete')}</div>
        <div class="field" id="auto-delete-box" hidden>
          <input name="deleteAt" type="datetime-local" min="${toLocalInput(now)}" aria-label="Automatisch löschen am">
@@ -1226,7 +1229,6 @@ function openNewMessage() {
          <input name="respondBy" type="datetime-local" class="dt" id="respond-by-box" hidden aria-label="Rückmeldung bis">
        </div>
        <div class="toggle-row"><span>Löschen, wenn erledigt?</span>${helpBtn('doneDelete')}${switchToggle('deleteOnDone')}</div>
-       <div class="toggle-row strike-row"><span>😈 Strich androhen?</span>${helpBtn('strike')}${switchToggle('threatStrike')}</div>
        <p class="error" id="msg-error"></p>
        <div class="modal-actions">
          <button type="button" class="btn" data-close>Abbrechen</button>
@@ -1354,7 +1356,7 @@ function openNewMessage() {
               needs_ack: form.elements.needsAck.checked,
               ack_options: ackOptions,
               delete_on_done: form.elements.deleteOnDone.checked,
-              threat_strike: form.elements.threatStrike.checked,
+              threat_strike: form.elements.hasDeadline.checked && form.elements.threatStrike.checked,
             }).select().single());
             upsertMessage(mapMessage(row));
             close();
