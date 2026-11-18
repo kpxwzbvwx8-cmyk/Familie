@@ -1294,3 +1294,7 @@ body.nav-tabs .punish-field { bottom: calc(var(--tabbar-h) + env(safe-area-inset
 .invite-list { display: grid; gap: 8px; margin: 10px 0; }
 .invite-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 12px; cursor: pointer; }
 .invite-row input { width: 20px; height: 20px; }
+/* Fett in der Pixelschrift: kein echter Fettschnitt vorhanden → Strich doppelt setzen */
+.note-text b, .note-text strong { font-weight: 700; text-shadow: .07em 0 0 currentColor; -webkit-text-stroke: .02em currentColor; letter-spacing: .03em; }
+.note-text u { text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.tool b { text-shadow: 1px 0 0 currentColor; }

@@ -2259,6 +2259,18 @@ function openNoteEditor(id = null) {
 
         /* Text */
         try { document.execCommand('styleWithCSS', false, false); } catch { /* egal */ }
+        // Knöpfe zeigen an, ob fett/unterstrichen/Aufzählung gerade aktiv ist
+        const syncFormatState = () => {
+          if (mode !== 'text' || !textEl.contains(document.getSelection().anchorNode)) return;
+          modal.querySelectorAll('[data-cmd]').forEach((b) => {
+            let on = false;
+            try { on = document.queryCommandState(b.dataset.cmd); } catch { /* egal */ }
+            b.classList.toggle('active', on);
+          });
+        };
+        document.addEventListener('selectionchange', syncFormatState);
+        new MutationObserver(() => { if (!modal.isConnected) document.removeEventListener('selectionchange', syncFormatState); })
+          .observe($('#modal-root'), { childList: true });
         textEl.addEventListener('input', () => {
           work.content = textEl.innerHTML;
           markDirty();
@@ -2288,9 +2300,11 @@ function openNoteEditor(id = null) {
             return;
           }
           if (b.dataset.cmd) {
+            if (!textEl.contains(document.getSelection().anchorNode)) textEl.focus();
             document.execCommand(b.dataset.cmd, false, null);
             work.content = textEl.innerHTML;
             markDirty();
+            syncFormatState();
             return;
           }
           if (b.dataset.width) {
