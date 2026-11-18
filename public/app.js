@@ -1948,7 +1948,10 @@ function mapRule(r) {
   };
 }
 function mapFine(r) {
-  return { id: r.id, userId: r.user_id, confirmedBy: r.confirmed_by || [], settledAt: r.settled_at, createdAt: r.created_at };
+  return {
+    id: r.id, userId: r.user_id, confirmedBy: r.confirmed_by || [], settledAt: r.settled_at, createdAt: r.created_at,
+    confirmations: Array.isArray(r.confirmations) ? r.confirmations : [],
+  };
 }
 function upsertBy(list, item, front = false) {
   const i = list.findIndex((x) => x.id === item.id);
@@ -2017,27 +2020,40 @@ function shadowTendrils() {
 
 /* ---- Kreidestriche --------------------------------------------------- */
 
-function tallySvg(value) {
+/**
+ * Strichliste in Kreide. Alles oberhalb von `burnFrom` wird eingebrannt (Animation).
+ * Jede Linie endet bei einem Wert (1, 2, … bzw. x,5 für den halben Strich).
+ */
+function tallySvg(value, burnFrom = null) {
   const v = Math.min(Number(value) || 0, FINE_STRIKES);
   const whole = Math.floor(v);
   const half = v % 1 !== 0;
   const lines = [];
-  const slot = (i) => ({ g: Math.floor(i / 5), k: i % 5 });
   const x0 = (g) => 8 + g * 64;
   const draw = (i, frac) => {
-    const { g, k } = slot(i);
+    const g = Math.floor(i / 5), k = i % 5;
+    let d;
     if (k < 4) {
       const x = x0(g) + k * 11 + (i % 2 ? 1 : -1);
-      lines.push(`<path d="M${x} ${44 - 38 * frac} L${x + (k % 2 ? 1.5 : -1)} 46"/>`);
+      d = `M${x} ${44 - 38 * frac} L${x + (k % 2 ? 1.5 : -1)} 46`;
     } else {
       const sx = x0(g) - 6, sy = 38, ex = x0(g) + 40, ey = 10;
-      lines.push(`<path d="M${sx} ${sy} L${sx + (ex - sx) * frac} ${sy + (ey - sy) * frac}"/>`);
+      d = `M${sx} ${sy} L${sx + (ex - sx) * frac} ${sy + (ey - sy) * frac}`;
     }
+    lines.push({ d, end: i + frac });
   };
   for (let i = 0; i < whole; i++) draw(i, 1);
   if (half) draw(whole, 0.5);
+  const from = burnFrom == null ? Infinity : Math.max(0, Math.min(burnFrom, v));
+  let n = 0;
+  const burnDelay = new Map();
+  for (const l of lines) if (l.end > from) burnDelay.set(l, 0.35 + 0.55 * n++);
+  const delay = (l) => `--bd:${burnDelay.get(l).toFixed(2)}s`;
   return `<svg class="tally" viewBox="0 0 132 52" aria-label="${fmtNum(v)} Striche">
-    <g filter="url(#chalk)" stroke="#f3f1e7" stroke-width="3.6" stroke-linecap="round" fill="none">${lines.join('')}</g>
+    <g class="scorch">${lines.map((l) => `<path d="${l.d}"${burnDelay.has(l) ? ` class="burn-scorch" style="${delay(l)}"` : ''}/>`).join('')}</g>
+    <g class="embers">${lines.filter((l) => burnDelay.has(l)).map((l) => `<path class="e1" d="${l.d}" style="${delay(l)}"/><path class="e2" d="${l.d}" style="${delay(l)}"/>`).join('')}</g>
+    <g filter="url(#chalk)" stroke="#f3f1e7" stroke-width="3.6" stroke-linecap="round" fill="none">${lines.map((l) =>
+      burnDelay.has(l) ? `<path class="burn" pathLength="1" d="${l.d}" style="${delay(l)}"/>` : `<path d="${l.d}"/>`).join('')}</g>
   </svg>`;
 }
 
@@ -2047,7 +2063,54 @@ const CHALK_DEFS = `<svg width="0" height="0" style="position:absolute" aria-hid
     <feDisplacementMap in="SourceGraphic" in2="n" scale="2.6" result="d"/>
     <feComposite in="d" in2="n" operator="in" result="c"/>
     <feMerge><feMergeNode in="d"/><feMergeNode in="c"/></feMerge>
-  </filter></defs></svg>`;
+  </filter>
+  <filter id="ember" filterUnits="userSpaceOnUse" x="-20" y="-20" width="172" height="92"><feGaussianBlur stdDeviation="2.4"/></filter></defs></svg>`;
+
+/* ---- Einbrennen: neue Striche beim ersten Betreten des Boards ---------- */
+
+const BURN_KEY = 'familie.burned';
+const burning = new Set(); // läuft gerade (falls neu gezeichnet wird)
+
+/** Liefert die Striche, die auf diesem Gerät noch nicht eingebrannt wurden, und merkt sie sich. */
+function takeFreshStrikes() {
+  // Solange eine Urteils-/Strafmeldung offen ist, warten – sonst verpasst man die Animation
+  if (!state.boardLoaded || verdictOpen) return [];
+  const visible = state.strikes.filter((s) => s.status !== 'withdrawn');
+  let seen = lsGet(BURN_KEY, null);
+  if (!Array.isArray(seen)) {
+    // Erster Start mit dieser Version: Bestehendes nicht animieren
+    lsSet(BURN_KEY, visible.map((s) => s.id));
+    return [];
+  }
+  const seenSet = new Set(seen);
+  const fresh = visible.filter((s) => !seenSet.has(s.id) || burning.has(s.id));
+  for (const s of fresh) {
+    if (!burning.has(s.id)) {
+      burning.add(s.id);
+      setTimeout(() => burning.delete(s.id), 5000);
+    }
+    seenSet.add(s.id);
+  }
+  if (fresh.length) lsSet(BURN_KEY, [...seenSet].slice(-500));
+  return fresh;
+}
+
+/* ---- Zählen ------------------------------------------------------------ */
+
+function settledFines(userId) {
+  return state.fines.filter((f) => f.userId === userId && f.settledAt).length;
+}
+function strikeSum(userId, pred = (s) => s.status !== 'withdrawn') {
+  return state.strikes.filter((s) => s.userId === userId && pred(s)).reduce((a, s) => a + s.value, 0);
+}
+/** Striche auf der Tafel = alle vergebenen − 10 je bezahlter Strafe */
+function boardOpen(userId) {
+  return Math.max(0, strikeSum(userId) - FINE_STRIKES * settledFines(userId));
+}
+/** Davon rechtskräftig (Voraussetzung fürs Bezahlen) */
+function boardActive(userId) {
+  return strikeSum(userId, (s) => s.status === 'active') - FINE_STRIKES * settledFines(userId);
+}
 
 /* ---- Board ----------------------------------------------------------- */
 
@@ -2055,28 +2118,32 @@ function openFine(userId) {
   return state.fines.find((f) => f.userId === userId && !f.settledAt);
 }
 
-function polaroidHtml(u, i) {
-  const open = Number(u.strikes) || 0;
+function polaroidHtml(u, i, freshValue = 0) {
+  const open = boardOpen(u.id);
   const over = Math.max(0, open - FINE_STRIKES);
-  const pending = state.strikes.filter((s) => s.userId === u.id && (s.status === 'pending' || s.status === 'appealed'))
-    .reduce((a, s) => a + s.value, 0);
+  const pending = strikeSum(u.id, (s) => s.status === 'pending' || s.status === 'appealed');
   const rot = [-4, 3, -2, 5, -3][i % 5];
   const fine = open >= FINE_STRIKES ? openFine(u.id) : null;
   const confirmed = fine ? fine.confirmedBy : [];
-  return `<div class="pin-col">
-    <figure class="polaroid" style="--rot:${rot}deg;${colorVars(u.color)}" data-strikes-of="${esc(u.id)}">
+  const payable = boardActive(u.id) >= FINE_STRIKES;
+  return `<div class="pin-col${freshValue ? ' burning' : ''}">
+    <button type="button" class="polaroid" style="--rot:${rot}deg;${colorVars(u.color)}" data-dossier="${esc(u.id)}" aria-label="Akte von ${esc(u.firstName)}">
       <span class="pin" aria-hidden="true"></span>
-      <div class="photo">${avatarHtml(u)}</div>
-      <figcaption>${esc(u.firstName)}</figcaption>
-    </figure>
-    ${tallySvg(open)}
+      <span class="photo">${avatarHtml(u)}</span>
+      <span class="caption">${esc(u.firstName)}</span>
+    </button>
+    <div class="tally-wrap">
+      ${tallySvg(open, freshValue ? open - freshValue : null)}
+      ${freshValue ? `<span class="burn-plus" aria-hidden="true">+${fmtNum(freshValue)}</span>` : ''}
+    </div>
     <div class="chalk count">${fmtNum(Math.min(open, FINE_STRIKES))} / ${FINE_STRIKES}${over ? ` <span class="over">+${fmtNum(over)} warten</span>` : ''}</div>
-    ${pending ? `<div class="chalk pending">+${fmtNum(pending)} vorläufig</div>` : ''}
+    ${pending ? `<div class="chalk pending">davon ${fmtNum(pending)} vorläufig</div>` : ''}
     ${open >= FINE_STRIKES ? `<div class="fine-box">
       <div class="fine-head">💶 10 € fällig!</div>
+      ${!payable ? '<div class="chalk small">Bezahlen geht, sobald alle 10 Striche rechtskräftig sind.</div>' : `
       <div class="fine-confirm">${state.users.map((x) => `<span class="${confirmed.includes(x.id) ? 'ok' : ''}">${confirmed.includes(x.id) ? '✓' : '○'} ${esc(x.firstName)}</span>`).join('')}</div>
       ${confirmed.includes(state.me.id) ? '<div class="chalk small">Warte auf die anderen …</div>'
-        : `<button type="button" class="btn small chalk-btn" data-fine="${esc(u.id)}">Bezahlung bestätigen</button>`}
+        : `<button type="button" class="btn small chalk-btn" data-fine="${esc(u.id)}">Bezahlung bestätigen</button>`}`}
     </div>` : ''}
   </div>`;
 }
@@ -2114,13 +2181,15 @@ function renderBoard(view) {
   const toApprove = proposals.filter((r) => !r.approvedBy.includes(state.me.id)).length;
   const showAll = view.dataset.logAll === '1';
   const log = showAll ? state.strikes : state.strikes.slice(0, 12);
+  const fresh = takeFreshStrikes();
+  const freshOf = (id) => fresh.filter((s) => s.userId === id).reduce((a, s) => a + s.value, 0);
   view.innerHTML = `${CHALK_DEFS}
   <div class="board">
     <div class="stone-frame">
       <div class="slate">
         <h2 class="chalk chalk-title">Board der Schande</h2>
-        <div class="pins">${users.map(polaroidHtml).join('')}</div>
-        <p class="chalk small board-note">Bei ${FINE_STRIKES} Strichen sind 10 € fällig – erst wenn alle die Bezahlung bestätigen, werden sie weggewischt.</p>
+        <div class="pins${fresh.length ? ' has-burn' : ''}">${users.map((u, i) => polaroidHtml(u, i, freshOf(u.id))).join('')}</div>
+        <p class="chalk small board-note">Bei ${FINE_STRIKES} Strichen sind 10 € fällig – erst wenn alle die Bezahlung bestätigen, werden sie von der Tafel gewischt. Im Trainerpass bleiben alle Striche stehen.</p>
         ${toApprove ? `<button type="button" class="chalk chalk-link" data-goto="katalog">⚖️ ${toApprove} ${toApprove === 1 ? 'Grund wartet' : 'Gründe warten'} auf deine Beglaubigung</button>` : ''}
         <div class="chalk-ledge" aria-hidden="true"><i></i><i></i></div>
       </div>
@@ -2136,6 +2205,7 @@ function renderBoard(view) {
 
     <section class="slate slate-small">
       <div class="chalk-head"><h3 class="chalk">Protokoll</h3></div>
+      <p class="chalk small">Tippe auf einen Eintrag oder ein Polaroid – dort steht alles mit Datum und Uhrzeit.</p>
       ${log.length ? `<ul class="log">${log.map(logRowHtml).join('')}</ul>` : '<p class="chalk small">Noch keine Striche. Erstaunlich.</p>'}
       ${!showAll && state.strikes.length > log.length ? '<button type="button" class="chalk chalk-link" id="log-all">Alle anzeigen</button>' : ''}
     </section>
@@ -2156,6 +2226,7 @@ function renderBoard(view) {
   view.querySelectorAll('[data-reject]').forEach((b) => b.addEventListener('click', () => ruleAction('reject_rule', b)));
   view.querySelectorAll('[data-strike]').forEach((b) => b.addEventListener('click', () => openStrikeDetail(b.dataset.strike)));
   view.querySelectorAll('[data-fine]').forEach((b) => b.addEventListener('click', () => confirmFine(b.dataset.fine, b)));
+  view.querySelectorAll('[data-dossier]').forEach((b) => b.addEventListener('click', () => openDossier(b.dataset.dossier)));
 }
 
 async function ruleAction(fn, btn) {
@@ -2185,7 +2256,7 @@ async function confirmFine(userId, btn) {
     upsertBy(state.fines, f, true);
     if (f.settledAt) {
       await loadUsers();
-      toast('🧽 Bezahlt – 10 Striche wurden weggewischt.');
+      toast('🧽 Bezahlt – 10 Striche wurden von der Tafel gewischt (im Trainerpass bleiben sie).');
     } else {
       toast('💶 Bestätigt – jetzt müssen die anderen noch bestätigen.');
       invokeQuiet({ action: 'board', event: 'fine' });
@@ -2548,7 +2619,25 @@ function openJudgement(s) {
   );
 }
 
-/* ---- Akte eines Strichs ---------------------------------------------- */
+/* ---- Akte eines Strichs (lückenlos mit Zeitstempeln) ------------------ */
+
+const HISTORY_ICONS = { given: '⚖️', acknowledged: '✓', appealed: '📣', upheld: '⚖️', forced: '🔨', withdrawn: '🕊️' };
+
+function timelineHtml(s) {
+  const entries = [...s.history].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  if (!entries.length) entries.push({ type: 'given', by: s.givenBy, at: s.createdAt, text: s.reason });
+  return `<ol class="timeline">${entries.map((h, i) => `<li class="tl-${esc(h.type)}">
+    <span class="tl-dot" aria-hidden="true">${HISTORY_ICONS[h.type] || '•'}</span>
+    <div class="tl-body">
+      <div class="tl-head"><b>${esc(HISTORY_LABELS[h.type] || h.type)}</b> · ${esc(nameOf(h.by, 'System'))}</div>
+      <time datetime="${esc(h.at)}">${esc(formatDateTime(h.at))} Uhr</time>
+      ${h.type === 'given' && i === 0 ? `<div class="tl-extra">Vergehen: ${esc(s.title)}${s.description ? ` – ${esc(s.description)}` : ''}</div>` : ''}
+      ${h.value != null ? `<div class="tl-extra">Wertigkeit: ${strikeWord(h.value)}</div>` : ''}
+      ${h.text ? `<p>„${esc(h.text)}“</p>` : ''}
+      ${h.type === 'given' && i === 0 && s.hasPhoto ? '<div class="tl-extra">📷 Beweisfoto angehängt (unten)</div>' : ''}
+    </div>
+  </li>`).join('')}</ol>`;
+}
 
 function openStrikeDetail(id) {
   const s = state.strikes.find((x) => x.id === id);
@@ -2557,18 +2646,58 @@ function openStrikeDetail(id) {
   openModal(
     `${judgeHeadHtml(s.title, `Akte · ${nameOf(s.userId)}`)}
      <div class="judge-case">
-       <div class="case-row"><span>Wertigkeit</span><b>${strikeWord(s.value)}</b></div>
-       <div class="case-row"><span>Status</span><b>${esc(strikeStatusLabel(s))}</b></div>
+       <div class="case-grid">
+         <div><span>Bestraft</span><b>${esc(nameOf(s.userId))}</b></div>
+         <div><span>Vergeben von</span><b>${esc(nameOf(s.givenBy, 'automatisch'))}</b></div>
+         <div><span>Wertigkeit</span><b>${strikeWord(s.value)}</b></div>
+         <div><span>Status</span><b>${esc(strikeStatusLabel(s))}</b></div>
+       </div>
        ${s.description ? `<div class="case-row"><span>Verstoß</span><p>${esc(s.description)}</p></div>` : ''}
-       <div class="case-row"><span>Begründung von ${esc(nameOf(s.givenBy, 'automatisch'))}</span><p>„${esc(s.reason)}“</p></div>
-       ${s.appealText ? `<div class="case-row appeal"><span>Einspruch</span><p>„${esc(s.appealText)}“</p></div>` : ''}
-       ${s.verdictText ? `<div class="case-row"><span>Urteil</span><p>„${esc(s.verdictText)}“</p></div>` : ''}
-       ${msg ? `<div class="case-row"><span>Meldung</span><p>${esc(msg.title)}</p></div>` : ''}
+       ${msg ? `<div class="case-row"><span>Zur Meldung</span><p>${esc(msg.title)}</p></div>` : ''}
+       <div class="case-row"><span>Verlauf</span>${timelineHtml(s)}</div>
        ${evidenceHtml(s)}
-       ${s.history.length ? `<div class="case-row"><span>Verlauf</span><ol class="history">${s.history.map((h) =>
-         `<li><b>${esc(HISTORY_LABELS[h.type] || h.type)}</b> · ${esc(nameOf(h.by, 'System'))} · ${esc(formatDateTime(h.at))}${h.text ? `<br><small>„${esc(h.text)}“</small>` : ''}</li>`).join('')}</ol></div>` : ''}
      </div>`,
     { cls: 'judge', onMount: (modal) => mountEvidence(modal) }
+  );
+}
+
+/** Alle Striche und Bezahlungen einer Person */
+function openDossier(userId) {
+  const u = userById(userId);
+  if (!u) return;
+  const list = state.strikes.filter((s) => s.userId === userId);
+  const fines = state.fines.filter((f) => f.userId === userId);
+  const total = strikeSum(userId);
+  openModal(
+    `${judgeHeadHtml(u.firstName, 'Strafregister')}
+     <div class="judge-case">
+       <div class="case-grid">
+         <div><span>Trainerpass</span><b>${strikeWord(total)}</b></div>
+         <div><span>Auf der Tafel</span><b>${fmtNum(Math.min(boardOpen(userId), FINE_STRIKES))} / ${FINE_STRIKES}</b></div>
+         <div><span>Bezahlt</span><b>${settledFines(userId)} × 10 €</b></div>
+         <div><span>Zurückgezogen</span><b>${list.filter((s) => s.status === 'withdrawn').length}</b></div>
+       </div>
+       ${list.length ? `<ul class="dossier">${list.map((s) => `<li><button type="button" class="dossier-row status-${esc(s.status)}" data-strike="${esc(s.id)}">
+           <span class="d-title">${esc(s.title)}${s.hasPhoto ? ' 📷' : ''}</span>
+           <span class="d-val">${s.status === 'withdrawn' ? `<s>${strikeWord(s.value)}</s>` : strikeWord(s.value)}</span>
+           <span class="d-meta">${esc(formatDateTime(s.createdAt))} · von ${esc(nameOf(s.givenBy, 'automatisch'))} · ${esc(strikeStatusLabel(s))}</span>
+         </button></li>`).join('')}</ul>` : '<p class="hint">Eine weiße Weste – noch keine Striche.</p>'}
+       ${fines.length ? `<div class="case-row"><span>Strafen</span><ol class="timeline">${fines.map((f) => `<li class="tl-${f.settledAt ? 'acknowledged' : 'appealed'}">
+           <span class="tl-dot" aria-hidden="true">💶</span>
+           <div class="tl-body"><div class="tl-head"><b>10 € ${f.settledAt ? 'bezahlt' : 'fällig'}</b></div>
+             ${f.confirmations.map((c) => `<div class="tl-extra">✓ bestätigt von ${esc(nameOf(c.by))} · <time>${esc(formatDateTime(c.at))} Uhr</time></div>`).join('')}
+             ${f.settledAt ? `<div class="tl-extra">🧽 Von der Tafel gewischt · <time>${esc(formatDateTime(f.settledAt))} Uhr</time></div>` : ''}
+           </div></li>`).join('')}</ol></div>` : ''}
+     </div>`,
+    {
+      cls: 'judge',
+      onMount: (modal, close) => {
+        modal.querySelectorAll('[data-strike]').forEach((b) => b.addEventListener('click', () => {
+          close();
+          openStrikeDetail(b.dataset.strike);
+        }));
+      },
+    }
   );
 }
 
@@ -2647,6 +2776,7 @@ async function loadBoard() {
   state.strikes = must(strikes).map(mapStrike);
   state.rules = must(rules).map(mapRule);
   state.fines = must(fines).map(mapFine);
+  state.boardLoaded = true;
 }
 
 async function loadFamilyCode() {

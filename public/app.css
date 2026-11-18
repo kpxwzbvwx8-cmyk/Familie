@@ -953,16 +953,17 @@ body.nav-tabs .party-foot { display: none; }
 .pins { display: flex; flex-wrap: wrap; justify-content: space-around; align-items: flex-start; gap: 22px 10px; }
 .pin-col { display: grid; justify-items: center; align-content: start; gap: 6px; width: 140px; }
 .polaroid {
-  position: relative; margin: 0; width: 118px; padding: 8px 8px 0; background: #f6f3ea;
+  position: relative; margin: 0; width: 118px; padding: 8px 8px 0; background: #f6f3ea; display: block;
+  border: 0; border-radius: 0; cursor: pointer; font: inherit; color: inherit; -webkit-tap-highlight-color: transparent;
   transform: rotate(var(--rot)); box-shadow: 0 6px 14px rgba(0,0,0,.55), 0 1px 0 rgba(255,255,255,.4) inset;
 }
 .polaroid .photo {
-  height: 112px; display: grid; place-items: end center; overflow: hidden;
+  height: 112px; width: 100%; display: grid; place-items: end center; overflow: hidden;
   background: radial-gradient(circle at 50% 40%, var(--c-light), var(--c) 120%);
   box-shadow: inset 0 0 12px rgba(0,0,0,.35);
 }
 .polaroid .photo .sprite { height: 96px; width: auto; image-rendering: pixelated; margin-bottom: 4px; }
-.polaroid figcaption { font-family: "Pokemon DS", sans-serif; color: #2a2a2a; text-align: center; font-size: 1.15rem; padding: 6px 0 9px; }
+.polaroid .caption { display: block; font-family: "Pokemon DS", sans-serif; color: #2a2a2a; text-align: center; font-size: 1.15rem; padding: 6px 0 9px; }
 .polaroid .pin {
   position: absolute; top: -7px; left: 50%; width: 15px; height: 15px; margin-left: -7px; border-radius: 50%;
   background: radial-gradient(circle at 35% 30%, #ff8a8a, #c62828 60%, #6d1010); box-shadow: 0 3px 4px rgba(0,0,0,.5); z-index: 1;
@@ -1152,4 +1153,68 @@ body.nav-tabs .punish-field { bottom: calc(var(--tabbar-h) + env(safe-area-inset
 .hell-appeal { width: 100%; max-width: 460px; display: grid; gap: 10px; text-align: left; }
 @media (prefers-reduced-motion: reduce) {
   .hell-tendrils .tendril, .hell-title, .judge-emblem, .punish-field, .fine-box { animation: none; }
+}
+
+.polaroid:active { transform: rotate(var(--rot)) scale(.97); }
+
+/* ---------- Einbrennen neuer Striche ---------- */
+.tally-wrap { position: relative; display: grid; place-items: center; }
+.tally .scorch path { stroke: #0a0605; stroke-width: 7; stroke-linecap: round; fill: none; opacity: .4; }
+.tally .scorch path.burn-scorch { opacity: 0; animation: scorch-in 1.2s ease-out forwards; animation-delay: var(--bd); }
+@keyframes scorch-in { to { opacity: .4; } }
+.tally .embers path { stroke: #ff6a00; stroke-width: 14; stroke-linecap: round; fill: none; opacity: 0; animation: ember-glow 3.4s ease-out forwards; animation-delay: var(--bd); }
+.tally .embers .e1 { stroke-width: 16; --eo: .3; }
+.tally .embers .e2 { stroke-width: 8; --eo: .7; }
+@keyframes ember-glow { 0% { opacity: 0; stroke: #fff2b0; } 8% { opacity: var(--eo); stroke: #ffd24a; } 40% { opacity: var(--eo); stroke: #ff6a00; } 100% { opacity: 0; stroke: #b3121f; } }
+.tally path.burn {
+  stroke-dasharray: 1; stroke-dashoffset: 1; stroke: #fff8d8;
+  animation: burn-draw .45s cubic-bezier(.5, 0, .6, 1) var(--bd) forwards, burn-cool 2.8s ease-in calc(var(--bd) + .45s) forwards;
+}
+@keyframes burn-draw { to { stroke-dashoffset: 0; } }
+@keyframes burn-cool { 0% { stroke: #fff8d8; } 20% { stroke: #ffc233; } 55% { stroke: #ff5a1f; } 100% { stroke: #f3f1e7; } }
+.burn-plus {
+  position: absolute; right: -4px; top: -6px; font-family: "Pokemon Solid", sans-serif; font-size: 1.3rem;
+  color: #ffcb05; -webkit-text-stroke: 1.5px #7a1414; paint-order: stroke fill; text-shadow: 0 0 10px #ff6a00;
+  opacity: 0; animation: plus-rise 2.6s ease-out .3s forwards; pointer-events: none;
+}
+@keyframes plus-rise { 0% { opacity: 0; transform: translateY(8px) scale(.6); } 15% { opacity: 1; transform: translateY(0) scale(1.15); } 70% { opacity: 1; } 100% { opacity: 0; transform: translateY(-22px) scale(1); } }
+.pin-col.burning .polaroid { animation: jolt .5s ease-out .3s; }
+@keyframes jolt { 0%, 100% { transform: rotate(var(--rot)); } 25% { transform: rotate(calc(var(--rot) + 4deg)) translateY(-2px); } 60% { transform: rotate(calc(var(--rot) - 3deg)); } }
+.pins.has-burn::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: 4px;
+  background: radial-gradient(ellipse at 50% 55%, rgba(255,110,20,.35), transparent 60%);
+  opacity: 0; animation: slate-flash 1.8s ease-out .35s;
+}
+.pins { position: relative; }
+@keyframes slate-flash { 15% { opacity: 1; } 100% { opacity: 0; } }
+
+/* ---------- Akte: Zeitstrahl ---------- */
+.case-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.case-grid > div { display: grid; gap: 2px; padding: 8px 10px; background: rgba(255,255,255,.75); border: 1px solid var(--border); border-radius: 8px; }
+.case-grid span { font-size: .8rem; color: #2f8f58; text-transform: uppercase; letter-spacing: .05em; }
+.timeline { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 0; }
+.timeline li { position: relative; display: grid; grid-template-columns: 30px 1fr; gap: 8px; padding-bottom: 12px; }
+.timeline li:not(:last-child)::before { content: ""; position: absolute; left: 14px; top: 28px; bottom: 0; width: 2px; background: linear-gradient(#d8ae3a, #3fc070); opacity: .6; }
+.tl-dot { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-size: .95rem; background: #fff; border: 2px solid #d8ae3a; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+.tl-appealed .tl-dot { border-color: #3fc070; }
+.tl-forced .tl-dot { border-color: #b8891a; background: #fbf1d2; }
+.tl-withdrawn .tl-dot { border-color: #9a9a94; }
+.tl-body { display: grid; gap: 2px; padding-top: 3px; }
+.tl-body time { font-size: .85rem; color: var(--muted); }
+.tl-body p { margin: 2px 0 0; white-space: pre-wrap; font-style: italic; }
+.tl-extra { font-size: .92rem; }
+.dossier { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.dossier-row {
+  width: 100%; text-align: left; font: inherit; color: var(--text); cursor: pointer;
+  display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 9px 11px;
+  background: #fff; border: 1px solid var(--border); border-left: 4px solid #d8ae3a; border-radius: 8px;
+}
+.dossier-row.status-pending, .dossier-row.status-appealed { border-left-color: #3fc070; }
+.dossier-row.status-withdrawn { opacity: .55; border-left-color: #9a9a94; }
+.d-val { color: #9c7414; white-space: nowrap; }
+.d-meta { grid-column: 1 / -1; font-size: .82rem; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) {
+  .tally path.burn { animation: none; stroke-dashoffset: 0; }
+  .tally .embers path, .burn-plus, .pins.has-burn::after { animation: none; display: none; }
+  .tally .scorch path.burn-scorch { animation: none; opacity: .4; }
 }
