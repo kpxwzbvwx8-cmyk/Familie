@@ -2759,8 +2759,16 @@ function setupMenu() {
  * Einstellungen
  * ---------------------------------------------------------------------- */
 
+const APP_FONTS = [
+  ['ds', 'Nintendo DS'],
+  ['switch', 'Switch'],
+  ['gameboy', 'Game Boy'],
+  ['3ds', 'Nintendo 3DS'],
+];
+
 function renderSettings(view) {
   const dark = isDark();
+  const currentFont = document.documentElement.dataset.font || 'ds';
   const pushState = !pushSupported ? 'nicht verfügbar' : Notification.permission === 'granted' ? 'aktiv' : Notification.permission === 'denied' ? 'blockiert' : 'aus';
   view.innerHTML = `
     <div class="settings">
@@ -2771,6 +2779,14 @@ function renderSettings(view) {
           <svg class="tt-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z" fill="currentColor"/></svg>
           <span class="tt-knob"></span>
         </button>
+      </div>
+      <div class="setting-row font-setting">
+        <div>
+          <label for="set-font">Schriftart</label>
+        </div>
+        <select id="set-font">
+          ${APP_FONTS.map(([id, name]) => `<option value="${id}"${id === currentFont ? ' selected' : ''}>${name}</option>`).join('')}
+        </select>
       </div>
       <div class="setting-row">
         <div><b>Navigation</b><p class="hint">${getNavMode() === 'tabs' ? 'Reiter unten' : 'X-Menü'}</p></div>
@@ -2802,6 +2818,10 @@ function renderSettings(view) {
       </div>
     </div>`;
   $('#theme-toggle', view).addEventListener('click', () => { toggleTheme(); render(); });
+  $('#set-font', view).addEventListener('change', ({ target }) => {
+    document.documentElement.dataset.font = target.value;
+    try { localStorage.setItem('familie.font', target.value); } catch { /* privat */ }
+  });
   const push = $('#set-push', view); if (push) push.addEventListener('click', enablePush);
   const prof = $('#set-profile', view); if (prof) prof.addEventListener('click', openEditProfile);
   const card = $('#set-card', view); if (card) card.addEventListener('click', () => openTrainerCard(state.me));
@@ -5630,8 +5650,16 @@ function openDossier(userId) {
  *  blau für Trainer, rosa für Trainerinnen
  * ---------------------------------------------------------------------- */
 
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.2.2';
 const CHANGELOG = [
+  {
+    version: '1.2.2', date: '2026-11-19', title: 'Vier Schriften, vier Generationen!',
+    intro: 'Was für ein Sprung durch die Generationen! Heute knackige Game-Boy-Pixel, morgen der moderne Switch-Look? Dazu kommen die schlanke 3DS-Schrift und der vertraute Nintendo-DS-Stil. Jede Generation steht dir jetzt in der ganzen App zur Verfügung!',
+    items: [
+      'Öffne Menü → Einstellungen → Schriftart und wechsle sofort zwischen Nintendo DS, Switch, Game Boy und Nintendo 3DS.',
+      'Dein Gerät merkt sich deinen Favoriten. Auch offline erwarten dich die ganze Buchstabenreihe, Umlaute und Zahlen!',
+    ],
+  },
   {
     version: '1.2.1', date: '2026-11-19', title: 'Einheitliche Popups',
     items: [
