@@ -1078,6 +1078,15 @@ function formatRange(start, end) {
 }
 
 const isTodayIso = (iso) => Boolean(iso) && startOfDay(new Date(iso)).getTime() === startOfDay(new Date()).getTime();
+/** Zeitpunkt/Zeitraum einer Aufgabe: ganze Tage (0:00–23:59) als „ganztags“, sonst Uhrzeiten */
+function msgWhenText(m, fmt) {
+  const s = new Date(m.eventAt), e = m.endAt ? new Date(m.endAt) : null;
+  const dayFmt = (d) => (isTodayIso(d.toISOString()) ? 'heute' : d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' }));
+  const wholeDay = s.getHours() === 0 && s.getMinutes() === 0 && e && e.getHours() === 23 && e.getMinutes() >= 59;
+  if (wholeDay) return sameDay(startOfDay(s), startOfDay(e)) ? `${dayFmt(s)} · ganztags` : `${dayFmt(s)} – ${dayFmt(e)}`;
+  if (!e) return fmt(m.eventAt);
+  return sameDay(startOfDay(s), startOfDay(e)) ? `${fmt(m.eventAt)}–${formatTimeOnly(m.endAt)}` : `${fmt(m.eventAt)} – ${fmt(m.endAt)}`;
+}
 /** Kurze Zeitangabe für schmale Karten: heute/morgen nur Uhrzeit, sonst Wochentag bzw. Datum */
 function slimWhen(iso) {
   const d = new Date(iso);
@@ -1118,7 +1127,7 @@ function messageCardHtml(m) {
   let time = '';
   if (exp) time = `<span class="bc-time exp">⌛ ${exp.kind === 'respond' ? 'Antwort' : 'Deadline'} · <span data-left="${esc(exp.at)}">${esc(timeLeft(exp.at))}</span></span>`;
   else if (m.deadlineAt && !m.closedAt && !done) time = `<span class="bc-time dl${Date.parse(m.deadlineAt) < Date.now() ? ' over' : ''}">⏳ bis ${esc(cardWhen(m.deadlineAt))}</span>`;
-  else if (timed) time = `<span class="bc-time">🕒 ${esc(cardWhen(m.eventAt))}${m.endAt ? `–${esc(isTodayIso(m.endAt) && isTodayIso(m.eventAt) ? formatTimeOnly(m.endAt) : cardWhen(m.endAt))}` : ''}</span>`;
+  else if (timed) time = `<span class="bc-time">🕒 ${esc(msgWhenText(m, cardWhen))}</span>`;
   else if (m.openEnded && !done && !m.closedAt) time = '<span class="bc-time open">⚡ Offen bis erledigt</span>';
   const status = m.closedAt
     ? (m.reviewStatus === 'accepted' ? '👍 Abgenommen' : m.reviewStatus === 'rejected' || m.reviewStatus === 'missed' ? '😈 Strich vergeben' : '🔒 Geschlossen')
@@ -1128,7 +1137,7 @@ function messageCardHtml(m) {
     id="msg-${esc(m.id)}" data-msg="${esc(m.id)}" tabindex="0" role="button" aria-label="${esc(m.title)} – Details öffnen">
     <div class="bc-side">${ballSvg(urgencyInfo(m.urgency).ball, 38)}<span class="bc-badge">${esc(urgencyLabel(m.urgency))}</span></div>
     <div class="bc-body">
-      ${time || needsMyAnswer ? `<div class="bc-top">${time}${needsMyAnswer ? '<span class="bc-flag me">✉️ Antwort fehlt</span>' : ''}</div>` : ''}
+      ${time || needsMyAnswer ? `<div class="bc-top">${time}${needsMyAnswer ? '<span class="bc-flag me">✉️ Rückmeldung von dir fehlt</span>' : ''}</div>` : ''}
       <h3 class="bc-title">${esc(m.title)}</h3>
       <div class="bc-meta">
         <span class="sl-who">${headImg(author)}${esc(mine ? 'Du' : author ? author.firstName : '?')}${forWhom.length ? `<span class="sl-arrow">➜</span>${forWhom.map(headImg).join('')}${esc(forWhom.map((u) => (u.id === state.me.id ? 'dich' : u.firstName)).join(' & '))}` : ''}</span>
@@ -1188,7 +1197,7 @@ function messageSlimHtml(m) {
   let pill = '';
   if (exp) pill = `<span class="sl-time exp">⌛ <span data-left-short="${esc(exp.at)}">${esc(timeLeftShort(exp.at))}</span></span>`;
   else if (m.deadlineAt && !m.closedAt && !done) pill = `<span class="sl-time dl${Date.parse(m.deadlineAt) < Date.now() ? ' over' : ''}">⏳ ${esc(slimWhen(m.deadlineAt))}</span>`;
-  else if (timed) pill = `<span class="sl-time">${esc(slimWhen(m.eventAt))}${m.endAt && isTodayIso(m.endAt) ? `–${esc(formatTimeOnly(m.endAt))}` : ''}</span>`;
+  else if (timed) pill = `<span class="sl-time">${esc(msgWhenText(m, slimWhen))}</span>`;
   else if (m.openEnded && !done && !m.closedAt) pill = '<span class="sl-time open">⚡ offen</span>';
   const who = `${headImg(author)}${forWhom.length ? `<span class="sl-arrow">➜</span>${forWhom.map(headImg).join('')}<span>${esc(forWhom.map((u) => (u.id === state.me.id ? 'dich' : u.firstName)).join(' & '))}</span>` : `<span>${esc(mine ? 'Du' : author ? author.firstName : '?')}</span>`}`;
   const status = m.closedAt
@@ -1208,7 +1217,7 @@ function messageSlimHtml(m) {
       </div>
     </div>
     <span class="sl-flags">
-      ${needsMyAnswer ? '<span class="sl-flag me" title="Deine Antwort fehlt">✉️</span>' : ''}
+      ${needsMyAnswer ? '<span class="sl-flag me" title="Rückmeldung von dir fehlt">✉️</span>' : ''}
       ${unread ? `<span class="sl-flag new" title="Neue Kommentare">💬<b>${unread}</b></span>` : ''}
     </span>
   </article>`;
@@ -1286,7 +1295,7 @@ function messageFullHtml(m) {
       <button class="icon-btn" data-close aria-label="Schließen">✕</button>
     </div>
     <div class="ev-rows">
-      ${exp ? `<div class="ev-row exp-row"><span>⌛</span><b>${exp.kind === 'respond' ? 'Deine Antwort fehlt' : 'Läuft aus'} – <span data-left="${esc(exp.at)}">${esc(timeLeft(exp.at))}</span> (bis ${esc(formatTimeOnly(exp.at))})</b></div>` : ''}
+      ${exp ? `<div class="ev-row exp-row"><span>⌛</span><b>${exp.kind === 'respond' ? 'Deine Rückmeldung fehlt' : 'Läuft aus'} – <span data-left="${esc(exp.at)}">${esc(timeLeft(exp.at))}</span> (bis ${esc(formatTimeOnly(exp.at))})</b></div>` : ''}
       ${m.openEnded ? `<div class="ev-row"><span>⚡</span><b>Sofort &amp; offen – bleibt, bis ${m.needsAck ? 'alle geantwortet haben' : 'sie erledigt ist'}</b></div>` : ''}
       ${timed ? `<div class="ev-row"><span>🕒</span><b>${esc(formatRange(m.eventAt, m.endAt))}${m.remindAtStart ? ' 🔔' : ''}</b></div>` : ''}
       ${m.deadlineAt ? `<div class="ev-row"><span>⏳</span><b class="${Date.parse(m.deadlineAt) < Date.now() && !m.closedAt ? 'over' : ''}">Deadline: ${esc(formatDateTime(m.deadlineAt))}</b></div>` : ''}
