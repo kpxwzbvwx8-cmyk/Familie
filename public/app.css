@@ -2194,3 +2194,16 @@ button.person-head { padding: 2px 2px 4px; }
 .sf-group-head .kh-chev { margin-left: 6px; }
 .sf-group:not(.open) .sf-group-head .kh-chev { transform: rotate(-90deg); }
 .sf-group-body { display: grid; gap: 8px; padding: 0 10px 12px; }
+
+/* ===================== Heute: Uhrzeit groß ===================== */
+.big-times { display: flex; flex-wrap: wrap; gap: 6px; }
+.big-time {
+  display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; justify-self: start; width: max-content;
+  padding: 1px 10px 1px 7px; border-radius: 8px; font-size: 1.2rem; line-height: 1.4; letter-spacing: .04em;
+  font-variant-numeric: tabular-nums; color: #fff; background: #2b2b33; box-shadow: 0 2px 0 #000, inset 0 0 0 2px rgba(255,255,255,.12);
+}
+.big-time.dl { background: #8a1f2c; }
+.big-time.over { background: var(--danger); }
+.ev-card-body .big-time { background: var(--c); box-shadow: 0 2px 0 color-mix(in srgb, var(--c) 60%, #000); }
+.todo-card .big-time { background: var(--c); box-shadow: 0 2px 0 color-mix(in srgb, var(--c) 60%, #000); margin: 2px 0; }
+.mq-dates { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--muted); font-size: .92rem; }

@@ -1077,6 +1077,7 @@ function formatRange(start, end) {
   return sameDay ? `${formatDateTime(start)} – ${formatTimeOnly(end)}` : `${formatDateTime(start)} – ${formatDateTime(end)}`;
 }
 
+const isTodayIso = (iso) => Boolean(iso) && startOfDay(new Date(iso)).getTime() === startOfDay(new Date()).getTime();
 /** Kompakte Karte auf Start: zu = Titel + eine Zeile; auf = Rückmeldung, Kommentare, „Details“ */
 function messageHtml(m) {
   const mine = state.me && m.authorId === state.me.id;
@@ -1095,6 +1096,9 @@ function messageHtml(m) {
   const options = m.needsAck ? (m.ackOptions || ['Erledigt']) : [];
   const needsMyAnswer = m.needsAck && responsible && !myResp && !m.closedAt;
   const timed = m.eventAt && (m.endAt || Date.parse(m.eventAt) > Date.parse(m.createdAt) + 5 * 60e3);
+  // Heute: die Uhrzeit ist das Wichtigste – groß zeigen, das Datum erst aufgeklappt
+  const tToday = Boolean(timed) && isTodayIso(m.eventAt) && (!m.endAt || isTodayIso(m.endAt));
+  const dToday = isTodayIso(m.deadlineAt);
   const status = m.closedAt
     ? (m.reviewStatus === 'accepted' ? '👍 Abgenommen' : m.reviewStatus === 'rejected' || m.reviewStatus === 'missed' ? '😈 Strich vergeben' : '🔒 Geschlossen')
     : awaitingReview ? (mine ? '⏸️ Bitte abnehmen' : '⏸️ Wartet auf Abnahme')
@@ -1111,17 +1115,22 @@ function messageHtml(m) {
     <div class="msg-body">
       ${exp ? `<div class="exp-bar"><span class="exp-glass" aria-hidden="true">⌛</span><b>${exp.kind === 'respond' ? 'Antwort fehlt' : 'Deadline'}</b><span data-left="${esc(exp.at)}">${esc(timeLeft(exp.at))}</span><small>bis ${esc(formatTimeOnly(exp.at))}</small></div>` : ''}
       <h3>${esc(m.title)}</h3>
+      ${tToday || (dToday && !m.closedAt && !(exp && exp.kind === 'deadline')) ? `<div class="big-times">
+        ${tToday ? `<span class="big-time">🕒 ${esc(formatTimeOnly(m.eventAt))}${m.endAt ? `–${esc(formatTimeOnly(m.endAt))}` : ''}</span>` : ''}
+        ${dToday && !(exp && exp.kind === 'deadline') && !m.closedAt ? `<span class="big-time dl${Date.parse(m.deadlineAt) < Date.now() ? ' over' : ''}">⏳ bis ${esc(formatTimeOnly(m.deadlineAt))}</span>` : ''}
+      </div>` : ''}
       <div class="msg-chips">
         ${m.openEnded && !m.closedAt && !m.doneBy ? '<span class="mc-open">⚡ Offen bis erledigt</span>' : ''}
         <span class="mc-from" title="Von ${esc(author ? author.firstName : '?')}">${author && author.gender && CAL_HEADS[author.gender] ? `<img class="fw-head" src="${CAL_HEADS[author.gender]}" alt="">` : ''}${esc(mine ? 'Du' : author ? author.firstName : '?')}${forWhom.length ? ` ➜ ${heads(forWhom)}${esc(forWhom.map((u) => (u.id === state.me.id ? 'dich' : u.firstName)).join(' & '))}` : ''}</span>
-        ${timed ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt || m.deadlineAt))}</span>` : ''}
-        ${m.deadlineAt && !m.closedAt && !(exp && exp.kind === 'deadline') ? `<span class="deadline${Date.parse(m.deadlineAt) < Date.now() ? ' over' : ''}">⏳ ${esc(formatDateTime(m.deadlineAt))}</span>` : ''}
+        ${timed && !tToday ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt || m.deadlineAt))}</span>` : ''}
+        ${m.deadlineAt && !m.closedAt && !dToday && !(exp && exp.kind === 'deadline') ? `<span class="deadline${Date.parse(m.deadlineAt) < Date.now() ? ' over' : ''}">⏳ ${esc(formatDateTime(m.deadlineAt))}</span>` : ''}
         ${m.threatStrike && !m.closedAt ? '<span title="Strich bei Nichterfüllung">😈</span>' : ''}
         ${status ? `<span class="mc-status">${status}</span>` : ''}
         ${needsMyAnswer ? '<span class="mc-todo">✉️ Deine Antwort fehlt</span>' : m.needsAck ? `<span>✉️ ${resps.length}</span>` : ''}
         ${comments.length ? `<span class="count${unread ? ' unread' : ''}">💬 ${comments.length}${unread ? ` <b>+${unread}</b>` : ''}</span>` : ''}
       </div>
       <div class="msg-quick msg-extra">
+        ${tToday || dToday ? `<div class="mq-dates">${tToday ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt))}</span>` : ''}${dToday ? `<span>⏳ Deadline: ${esc(formatDateTime(m.deadlineAt))}</span>` : ''}</div>` : ''}
         ${m.description ? `<p class="desc">${esc(m.description)}</p>` : ''}
         ${m.needsAck && responsible && !m.closedAt ? `<div class="mq-block"><span class="mq-label">${myResp ? `Deine Antwort: <b>${esc(myResp.option)}</b> – ändern?` : 'Deine Rückmeldung:'}</span>
           <div class="reply-btns">${options.map((o) => `<button class="btn small${myResp && myResp.option === o ? ' primary' : ''}" data-reply="${esc(m.id)}" data-option="${esc(o)}">${esc(o)}</button>`).join('')}</div></div>` : ''}
@@ -4049,13 +4058,15 @@ function eventCardHtml(ev, { overdue = false } = {}) {
   const inv = myInvite(ev);
   const comments = state.eventComments.filter((c) => c.eventId === ev.id).length;
   const pendingOthers = invitesOf(ev).filter((i) => i.status === 'pending').length;
+  const evToday = !ev.allDay && isTodayIso(ev.startAt) && isTodayIso(ev.endAt);
   return `<article class="ev-card" data-event-card="${esc(ev.id)}" data-occ="${esc(ev.occ || '')}" tabindex="0" style="--c:${eventColor(ev)}">
     <div class="ev-card-side">${eventHeads(ev, 'ev-card-head')}</div>
     <div class="ev-card-body">
       <span class="ev-tag">📅 TERMIN</span>
+      ${evToday ? `<span class="big-time">🕒 ${esc(formatTimeOnly(ev.startAt))}${ev.endAt !== ev.startAt ? `–${esc(formatTimeOnly(ev.endAt))}` : ''}</span>` : ''}
       <h3>${esc(ev.title)}</h3>
       <div class="ev-card-meta">
-        <span>🕒 ${esc(eventTimeText(ev, true))}</span>
+        ${evToday ? '' : `<span>🕒 ${esc(eventTimeText(ev, true))}</span>`}
         ${ev.recurrence ? `<span>🔁 ${esc(recurrenceLabel(ev.recurrence))}</span>` : ''}
         ${ev.location ? `<span>📍 ${esc(ev.location)}</span>` : ''}
         ${inv && inv.status === 'accepted' ? '<span>✅ Du hast zugesagt</span>' : ''}
@@ -4072,15 +4083,17 @@ function todoCardHtml(ev, overdue) {
     ? evStartDay(ev).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' })
     : eventTimeText(ev, true);
   const exp = todoExpiry(ev);
+  const tToday = !ev.allDay && !overdue && isTodayIso(ev.startAt);
   return `<article class="todo-card${overdue ? ' overdue' : ''}${exp ? ' expiring' : ''}" data-event-card="${esc(ev.id)}" data-occ="${esc(ev.occ || '')}" tabindex="0" style="--c:${eventColor(ev)}">
     <span class="todo-icon" aria-hidden="true">🔔</span>
     <div class="todo-body">
       ${exp ? `<div class="exp-bar"><span class="exp-glass" aria-hidden="true">⌛</span><b>Fällig</b><span data-left="${esc(exp.at)}">${esc(timeLeft(exp.at))}</span><small>bis ${esc(formatTimeOnly(exp.at))}</small></div>` : ''}
       <span class="todo-tag">ERINNERUNG${overdue ? ' · ÜBERFÄLLIG' : ''}</span>
+      ${tToday && !exp ? `<span class="big-time">🕒 ${esc(formatTimeOnly(ev.startAt))}${ev.endAt !== ev.startAt ? `–${esc(formatTimeOnly(ev.endAt))}` : ''}</span>` : ''}
       <h3>${esc(ev.title)}</h3>
       ${ev.description ? `<p class="desc">${esc(ev.description)}</p>` : ''}
       <div class="todo-meta">
-        <span>🗓️ ${esc(when)}</span>
+        ${tToday || (ev.allDay && isTodayIso(ev.startAt)) ? '' : `<span>🗓️ ${esc(when)}</span>`}
         ${ev.recurrence ? `<span>🔁 ${esc(recurrenceLabel(ev.recurrence))}</span>` : ''}
         <span class="todo-for">${people.map((u) => `${u.gender && CAL_HEADS[u.gender] ? `<img class="fw-head" src="${CAL_HEADS[u.gender]}" alt="">` : ''}${esc(u.id === state.me.id ? 'Du' : u.firstName)}`).join(' & ')}</span>
       </div>
