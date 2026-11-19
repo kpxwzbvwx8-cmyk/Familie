@@ -8,7 +8,10 @@
 name: Veröffentlichen
 
 on:
+  # Nur der Haupt-Branch wird veröffentlicht. Neue Änderungen liegen zuerst auf „entwicklung“
+  # und kommen erst nach Freigabe hierher.
   push:
+    branches: [claude/neue-app-trainerkarte-l4wvdd]
   workflow_dispatch:
 
 permissions:
