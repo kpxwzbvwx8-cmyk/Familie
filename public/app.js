@@ -1136,7 +1136,7 @@ function messageCardHtml(m) {
         ${status ? `<span class="bc-status">${status}</span>` : ''}
         ${m.threatStrike && !m.closedAt ? '<span>😈 Strich droht</span>' : ''}
         ${m.needsAck && !needsMyAnswer ? `<span>✉️ ${resps.length} Antwort${resps.length === 1 ? '' : 'en'}</span>` : ''}
-        ${comments ? `<span class="${unread ? 'bc-new' : ''}">💬 ${comments}${unread ? ` · ${unread} neu` : ''}</span>` : ''}
+        ${unread ? `<span class="bc-new">💬 ${unread} neu</span>` : ''}
       </div>
     </div>
   </article>`;
@@ -1165,7 +1165,7 @@ function eventBigCardHtml(ev, overdue = false) {
         ${ev.recurrence ? `<span>🔁 ${esc(recurrenceLabel(ev.recurrence))}</span>` : ''}
         ${inv && inv.status === 'accepted' ? '<span>✅ zugesagt</span>' : ''}
         ${pendingOthers && ev.ownerId === state.me.id ? `<span>⏳ ${pendingOthers} Antwort${pendingOthers === 1 ? '' : 'en'} offen</span>` : ''}
-        ${comments ? `<span>💬 ${comments}</span>` : ''}
+        ${evUnread(ev) ? `<span class="bc-new">💬 ${evUnread(ev)} neu</span>` : ''}
       </div>
     </div>
   </article>`;
@@ -1211,7 +1211,7 @@ function messageSlimHtml(m) {
     </div>
     <span class="sl-flags">
       ${needsMyAnswer ? '<span class="sl-flag me" title="Deine Antwort fehlt">✉️</span>' : ''}
-      ${comments ? `<span class="sl-flag${unread ? ' new' : ''}">💬${unread ? `<b>${unread}</b>` : comments}</span>` : ''}
+      ${unread ? `<span class="sl-flag new" title="Neue Kommentare">💬<b>${unread}</b></span>` : ''}
     </span>
   </article>`;
 }
@@ -1221,9 +1221,8 @@ function openMessageDetail(id) {
   const m = state.messages.find((x) => x.id === id);
   if (!m) { toast('Diese Nachricht gibt es nicht mehr.'); return; }
   if (state.msgDetail) state.msgDetail.close();
-  openModal(`<div class="modal-head msg-detail-head"><h2>${m.urgency === 'info' ? 'ℹ️ Info' : '📋 Aufgabe'}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
-    <div class="msg-detail-body">${messageFullHtml(m)}</div>`, {
-    cls: 'msg-detail-modal',
+  openModal(`<div class="msg-detail-body">${messageFullHtml(m)}</div>`, {
+    cls: 'ev-modal msg-detail-modal',
     onMount: (modal, close) => {
       const done = () => { if (state.msgDetail && state.msgDetail.id === id) state.msgDetail = null; close(); };
       state.msgDetail = { id, close: done, modal };
@@ -1254,97 +1253,82 @@ function refreshMessageDetail(id) {
   if (ni) ni.value = draft;
 }
 
-/** Vollständige Karte – im „Details“-Popup */
+/** Details-Popup einer Aufgabe/Info – gleicher Aufbau wie beim Termin, Farbe nach Dringlichkeit */
 function messageFullHtml(m) {
   const mine = state.me && m.authorId === state.me.id;
   const author = userById(m.authorId);
-  const doneBy = m.doneBy ? userById(m.doneBy) : null;
-  const expanded = true;
   markCommentsSeen(m.id);
-  const unread = 0;
   const pin = prefs.pins[m.id] && Date.parse(prefs.pins[m.id]) > Date.now() ? prefs.pins[m.id] : null;
-  // zuständig: die ausgewählten Personen (ältere Aufgaben ohne Auswahl: alle außer dem Urheber)
-  const responsible = state.me && (m.assignees.length ? m.assignees.includes(state.me.id) : !mine);
+  const responsible = isResponsible(m);
   const canMarkDone = responsible && !m.doneBy && !m.closedAt && !m.needsAck && (m.deleteOnDone || m.deadlineAt || m.openEnded);
   const forWhom = m.assignees.map(userById).filter(Boolean);
   const awaitingReview = m.threatStrike && !m.closedAt && isFrozen(m);
+  const options = m.needsAck ? (m.ackOptions || ['Erledigt']) : [];
+  const resps = state.responses.get(m.id) || [];
+  const myResp = state.me ? resps.find((r) => r.userId === state.me.id) : null;
+  const comments = state.comments.get(m.id) || [];
+  const exp = expiryOf(m);
+  const timed = m.eventAt && (m.endAt || Date.parse(m.eventAt) > Date.parse(m.createdAt) + 5 * 60e3);
+  const info = isInfo(m);
   const statusLine = m.closedAt
     ? (m.reviewStatus === 'accepted' ? '👍 Abgenommen – geschlossen'
       : m.reviewStatus === 'rejected' ? `😈 Strich vergeben: ${m.strikeNote || ''}`
       : m.reviewStatus === 'missed' ? '😈 Deadline verpasst – Strich vergeben'
       : '🔒 Geschlossen – Deadline abgelaufen')
     : awaitingReview ? `⏸️ Timer eingefroren – ${mine ? 'bitte abnehmen' : 'wartet auf Abnahme'}` : '';
-  const options = m.needsAck ? (m.ackOptions || ['Erledigt']) : [];
-  const resps = state.responses.get(m.id) || [];
-  const myResp = state.me ? resps.find((r) => r.userId === state.me.id) : null;
-  const comments = state.comments.get(m.id) || [];
-  const portrait = author && PORTRAITS[author.gender]
-    ? `<img class="msg-portrait" src="${PORTRAITS[author.gender]}" alt="${esc(fullName(author))}">` : '';
-  return `
-  <article class="msg u-${esc(m.urgency)}${m.closedAt ? ' is-closed' : ''}${expanded ? ' expanded' : ''}${unread ? ' has-unread' : ''}${m.doneBy && !awaitingReview ? ' is-done' : ''} msg-full" id="msgd-${esc(m.id)}" data-msg="${esc(m.id)}" data-msg-full="${esc(m.id)}">
-    <div class="msg-side">
-      <div class="msg-urg">${ballSvg(urgencyInfo(m.urgency).ball, 26)}<span class="badge">${esc(urgencyLabel(m.urgency))}</span></div>
-      ${portrait}
+  const portrait = author && PORTRAITS[author.gender] ? `<img class="ev-sprite msg-sprite" src="${PORTRAITS[author.gender]}" alt="">` : '';
+  return `<div class="ev-detail msg-detail u-${esc(m.urgency)}" id="msgd-${esc(m.id)}" data-msg="${esc(m.id)}" data-msg-full="${esc(m.id)}">
+    <div class="ev-banner">
+      <div class="ev-banner-sprites">${portrait}</div>
+      <div class="ev-banner-text">
+        <span class="ev-tag">${info ? 'ℹ️ INFO' : '📋 AUFGABE'} · ${esc(urgencyLabel(m.urgency))}</span>
+        <h2>${m.doneBy || m.closedAt ? '✓ ' : ''}${esc(m.title)}</h2>
+      </div>
+      <span class="msg-banner-ball">${ballSvg(urgencyInfo(m.urgency).ball, 34)}</span>
+      <button class="icon-btn" data-close aria-label="Schließen">✕</button>
     </div>
-    <div class="msg-body">
-      <h3>${esc(m.title)}</h3>
-      ${m.description ? `<p class="desc">${esc(m.description)}</p>` : ''}
-      <div class="msg-meta">
-        <span class="author"><span class="dot" style="--c:${esc(author ? author.color : '#888888')}"></span>${esc(author ? fullName(author) : 'Unbekannt')} · <span data-rel="${esc(m.createdAt)}">${esc(relative(m.createdAt))}</span></span>
-        ${forWhom.length ? `<span class="for-whom">👉 Für ${forWhom.map((u) => `${u.gender && CAL_HEADS[u.gender] ? `<img class="fw-head" src="${CAL_HEADS[u.gender]}" alt="">` : ''}${esc(u.id === state.me.id ? 'dich' : u.firstName)}`).join(' & ')}</span>` : ''}
-        ${m.openEnded ? `<span>⚡ Sofort & offen – bleibt unter „Fortlaufend“, bis ${m.needsAck ? 'alle geantwortet haben' : 'sie erledigt ist'}</span>` : ''}
-        ${m.eventAt ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt || m.deadlineAt))}${m.remindAtStart ? ' <span title="Erinnerung zum Beginn">🔔</span>' : ''}</span>` : ''}
-        ${statusLine ? `<span class="status-line${m.reviewStatus === 'rejected' || m.reviewStatus === 'missed' ? ' bad' : ''}">${esc(statusLine)}</span>` : ''}
-        ${m.threatStrike && !m.closedAt ? '<span class="strike-threat">😈 Strich auf dem Board der Schande bei Nichterfüllung</span>' : ''}
-        ${m.deadlineAt ? `<span class="deadline${Date.parse(m.deadlineAt) < Date.now() ? ' over' : ''}">⏳ Deadline: ${esc(formatDateTime(m.deadlineAt))}</span>` : ''}
-        ${m.needsAck && m.respondBy ? `<span class="more">✉️ Antworten bis ${esc(formatDateTime(m.respondBy))}</span>` : ''}
-        ${m.doneBy ? `<span class="done-line">✓ Erledigt von ${esc(doneBy ? doneBy.firstName : 'jemandem')}</span>` : ''}
-        ${m.needsAck ? `<span class="count">✉️ ${resps.length ? `${resps.length} Antwort${resps.length === 1 ? '' : 'en'}` : 'Rückmeldung erbeten'}</span>` : ''}
-        ${comments.length ? `<span class="count${unread ? ' unread' : ''}">💬 ${comments.length} Kommentar${comments.length === 1 ? '' : 'e'}${unread ? ` <b>(${unread} neu)</b>` : ''}</span>` : ''}
-        ${pin ? `<span class="pin-line">📌 In „Laufend“ bis ${esc(formatDateTime(pin))}</span>` : ''}
-        ${!m.doneBy && m.deleteOnDone ? '<span class="flag">🧹 Wird gelöscht, wenn erledigt</span>' : ''}
-        ${m.deleteAt ? `<span class="more">🗑️ Löscht sich <span data-rel="${esc(m.deleteAt)}">${esc(relative(m.deleteAt))}</span> (${esc(formatDateTime(m.deleteAt))})</span>` : ''}
-      </div>
-      <div class="msg-actions">
-        ${canMarkDone ? `<button class="btn small primary" data-done="${esc(m.id)}">✓ Erledigt</button>` : ''}
-        ${m.openEnded || isInfo(m) ? '' : `<a class="btn small" href="${esc(icsUrl(m))}" target="_blank" rel="noopener" title="In Kalender übernehmen">📅 In Kalender</a>`}
-        ${mine ? `<button class="btn small danger" data-delete="${esc(m.id)}">Löschen</button>` : ''}
-      </div>
-      ${m.needsAck ? `<div class="msg-replies msg-extra">
-        ${responsible && !m.closedAt ? `<div class="reply-btns">${options.map((o) => `<button class="btn small${myResp && myResp.option === o ? ' primary' : ''}" data-reply="${esc(m.id)}" data-option="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
-        ${resps.length
-          ? `<ul class="reply-list">${resps.map((r) => { const u = userById(r.userId); return `<li><b>${esc(u ? u.firstName : '?')}:</b> ${esc(r.option)}</li>`; }).join('')}</ul>`
-          : `<p class="hint">${mine ? 'Noch keine Antwort.' : 'Tippe auf eine Antwort.'}</p>`}
-      </div>` : ''}
-      ${mine && awaitingReview ? `<div class="msg-review msg-extra">
-        <span class="hint">Rückmeldung ist da – nimm das Ergebnis ab:</span>
-        <div class="reply-btns">
-          <button type="button" class="btn small primary" data-review="${esc(m.id)}" data-verdict="accept">👍 Abnehmen</button>
-          <button type="button" class="btn small danger" data-review="${esc(m.id)}" data-verdict="strike">😈 Strich vergeben</button>
-        </div>
-      </div>` : ''}
-      ${m.urgency === 'info' ? `<div class="msg-pin msg-extra">
-        <span class="hint">📌 In „Laufend“ behalten (nur für dich):</span>
-        <div class="chips">
-          ${[['1 Tag', 1], ['3 Tage', 3], ['1 Woche', 7], ['1 Monat', 30]].map(([l, d]) => `<button type="button" class="chip" data-pin="${esc(m.id)}" data-days="${d}">${l}</button>`).join('')}
-          ${pin ? `<button type="button" class="chip" data-pin="${esc(m.id)}" data-days="0">Nicht mehr</button>` : ''}
-        </div>
-      </div>` : ''}
-      <div class="msg-comments msg-extra">
-        ${comments.map((c) => {
-          const u = userById(c.authorId); const own = state.me && c.authorId === state.me.id;
-          return `<div class="comment${own ? ' own' : ''}">
-            <span class="c-head"><b>${esc(u ? u.firstName : '?')}</b> · <span data-rel="${esc(c.createdAt)}">${esc(relative(c.createdAt))}</span>${own ? ` <button class="c-del" data-del-comment="${esc(c.id)}" aria-label="Kommentar löschen">✕</button>` : ''}</span>
-            <p>${esc(c.body)}</p>
-          </div>`;
-        }).join('')}
-        <form class="comment-form" data-comment-form="${esc(m.id)}">
-          <input name="body" maxlength="1000" placeholder="Kommentar schreiben …" autocomplete="off" aria-label="Kommentar">
-          <button class="btn small primary" type="submit">Senden</button>
-        </form>
-      </div>
+    <div class="ev-rows">
+      ${exp ? `<div class="ev-row exp-row"><span>⌛</span><b>${exp.kind === 'respond' ? 'Deine Antwort fehlt' : 'Läuft aus'} – <span data-left="${esc(exp.at)}">${esc(timeLeft(exp.at))}</span> (bis ${esc(formatTimeOnly(exp.at))})</b></div>` : ''}
+      ${m.openEnded ? `<div class="ev-row"><span>⚡</span><b>Sofort &amp; offen – bleibt, bis ${m.needsAck ? 'alle geantwortet haben' : 'sie erledigt ist'}</b></div>` : ''}
+      ${timed ? `<div class="ev-row"><span>🕒</span><b>${esc(formatRange(m.eventAt, m.endAt))}${m.remindAtStart ? ' 🔔' : ''}</b></div>` : ''}
+      ${m.deadlineAt ? `<div class="ev-row"><span>⏳</span><b class="${Date.parse(m.deadlineAt) < Date.now() && !m.closedAt ? 'over' : ''}">Deadline: ${esc(formatDateTime(m.deadlineAt))}</b></div>` : ''}
+      ${m.needsAck && m.respondBy ? `<div class="ev-row"><span>✉️</span><b>Antworten bis ${esc(formatDateTime(m.respondBy))}</b></div>` : ''}
+      ${m.description ? `<div class="ev-row"><span>📝</span><p>${esc(m.description)}</p></div>` : ''}
+      <div class="ev-row"><span>👤</span><div class="ev-people">
+        <div>Von ${esc(author ? fullName(author) : 'Unbekannt')} <small>· ${esc(relative(m.createdAt))}</small></div>
+        ${forWhom.length ? `<div>👉 Für ${forWhom.map((u) => `${headImg(u)}${esc(u.id === state.me.id ? 'dich' : u.firstName)}`).join(' & ')}</div>` : ''}
+      </div></div>
+      ${statusLine ? `<div class="ev-row"><span>📌</span><b class="${m.reviewStatus === 'rejected' || m.reviewStatus === 'missed' ? 'over' : ''}">${esc(statusLine)}</b></div>` : ''}
+      ${m.threatStrike && !m.closedAt ? '<div class="ev-row"><span>😈</span><b>Strich auf dem Board der Schande bei Nichterfüllung</b></div>' : ''}
+      ${m.doneBy ? `<div class="ev-row"><span>✅</span><b>Erledigt von ${esc(nameOf(m.doneBy, 'jemandem'))}${m.doneAt ? ` · ${esc(formatDateTime(m.doneAt))} Uhr` : ''}</b></div>` : ''}
+      ${!m.doneBy && m.deleteOnDone ? '<div class="ev-row"><span>🧹</span><small class="hint">Wird gelöscht, wenn erledigt</small></div>' : ''}
+      ${m.deleteAt ? `<div class="ev-row"><span>🗑️</span><small class="hint">Löscht sich ${esc(relative(m.deleteAt))} (${esc(formatDateTime(m.deleteAt))})</small></div>` : ''}
+      ${pin ? `<div class="ev-row"><span>📌</span><small class="hint">In „Fortlaufend“ bis ${esc(formatDateTime(pin))}</small></div>` : ''}
     </div>
-  </article>`;
+    ${m.needsAck ? `<div class="ev-answer">
+      <span>${responsible && !m.closedAt ? (myResp ? `Deine Antwort: <b>${esc(myResp.option)}</b> – ändern?` : 'Deine Rückmeldung:') : 'Antworten:'}</span>
+      ${responsible && !m.closedAt ? `<div class="reply-btns">${options.map((o) => `<button class="btn${myResp && myResp.option === o ? ' primary' : ''}" data-reply="${esc(m.id)}" data-option="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
+      ${resps.length ? `<ul class="reply-list">${resps.map((r) => `<li><b>${esc(nameOf(r.userId, '?'))}:</b> ${esc(r.option)}</li>`).join('')}</ul>` : `<small class="hint">${mine ? 'Noch keine Antwort.' : ''}</small>`}
+    </div>` : ''}
+    ${canMarkDone ? `<div class="ev-answer"><span>Noch offen.</span><div class="ev-answer-btns"><button type="button" class="btn primary" data-done="${esc(m.id)}">✓ Erledigt</button></div></div>` : ''}
+    ${mine && awaitingReview ? `<div class="ev-answer"><span>Rückmeldung ist da – nimm das Ergebnis ab:</span><div class="ev-answer-btns">
+      <button type="button" class="btn primary" data-review="${esc(m.id)}" data-verdict="accept">👍 Abnehmen</button>
+      <button type="button" class="btn danger" data-review="${esc(m.id)}" data-verdict="strike">😈 Strich vergeben</button></div></div>` : ''}
+    ${info ? `<div class="ev-answer"><span>📌 In „Fortlaufend“ behalten (nur für dich):</span><div class="chips">
+      ${[['1 Tag', 1], ['3 Tage', 3], ['1 Woche', 7], ['1 Monat', 30]].map(([l, d]) => `<button type="button" class="chip" data-pin="${esc(m.id)}" data-days="${d}">${l}</button>`).join('')}
+      ${pin ? `<button type="button" class="chip" data-pin="${esc(m.id)}" data-days="0">Nicht mehr</button>` : ''}</div></div>` : ''}
+    <div class="ev-comments">
+      <h3>Kommentare</h3>
+      ${comments.length ? comments.map((c) => { const own = state.me && c.authorId === state.me.id; return `<div class="comment${own ? ' own' : ''}">
+        <span class="c-head"><b>${esc(nameOf(c.authorId, '?'))}</b> · <span data-rel="${esc(c.createdAt)}">${esc(relative(c.createdAt))}</span>${own ? ` <button class="c-del" data-del-comment="${esc(c.id)}" aria-label="Kommentar löschen">✕</button>` : ''}</span>
+        <p>${esc(c.body)}</p></div>`; }).join('') : '<p class="hint">Noch keine Kommentare.</p>'}
+      <form class="comment-form" data-comment-form="${esc(m.id)}">
+        <input name="body" maxlength="1000" placeholder="Kommentar schreiben …" autocomplete="off" aria-label="Kommentar">
+        <button class="btn small primary" type="submit">Senden</button>
+      </form>
+    </div>
+    ${mine ? `<div class="modal-actions"><button type="button" class="btn danger" data-delete="${esc(m.id)}">Löschen</button></div>` : ''}
+  </div>`;
 }
 
 function bindMessage(el, { toggle = true } = {}) {
@@ -1386,6 +1370,9 @@ function bindMessage(el, { toggle = true } = {}) {
 /** Nur eine Karte neu zeichnen – ein angefangener Kommentar bleibt erhalten. */
 function rerenderMessage(id) {
   refreshMessageDetail(id);
+  rerenderStartCard(id);
+}
+function rerenderStartCard(id) {
   if (state.tab !== 'start') return;
   const el = document.getElementById(`msg-${id}`);
   const m = state.messages.find((x) => x.id === id);
@@ -1496,7 +1483,8 @@ function lsSet(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* privat */ }
 }
 const prefs = {
-  seen: lsGet('familie.seenComments', {}),          // messageId -> Zeitpunkt des zuletzt gesehenen Kommentars
+  seen: lsGet('familie.seenComments', {}),
+  seenEv: lsGet('familie.seenEvComments', {}),          // messageId -> Zeitpunkt des zuletzt gesehenen Kommentars
   infoClosed: new Set(lsGet('familie.infoClosed', [])), // Infos, die man zugeklappt hat
   pins: lsGet('familie.pins', {}),                   // messageId -> „in Laufend behalten bis“
   sections: lsGet('familie.sections', {}),           // Bereich -> offen?
@@ -1515,7 +1503,26 @@ function unreadComments(m) {
 function markCommentsSeen(id) {
   const list = state.comments.get(id) || [];
   const last = list.length ? list[list.length - 1].createdAt : new Date().toISOString();
-  if (prefs.seen[id] !== last) { prefs.seen[id] = last; lsSet('familie.seenComments', prefs.seen); }
+  if (prefs.seen[id] !== last) {
+    const hadUnread = unreadComments(state.messages.find((m) => m.id === id) || { id }) > 0;
+    prefs.seen[id] = last; lsSet('familie.seenComments', prefs.seen);
+    // Hinweis „neuer Kommentar“ auf Start sofort entfernen
+    if (hadUnread) setTimeout(() => { if (state.tab === 'start') rerenderStartCard(id); }, 0);
+  }
+}
+/* Termin-Kommentare: gelesen merken (pro Gerät) – Hinweis nur für Kommentare anderer */
+const evSeenKey = 'familie.seenEvComments';
+function evUnread(ev) {
+  const seen = (prefs.seenEv || {})[ev.id];
+  const t = seen ? Date.parse(seen) : 0;
+  return state.eventComments.filter((c) => c.eventId === ev.id && c.authorId !== state.me.id && Date.parse(c.createdAt) > t).length;
+}
+function markEvCommentsSeen(id) {
+  prefs.seenEv = prefs.seenEv || lsGet(evSeenKey, {});
+  const list = state.eventComments.filter((c) => c.eventId === id);
+  const last = list.length ? list[list.length - 1].createdAt : new Date().toISOString();
+  if (prefs.seenEv[id] !== last) { prefs.seenEv[id] = last; lsSet(evSeenKey, prefs.seenEv); return true; }
+  return false;
 }
 
 function toggleMessage(el) {
@@ -4003,6 +4010,7 @@ async function toggleTodoDone(inst, done) {
 function openEventDetail(id, occ = null) {
   const first = instanceById(id, occ);
   if (!first) return;
+  if (markEvCommentsSeen(id) && state.tab === 'start') render();
   const occKey = first.occ;
   openModal(eventDetailHtml(first), {
     cls: 'ev-modal',
@@ -4044,6 +4052,7 @@ function openEventDetail(id, occ = null) {
       const refresh = () => {
         const cur = current();
         if (!cur) { close(); return; }
+        markEvCommentsSeen(id);
         modal.innerHTML = eventDetailHtml(cur);
         bind();
       };
@@ -4152,7 +4161,7 @@ function eventCardHtml(ev, { overdue = false } = {}) {
         ${pendingOthers && ev.ownerId === state.me.id ? `<span>⏳ ${pendingOthers} offen</span>` : ''}
       </div>` : ''}
     </div>
-    <span class="sl-flags">${comments ? `<span class="sl-flag">💬${comments}</span>` : ''}</span>
+    <span class="sl-flags">${evUnread(ev) ? `<span class="sl-flag new" title="Neue Kommentare">💬<b>${evUnread(ev)}</b></span>` : ''}</span>
   </article>`;
 }
 
@@ -5603,8 +5612,17 @@ function openDossier(userId) {
  *  blau für Trainer, rosa für Trainerinnen
  * ---------------------------------------------------------------------- */
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.1';
 const CHANGELOG = [
+  {
+    version: '1.2.1', date: '2026-11-19', title: 'Einheitliche Popups',
+    items: [
+      'Das Popup einer Aufgabe sieht jetzt aus wie das eines Termins – mit Trainer-Sprite und Farbe nach Dringlichkeit',
+      'Neue Kommentare werden nur noch den anderen angezeigt – und verschwinden, sobald du sie geöffnet hast',
+      'Auch Termine zeigen jetzt ungelesene Kommentare an',
+      'Der Knopf „In Kalender“ bei Aufgaben ist weg – Aufgaben stehen ja schon im Kalender',
+    ],
+  },
   {
     version: '1.2.0', date: '2026-11-19', title: 'Pokédex-Liste & Sammelkarten',
     intro: 'START hat zwei Ansichten bekommen – wähle oben unter „Ansicht & Filter“, wie du deine Einträge sehen willst. Dazu: Aufgaben statt Meldungen, Aufgaben im Kalender und ganztägige Erinnerungen.',

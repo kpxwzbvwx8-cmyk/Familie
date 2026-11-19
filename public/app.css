@@ -2323,3 +2323,17 @@ button.person-head { padding: 2px 2px 4px; }
 .sf-prev-cards i { height: 18px; border-left-width: 10px; }
 .sf-prev-cards i:nth-child(3) { display: none; }
 @media (prefers-reduced-motion: reduce) { .bcard.expiring, .bc-flag.me { animation: none; } }
+
+/* ===================== Aufgaben-Popup im Termin-Stil ===================== */
+.msg-detail { --c: var(--u-normal); }
+.msg-detail.u-info { --c: var(--u-info); } .msg-detail.u-wichtig { --c: var(--u-wichtig); } .msg-detail.u-dringend { --c: var(--u-dringend); }
+.msg-detail .msg-sprite { height: 100px; }
+.msg-banner-ball { position: absolute; right: 12px; bottom: 10px; filter: drop-shadow(0 2px 0 rgba(0,0,0,.25)); }
+.msg-detail .ev-banner-text { padding-right: 40px; }
+.msg-detail .ev-row b.over { color: var(--danger); }
+.msg-detail .exp-row b { color: #e0485a; }
+.msg-detail .ev-answer + .ev-answer { margin-top: 8px; }
+.msg-detail .ev-answer .reply-btns .btn { min-height: 40px; }
+.msg-detail .reply-list { margin: 0; padding-left: 1.1em; }
+.msg-detail .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.msg-detail-body { display: block; }
