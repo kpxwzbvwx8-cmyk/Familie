@@ -3466,11 +3466,38 @@ function layoutBlocks(blocks) {
   return blocks;
 }
 
+/** Sichtbarer Stundenbereich im Zeitraster: vom frühesten bis zum spätesten Eintrag (Termine, Aufgaben, HSV) */
+function calHourRange(days, inst) {
+  if (state.calFull) return [0, 24];
+  let lo = 24, hi = 0;
+  const take = (s, e, ds) => {
+    lo = Math.min(lo, Math.max(0, Math.floor((s - ds) / 3600e3)));
+    hi = Math.max(hi, Math.min(24, Math.ceil((e - ds) / 3600e3)));
+  };
+  for (const d of days) {
+    const ds = d.getTime(), de = addDays(d, 1).getTime();
+    for (const ev of inst) {
+      if (ev.allDay || !sameDay(evStartDay(ev), evEndDay(ev))) continue;
+      const s = Date.parse(ev.startAt), e = Math.max(Date.parse(ev.endAt), s + 15 * 60e3);
+      if (s < de && e > ds) take(Math.max(s, ds), Math.min(e, de), ds);
+    }
+    for (const g of hsvOnDay(d)) { const s = Date.parse(g.kickoff); take(s, Math.min(s + 115 * 60e3, de), ds); }
+    for (const x of tasksOnDay(d)) { const t = x.p.at.getTime(); take(t - 15 * 60e3, t + 30 * 60e3, ds); }
+  }
+  if (lo >= hi) return [8, 18];             // nichts mit Uhrzeit → Tagesbereich
+  if (hi - lo < 4) { lo = Math.max(0, Math.min(lo, hi - 4)); hi = Math.min(24, lo + 4); }   // mindestens 4 Stunden
+  return [lo, hi];
+}
+
 function timeGridHtml(days) {
   const H = state.calView === 'day' ? 52 : 42;
   const today = startOfDay(new Date());
   const from = days[0], to = new Date(addDays(days[days.length - 1], 1).getTime() - 1);
   const inst = instancesInRange(from, to);
+  // Freie Stunden vor dem frühesten und nach dem spätesten Eintrag der Ansicht wegkürzen
+  const [h0, h1] = calHourRange(days, inst);
+  state.calRange = [h0, h1];
+  const off = h0 * H;
   const head = days.map((d) => {
     const hol = holidayOn(d);
     return `<button type="button" class="tg-dayhead${sameDay(d, today) ? ' today' : ''}${hol && hol.legal ? ' holiday' : ''}" data-goday="${d.getTime()}">
@@ -3496,7 +3523,7 @@ function timeGridHtml(days) {
     }
     layoutBlocks(blocks);
     const html = blocks.map((b) => {
-      const top = ((b.s - ds) / 3600e3) * H;
+      const top = ((b.s - ds) / 3600e3) * H - off;
       const height = Math.max(20, ((b.e - b.s) / 3600e3) * H - 2);
       const pos = `top:${top}px;height:${height}px;left:calc(${(b.col / b.cols) * 100}% + 1px);width:calc(${100 / b.cols}% - 3px)`;
       if (b.hsv) {
@@ -3513,22 +3540,26 @@ function timeGridHtml(days) {
     }).join('');
     // Aufgaben: schmale Markierung rechts mit Linie über die Spalte – Termine darunter bleiben sichtbar
     const marks = tasksOnDay(d).map((x, i, arr) => {
-      const top = ((x.p.at - ds) / 3600e3) * H;
+      const top = ((x.p.at - ds) / 3600e3) * H - off;
       const near = arr.slice(0, i).filter((y) => Math.abs(y.p.at - x.p.at) < 30 * 60e3).length; // dicht beieinander → leicht versetzt
       const m = x.m;
       return `<span class="tg-task-line u-${esc(m.urgency)}" style="top:${top}px"></span><button type="button" class="tg-task u-${esc(m.urgency)}${taskDone(m) ? ' done' : ''}" data-task="${esc(m.id)}" style="top:${top}px;--k:${near}" title="${esc(m.title)}">
         <span class="tg-task-pin">${ballSvg(urgencyInfo(m.urgency).ball, 14)}</span>${state.calView === 'day' ? `<span class="tg-task-text">${x.p.kind === 'deadline' ? '⏳' : '🕒'} ${esc(formatTimeOnly(x.p.at.toISOString()))} · ${esc(m.title)}</span>` : ''}
       </button>`;
     }).join('');
-    const now = sameDay(d, today) ? `<span class="tg-now" style="top:${((Date.now() - ds) / 3600e3) * H}px"></span>` : '';
-    return `<div class="tg-col${sameDay(d, today) ? ' today' : ''}" data-colday="${ds}" style="height:${24 * H}px">${html}${marks}${now}</div>`;
+    const nowH = (Date.now() - ds) / 3600e3;
+    const now = sameDay(d, today) && nowH >= h0 && nowH <= h1 ? `<span class="tg-now" style="top:${nowH * H - off}px"></span>` : '';
+    return `<div class="tg-col${sameDay(d, today) ? ' today' : ''}" data-colday="${ds}" style="height:${(h1 - h0) * H}px">${html}${marks}${now}</div>`;
   }).join('');
-  const hours = Array.from({ length: 24 }, (_, h) => `<span style="top:${h * H}px">${String(h).padStart(2, '0')}:00</span>`).join('');
+  const hours = Array.from({ length: h1 - h0 }, (_, i) => `<span style="top:${i * H}px">${String(h0 + i).padStart(2, '0')}:00</span>`).join('');
+  const fold = (from, toH, where) => `<button type="button" class="tg-fold ${where}" data-tg-full="1">${state.calFull ? '▴ Freie Stunden ausblenden' : `⋯ ${String(from).padStart(2, '0')}:00–${String(toH).padStart(2, '0')}:00 frei · antippen zum Zeigen`}</button>`;
   return `<div class="tg tg-${state.calView}" style="--H:${H}px;--n:${days.length}">
     <div class="tg-head"><span class="tg-gutter"></span>${head}</div>
     <div class="tg-allday"><span class="tg-gutter">ganzt.</span>${allDay}</div>
     <div class="tg-scroll" id="tg-scroll">
-      <div class="tg-body"><div class="tg-hours" style="height:${24 * H}px">${hours}</div><div class="tg-cols">${cols}</div></div>
+      ${h0 > 0 || state.calFull ? fold(0, h0, 'top') : ''}
+      <div class="tg-body"><div class="tg-hours" style="height:${(h1 - h0) * H}px">${hours}</div><div class="tg-cols">${cols}</div></div>
+      ${h1 < 24 && !state.calFull ? fold(h1, 24, 'bottom') : ''}
     </div>
   </div>`;
 }
@@ -3614,7 +3645,7 @@ function renderCalendar(view) {
     if (e.target.closest('[data-event],[data-hsv],[data-task]')) return;
     const H = state.calView === 'day' ? 52 : 42;
     const y = e.clientY - col.getBoundingClientRect().top;
-    const hour = Math.max(0, Math.min(23, Math.floor(y / H)));
+    const hour = Math.max(0, Math.min(23, (state.calRange ? state.calRange[0] : 0) + Math.floor(y / H)));
     openEventForm({ day: new Date(Number(col.dataset.colday)), hour });
   }));
   const addBtn = $('#cal-add', view);
@@ -3627,8 +3658,13 @@ function renderCalendar(view) {
   if (sc) {
     const H = state.calView === 'day' ? 52 : 42;
     const showsToday = state.calView === 'day' ? sameDay(state.calDay, today) : sameDay(weekStartOf(state.calDay), weekStartOf(today));
-    sc.scrollTop = Math.max(0, ((showsToday ? new Date().getHours() - 1 : 7)) * H);
+    const [h0, h1] = state.calRange || [0, 24];
+    const nowH = new Date().getHours();
+    // gekürzt: von oben beginnen (außer „jetzt“ liegt heute mitten im Bereich) · ganzer Tag: wie bisher
+    const target = state.calFull ? (showsToday ? nowH - 1 : 7) : (showsToday && nowH > h0 && nowH < h1 ? nowH - 1 : h0);
+    sc.scrollTop = Math.max(0, (target - h0) * H);
   }
+  view.querySelectorAll('[data-tg-full]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); state.calFull = !state.calFull; render(); }));
   // Wischen wechselt Monat / Woche / Tag
   const sw = $('.cal-swipe', view);
   let sx = null, sy = null;

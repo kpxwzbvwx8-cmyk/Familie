@@ -2398,3 +2398,11 @@ button.person-head { padding: 2px 2px 4px; }
 .fb-tag.strike { color: #f3e8e8; background: linear-gradient(90deg, #3a0d14, #5b1530); border-color: #8a1f2c; }
 .bc-top .fb-tag { margin-left: auto; }
 .sl-flags .fb-tag { font-size: .72rem; padding: 0 6px; }
+
+/* Zeitraster: freie Stunden gekürzt – dezenter Knopf zum Aufklappen */
+.tg-fold {
+  display: block; width: 100%; padding: 5px 8px; border: 0; cursor: pointer; font: inherit; font-size: .72rem; color: var(--cal-num);
+  background: repeating-linear-gradient(-45deg, var(--cal-cell-alt, rgba(0,0,0,.03)) 0 6px, transparent 6px 12px);
+  border-top: 1px dashed var(--cal-line); border-bottom: 1px dashed var(--cal-line); text-align: center;
+}
+.tg-fold:active { background: var(--cal-line); }
