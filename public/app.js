@@ -155,6 +155,7 @@ function mapMessage(r) {
     doneAt: r.done_at || null,
     ackOptions: Array.isArray(r.ack_options) && r.ack_options.length ? r.ack_options : null,
     deadlineAt: r.deadline_at || null,
+    assignees: r.assignees || [],
     threatStrike: Boolean(r.threat_strike),
     closedAt: r.closed_at || null,
     reviewStatus: r.review_status || null,
@@ -529,42 +530,49 @@ function dsSay(text, { speaker = '', pages = null } = {}) {
   });
 }
 
-/** Ja/Nein-Frage wie im Spiel; liefert true/false */
-function dsAsk(text, { yes = 'Ja', no = 'Nein', danger = false, speaker = '' } = {}) {
+/** Auswahl wie im Spiel; options: [{ label, value, danger }] – liefert value (null = abgebrochen) */
+function dsChoose(text, options, { speaker = '' } = {}) {
   return new Promise((resolve) => {
     const wrap = document.createElement('div');
     wrap.className = 'say-backdrop ask';
     wrap.innerHTML = `<div class="ds-choice" role="menu" hidden>
-        <button type="button" class="ds-choice-btn${danger ? ' danger' : ''}" data-v="1" role="menuitem">${esc(yes)}</button>
-        <button type="button" class="ds-choice-btn" data-v="0" role="menuitem">${esc(no)}</button>
+        ${options.map((o, i) => `<button type="button" class="ds-choice-btn${o.danger ? ' danger' : ''}" data-i="${i}" role="menuitem">${esc(o.label)}</button>`).join('')}
       </div>${dsBoxHtml(speaker)}`;
     sayRoot().appendChild(wrap);
     const choice = wrap.querySelector('.ds-choice');
     const typing = typeText(wrap.querySelector('.ds-say-text'), text);
-    const open = () => {
+    typing.done.then(() => {
       choice.hidden = false;
       wrap.querySelector('.ds-say').classList.add('asking');
-      choice.querySelector('[data-v="1"]').focus({ preventScroll: true });
-    };
-    typing.done.then(open);
+      choice.querySelector('[data-i]').focus({ preventScroll: true });
+    });
     const end = (v) => {
       document.removeEventListener('keydown', onKey);
       wrap.classList.add('out');
       setTimeout(() => { wrap.remove(); resolve(v); }, 120);
     };
     const onKey = (e) => {
-      if (e.key === 'Escape') end(false);
+      if (e.key === 'Escape') end(null);
       if (e.key === 'Enter' && !typing.finished) { e.preventDefault(); typing.finish(); }
     };
     document.addEventListener('keydown', onKey);
     wrap.addEventListener('click', (e) => {
-      const b = e.target.closest('[data-v]');
-      if (b) { end(b.dataset.v === '1'); return; }
+      const b = e.target.closest('[data-i]');
+      if (b) { end(options[Number(b.dataset.i)].value); return; }
       if (!typing.finished) { typing.finish(); return; }
-      if (!e.target.closest('.ds-choice, .ds-say')) end(false); // daneben tippen = Nein
+      if (!e.target.closest('.ds-choice, .ds-say')) end(null); // daneben tippen = abbrechen
     });
   });
 }
+
+/** Ja/Nein-Frage wie im Spiel; liefert true/false */
+async function dsAsk(text, { yes = 'Ja', no = 'Nein', danger = false, speaker = '' } = {}) {
+  const v = await dsChoose(text, [{ label: yes, value: true, danger }, { label: no, value: false }], { speaker });
+  return v === true;
+}
+
+/** Zweiter Schritt bei Rückmeldungen auf Start (gegen Fehlklicks) */
+const confirmStep = (text, yes = 'Ja, senden') => dsAsk(text, { yes, no: 'Abbrechen' });
 
 /* -------------------------------------------------------------------------
  * In-App-Banner: Benachrichtigungen oben am Bildschirm, während die App offen ist
@@ -1071,7 +1079,10 @@ function messageHtml(m) {
   if (expanded) markCommentsSeen(m.id);
   const unread = expanded ? 0 : unreadComments(m);
   const pin = prefs.pins[m.id] && Date.parse(prefs.pins[m.id]) > Date.now() ? prefs.pins[m.id] : null;
-  const canMarkDone = !mine && !m.doneBy && !m.closedAt && !m.needsAck && (m.deleteOnDone || m.deadlineAt);
+  // zuständig: die ausgewählten Personen (ältere Meldungen ohne Auswahl: alle außer dem Urheber)
+  const responsible = state.me && (m.assignees.length ? m.assignees.includes(state.me.id) : !mine);
+  const canMarkDone = responsible && !m.doneBy && !m.closedAt && !m.needsAck && (m.deleteOnDone || m.deadlineAt);
+  const forWhom = m.assignees.map(userById).filter(Boolean);
   const awaitingReview = m.threatStrike && !m.closedAt && isFrozen(m);
   const statusLine = m.closedAt
     ? (m.reviewStatus === 'accepted' ? '👍 Abgenommen – geschlossen'
@@ -1097,6 +1108,7 @@ function messageHtml(m) {
       ${m.description ? `<p class="desc">${esc(m.description)}</p>` : ''}
       <div class="msg-meta">
         <span class="author"><span class="dot" style="--c:${esc(author ? author.color : '#888888')}"></span>${esc(author ? fullName(author) : 'Unbekannt')} · <span data-rel="${esc(m.createdAt)}">${esc(relative(m.createdAt))}</span></span>
+        ${forWhom.length ? `<span class="for-whom">👉 Für ${forWhom.map((u) => `${u.gender && CAL_HEADS[u.gender] ? `<img class="fw-head" src="${CAL_HEADS[u.gender]}" alt="">` : ''}${esc(u.id === state.me.id ? 'dich' : u.firstName)}`).join(' & ')}</span>` : ''}
         ${m.eventAt ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt || m.deadlineAt))}${m.remindAtStart ? ' <span title="Erinnerung zum Beginn">🔔</span>' : ''}</span>` : ''}
         ${statusLine ? `<span class="status-line${m.reviewStatus === 'rejected' || m.reviewStatus === 'missed' ? ' bad' : ''}">${esc(statusLine)}</span>` : ''}
         ${m.threatStrike && !m.closedAt ? '<span class="strike-threat">😈 Strich auf dem Board der Schande bei Nichterfüllung</span>' : ''}
@@ -1115,7 +1127,7 @@ function messageHtml(m) {
         ${mine ? `<button class="btn small danger" data-delete="${esc(m.id)}">Löschen</button>` : ''}
       </div>
       ${m.needsAck ? `<div class="msg-replies msg-extra">
-        ${!mine && !m.closedAt ? `<div class="reply-btns">${options.map((o) => `<button class="btn small${myResp && myResp.option === o ? ' primary' : ''}" data-reply="${esc(m.id)}" data-option="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
+        ${responsible && !m.closedAt ? `<div class="reply-btns">${options.map((o) => `<button class="btn small${myResp && myResp.option === o ? ' primary' : ''}" data-reply="${esc(m.id)}" data-option="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
         ${resps.length
           ? `<ul class="reply-list">${resps.map((r) => { const u = userById(r.userId); return `<li><b>${esc(u ? u.firstName : '?')}:</b> ${esc(r.option)}</li>`; }).join('')}</ul>`
           : `<p class="hint">${mine ? 'Noch keine Antwort.' : 'Tippe auf eine Antwort.'}</p>`}
@@ -1214,6 +1226,8 @@ async function invokeOrThrow(body) {
 }
 
 async function sendReply(id, option, btn) {
+  const m = state.messages.find((x) => x.id === id);
+  if (!(await confirmStep(`Antwort „${option}“${m ? ` auf „${m.title}“` : ''} senden?`))) return;
   btn.disabled = true;
   try {
     await invokeOrThrow({ action: 'respond', messageId: id, option });
@@ -1356,7 +1370,10 @@ async function reviewMessage(id, verdict, btn) {
       btn.disabled = false;
     }
   };
-  if (verdict === 'accept') { send(); return; }
+  if (verdict === 'accept') {
+    if (await confirmStep('Ergebnis abnehmen und die Meldung ohne Strich schließen?', 'Ja, abnehmen')) send();
+    return;
+  }
   openModal(
     `${judgeHeadHtml('Strich vergeben', 'Urteil nach Abnahme')}
      <form class="form" id="strike-form">
@@ -1386,6 +1403,8 @@ async function reviewMessage(id, verdict, btn) {
 }
 
 async function markDone(id, btn) {
+  const m = state.messages.find((x) => x.id === id);
+  if (!(await confirmStep(`„${m ? m.title : 'Meldung'}“ als erledigt melden?`, 'Ja, erledigt'))) return;
   btn.disabled = true;
   try {
     const r = await sb.functions.invoke('push', { body: { action: 'done', messageId: id } });
@@ -1471,19 +1490,19 @@ function renderAustausch(view) {
     ? `<div class="notify-banner"><p>🔔 Benachrichtigungen aktivieren, damit du neue Nachrichten sofort mitbekommst.</p><button class="btn primary small" id="enable-push">Aktivieren</button></div>`
     : '');
   const visible = state.messages.filter((m) => !m.deleteAt || Date.parse(m.deleteAt) > Date.now());
-  const evItems = state.events.map((ev) => ({ ev, sec: eventSection(ev) })).filter((x) => x.sec);
+  const evItems = startEventItems();
   let list;
   if (!visible.length && !evItems.length && !compactStartItems().length) {
     list = emptyStateHtml('Hier ist gerade nichts los! Tippe unten rechts auf ＋ für eine Info, eine Meldung oder einen Termin.');
   } else {
     const groups = Object.fromEntries(SECTIONS.map((sec) => [sec.key, []]));
     for (const m of visible) groups[sectionOf(m)].push({ m });
-    for (const x of evItems) groups[x.sec].push({ ev: x.ev });
+    for (const x of evItems) groups[x.sec].push({ ev: x.ev, overdue: x.overdue });
     const compact = Object.fromEntries(SECTIONS.map((sec) => [sec.key, []]));
     for (const c of compactStartItems()) compact[c.sec].push(c);
     if (state.highlight) { const hm = visible.find((m) => m.id === state.highlight); if (hm) prefs.sections[sectionOf(hm)] = true; }
     // Termine stehen zwischen „dringend“ und „wichtig“, untereinander nach Beginn
-    const rank = (x) => (x.ev ? 0.5 : (URGENCY_RANK[x.m.urgency] ?? 2));
+    const rank = (x) => (x.ev ? (isTodo(x.ev) ? (x.overdue ? 0.4 : 0.6) : 0.5) : (URGENCY_RANK[x.m.urgency] ?? 2));
     const time = (x) => Date.parse(x.ev ? x.ev.startAt : (x.m.eventAt || x.m.createdAt));
     const cmp = (a, b) => (a.ev || b.ev ? rank(a) - rank(b) || time(a) - time(b) : compareMessages(a.m, b.m));
     list = SECTIONS.filter((sec) => groups[sec.key].length || compact[sec.key].length).map((sec) => {
@@ -1497,7 +1516,7 @@ function renderAustausch(view) {
           ${items.length ? `<span class="section-count">${items.length}</span>` : ''}${unread ? '<span class="section-dot" title="Neue Kommentare"></span>' : ''}
           <span class="section-chevron" aria-hidden="true">▾</span>
         </button>
-        <div class="msg-list">${open ? (minis.length ? `<div class="mini-rows">${minis.map((c) => c.html).join('')}</div>` : '') + items.map((x) => (x.ev ? eventCardHtml(x.ev) : messageHtml(x.m))).join('') : ''}</div>
+        <div class="msg-list">${open ? (minis.length ? `<div class="mini-rows">${minis.map((c) => c.html).join('')}</div>` : '') + items.map((x) => (x.ev ? eventCardHtml(x.ev, { overdue: x.overdue }) : messageHtml(x.m))).join('') : ''}</div>
       </section>`;
     }).join('');
   }
@@ -1529,6 +1548,17 @@ function renderAustausch(view) {
   }
 }
 
+/** „Für wen?“-Auswahl mit Köpfen; vorausgewählt: preset (sonst man selbst) */
+function assigneePickerHtml(label, preset) {
+  const chosen = preset && preset.length ? preset : [state.me.id];
+  const users = [...state.users].sort((a, b) => (a.id === state.me.id) - (b.id === state.me.id));
+  return `<div class="field"><span>${esc(label)}</span>
+    <div class="ev-invite assignee-pick">${users.map((u) => `<label class="ev-inv" style="--c:${GENDER_COLORS[u.gender] || GENDER_COLORS.both}">
+      <input type="checkbox" name="assignee" value="${esc(u.id)}"${chosen.includes(u.id) ? ' checked' : ''}>
+      <span>${u.gender && CAL_HEADS[u.gender] ? `<img src="${CAL_HEADS[u.gender]}" alt="">` : ''}${esc(u.id === state.me.id ? 'Ich' : u.firstName)}</span></label>`).join('')}</div>
+  </div>`;
+}
+
 /** ＋ auf Start: Auswahl im Stil des Kampfmenüs – Info, Meldung oder Termin */
 function openCreateMenu() {
   const calIcon = `<img src="${asset('img/menu/cal.png')}" alt="" class="cm-cal">`;
@@ -1536,6 +1566,7 @@ function openCreateMenu() {
     { key: 'info', label: 'Info', sub: 'Zum Wissen – ohne Handlungsbedarf', icon: ballSvg('master', 44), cls: 'cm-info' },
     { key: 'meldung', label: 'Meldung', sub: 'Etwas, das passieren muss', icon: ballSvg('poke', 44), cls: 'cm-msg' },
     { key: 'termin', label: 'Termin', sub: 'Eintrag in den Kalender', icon: calIcon, cls: 'cm-event' },
+    { key: 'erinnerung', label: 'Erinnerung', sub: 'Abhaken nicht vergessen – auch wiederkehrend', icon: '<span class="cm-bell">🔔</span>', cls: 'cm-todo' },
   ];
   openModal(
     `<div class="cm">
@@ -1555,6 +1586,7 @@ function openCreateMenu() {
           if (!b) return;
           close();
           if (b.dataset.create === 'termin') openEventForm({ day: startOfDay(new Date()) });
+          else if (b.dataset.create === 'erinnerung') openEventForm({ day: startOfDay(new Date()), kind: 'todo' });
           else openNewMessage(b.dataset.create === 'info' ? 'info' : 'normal');
         });
       },
@@ -1592,6 +1624,7 @@ function openNewMessage(preset = 'normal') {
   openModal(
     `<div class="modal-head"><h2>${preset === 'info' ? 'Neue Info' : 'Neue Meldung'}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
      <form class="form" id="msg-form" novalidate>
+       ${assigneePickerHtml('Für wen?', state.users.filter((u) => u.id !== state.me.id).map((u) => u.id))}
        <fieldset class="field">
          <div class="field-head"><legend>Dringlichkeit</legend>${bellToggle('notify', true, 'Beim Absenden benachrichtigen')}${helpBtn('notify')}</div>
          <div class="segmented">
@@ -1754,7 +1787,10 @@ function openNewMessage(preset = 'normal') {
           const btn = form.querySelector('[type=submit]');
           btn.disabled = true;
           try {
+            const assignees = [...form.querySelectorAll('[name=assignee]:checked')].map((i) => i.value);
+            if (!assignees.length) { err.textContent = 'Bitte auswählen, für wen die Meldung ist.'; btn.disabled = false; return; }
             const row = must(await sb.from('messages').insert({
+              assignees,
               urgency: form.elements.hasDeadline.checked && form.elements.threatStrike.checked ? 'dringend' : f.get('urgency'),
               title,
               description: f.get('description').trim(),
@@ -2266,24 +2302,35 @@ function mapEvent(r) {
     id: r.id, ownerId: r.owner_id, title: r.title, location: r.location || '', description: r.description || '',
     allDay: Boolean(r.all_day), startAt: r.start_at, endAt: r.end_at,
     reminders: Array.isArray(r.reminders) ? r.reminders : [], createdAt: r.created_at, updatedAt: r.updated_at,
+    kind: r.kind || 'event', assignees: r.assignees || [], recurrence: r.recurrence || null,
+    exdates: (r.exdates || []).map((x) => Date.parse(x)),
   };
 }
 async function loadEvents() {
-  const [ev, inv, com] = await Promise.all([
+  const [ev, inv, com, done] = await Promise.all([
     sb.from('events').select('*').order('start_at', { ascending: true }),
     sb.from('event_invites').select('*'),
     sb.from('event_comments').select('*').order('created_at', { ascending: true }),
+    sb.from('event_done').select('*'),
   ]);
   state.events = must(ev).map(mapEvent);
   state.invites = must(inv).map((r) => ({ eventId: r.event_id, userId: r.user_id, status: r.status, respondedAt: r.responded_at, createdAt: r.created_at }));
   state.eventComments = must(com).map((r) => ({ id: r.id, eventId: r.event_id, authorId: r.author_id, body: r.body, createdAt: r.created_at }));
+  state.eventDone = new Map(must(done).map((r) => [`${r.event_id}|${Date.parse(r.occ)}`, { by: r.done_by, at: r.done_at }]));
   state.eventsLoaded = true;
 }
 const invitesOf = (ev) => state.invites.filter((i) => i.eventId === ev.id);
 const myInvite = (ev) => state.me && state.invites.find((i) => i.eventId === ev.id && i.userId === state.me.id);
-/** Für wen gilt der Termin? Ersteller + alle, die zugesagt haben */
+const isTodo = (ev) => ev.kind === 'todo';
+const doneInfo = (ev) => (state.eventDone ? state.eventDone.get(`${ev.id}|${Date.parse(ev.occ || ev.startAt)}`) : null);
+/** Darf ich die Erinnerung abhaken? (zuständig – oder Ersteller, wenn niemand ausgewählt ist) */
+const todoResponsible = (ev) => state.me && (ev.assignees.length ? ev.assignees.includes(state.me.id) : ev.ownerId === state.me.id);
+
+/** Für wen gilt der Eintrag? Erinnerung: Zuständige · Termin: Ersteller + alle, die zugesagt haben */
 function eventPeople(ev) {
-  const ids = [ev.ownerId, ...invitesOf(ev).filter((i) => i.status === 'accepted').map((i) => i.userId)];
+  const ids = isTodo(ev)
+    ? (ev.assignees.length ? ev.assignees : [ev.ownerId])
+    : [ev.ownerId, ...invitesOf(ev).filter((i) => i.status === 'accepted').map((i) => i.userId)];
   return [...new Set(ids)].map(userById).filter(Boolean);
 }
 function eventGenders(ev) {
@@ -2306,6 +2353,70 @@ const evEndDay = (ev) => {
 const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
 const sameDay = (a, b) => a.getTime() === b.getTime();
 
+/* ---- Wiederholungen ----------------------------------------------------- */
+
+const REPEAT_PRESETS = {
+  daily: { u: 'day', n: 1 }, weekly: { u: 'week', n: 1 }, biweekly: { u: 'week', n: 2 }, monthly: { u: 'month', n: 1 },
+};
+function repeatPreset(rec) {
+  if (!rec) return 'none';
+  const hit = Object.entries(REPEAT_PRESETS).find(([, p]) => p.u === rec.u && p.n === (rec.n || 1));
+  return hit ? hit[0] : 'custom';
+}
+function recurrenceLabel(rec) {
+  if (!rec) return '';
+  const n = rec.n || 1;
+  const base = rec.u === 'day' ? (n === 1 ? 'Täglich' : `Alle ${n} Tage`)
+    : rec.u === 'week' ? (n === 1 ? 'Wöchentlich' : n === 2 ? 'Alle 14 Tage' : `Alle ${n} Wochen`)
+    : (n === 1 ? 'Monatlich' : `Alle ${n} Monate`);
+  return rec.until ? `${base} bis ${new Date(`${rec.until}T12:00:00`).toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric', year: 'numeric' })}` : base;
+}
+/** i-tes Vorkommen (gleiche Uhrzeit, Monatsende wird abgeschnitten wie in der Datenbank) */
+function shiftOcc(base, rec, i) {
+  const n = (rec.n || 1) * i;
+  const h = base.getHours(), mi = base.getMinutes(), se = base.getSeconds();
+  if (rec.u === 'day') return new Date(base.getFullYear(), base.getMonth(), base.getDate() + n, h, mi, se);
+  if (rec.u === 'week') return new Date(base.getFullYear(), base.getMonth(), base.getDate() + 7 * n, h, mi, se);
+  const y = base.getFullYear(), m = base.getMonth() + n;
+  const last = new Date(y, m + 1, 0).getDate();
+  return new Date(y, m, Math.min(base.getDate(), last), h, mi, se);
+}
+/** Beginnzeiten aller Vorkommen, die das Zeitfenster [from, to] berühren */
+function occurrenceStarts(ev, from, to) {
+  const s = Date.parse(ev.startAt), dur = Date.parse(ev.endAt) - s;
+  if (!ev.recurrence) return s <= to && s + dur >= from ? [new Date(s)] : [];
+  const base = new Date(s);
+  const until = ev.recurrence.until ? new Date(`${ev.recurrence.until}T23:59:59`).getTime() : Infinity;
+  const out = [];
+  for (let i = 0; i < 4000; i++) {
+    const o = shiftOcc(base, ev.recurrence, i);
+    const t = o.getTime();
+    if (t > to || t > until) break;
+    if (t + dur < from || ev.exdates.includes(t)) continue;
+    out.push(o);
+  }
+  return out;
+}
+/** Ein Vorkommen als eigenes Objekt (alle Felder der Serie, aber mit eigener Zeit) */
+function instanceOf(ev, occ) {
+  const dur = Date.parse(ev.endAt) - Date.parse(ev.startAt);
+  return { ...ev, startAt: occ.toISOString(), endAt: new Date(occ.getTime() + dur).toISOString(), occ: occ.toISOString(), seriesStart: ev.startAt };
+}
+function instancesInRange(from, to, filter = () => true) {
+  const f = from.getTime(), t = to.getTime();
+  return state.events.filter(filter).flatMap((ev) => occurrenceStarts(ev, f, t).map((o) => instanceOf(ev, o)));
+}
+function instanceById(id, occ) {
+  const ev = state.events.find((e) => e.id === id);
+  if (!ev) return null;
+  return occ ? instanceOf(ev, new Date(occ)) : (ev.recurrence ? nextInstance(ev) || instanceOf(ev, new Date(ev.startAt)) : instanceOf(ev, new Date(ev.startAt)));
+}
+function nextInstance(ev) {
+  const now = Date.now();
+  const list = occurrenceStarts(ev, now, now + 400 * 86400e3);
+  return list.length ? instanceOf(ev, list[0]) : null;
+}
+
 function eventTimeText(ev, short = false) {
   const s = new Date(ev.startAt), e = new Date(ev.endAt);
   const sd = evStartDay(ev), ed = evEndDay(ev);
@@ -2325,7 +2436,8 @@ function eventTimeOnDay(ev, day) {
 }
 function eventsOnDay(day) {
   const t = day.getTime();
-  return state.events.filter((ev) => evStartDay(ev).getTime() <= t && evEndDay(ev).getTime() >= t)
+  return instancesInRange(day, new Date(addDays(day, 1).getTime() - 1))
+    .filter((ev) => evStartDay(ev).getTime() <= t && evEndDay(ev).getTime() >= t)
     .sort((a, b) => (b.allDay - a.allDay) || Date.parse(a.startAt) - Date.parse(b.startAt));
 }
 
@@ -2556,19 +2668,24 @@ const HOLIDAY_INFO = {
   'Silvester': 'Benannt nach Papst Silvester I., der am 31. Dezember 335 starb. Mit Feuerwerk und Lärm sollten früher böse Geister vertrieben werden.',
 };
 
-/* ---- Monatsraster ---------------------------------------------------- */
+/* ---- Ansichten: Monat / Woche / Tag --------------------------------- */
+
+const CAL_VIEWS = [['day', 'Tag'], ['week', 'Woche'], ['month', 'Monat']];
 
 function calState() {
-  if (!state.calMonth) {
+  if (!state.calDay) {
     const t = startOfDay(new Date());
     state.calMonth = new Date(t.getFullYear(), t.getMonth(), 1);
     state.calDay = t;
   }
+  if (!state.calView) state.calView = lsGet('familie.calView', 'month');
 }
+const weekStartOf = (d) => addDays(startOfDay(d), -((d.getDay() + 6) % 7));
 
 function weekHtml(weekStart, month, today) {
   const weekEnd = addDays(weekStart, 6);
-  const evs = state.events.filter((ev) => evStartDay(ev) <= weekEnd && evEndDay(ev) >= weekStart)
+  const evs = instancesInRange(weekStart, new Date(addDays(weekStart, 7).getTime() - 1))
+    .filter((ev) => evStartDay(ev) <= weekEnd && evEndDay(ev) >= weekStart)
     .sort((a, b) => evStartDay(a) - evStartDay(b) || (evEndDay(b) - evStartDay(b)) - (evEndDay(a) - evStartDay(a)) || Date.parse(a.startAt) - Date.parse(b.startAt));
   // Spuren vergeben, damit mehrtägige Termine durchgehend in einer Zeile liegen
   const lanes = [];
@@ -2602,11 +2719,12 @@ function weekHtml(weekStart, month, today) {
       const realStart = sameDay(evStartDay(ev), day), realEnd = sameDay(evEndDay(ev), day);
       const label = realStart || i === 0;
       const span = p.e - i + 1;
-      bars += `<span class="cal-bar${realStart ? ' b-start' : ''}${realEnd ? ' b-end' : ''}" style="--c:${eventColor(ev)}">${label
-        ? `<span class="cal-bar-label" style="--span:${span}">${eventHeads(ev, 'bar-head')}<span>${esc(ev.title)}</span></span>` : ''}</span>`;
+      const done = isTodo(ev) && doneInfo(ev);
+      bars += `<span class="cal-bar${realStart ? ' b-start' : ''}${realEnd ? ' b-end' : ''}${isTodo(ev) ? ' todo' : ''}${done ? ' done' : ''}" style="--c:${eventColor(ev)}">${label
+        ? `<span class="cal-bar-label" style="--span:${span}">${isTodo(ev) ? '<i class="bar-bell">🔔</i>' : eventHeads(ev, 'bar-head')}<span>${esc(ev.title)}</span></span>` : ''}</span>`;
     }
     const more = here.filter((ev) => laneOf.get(ev).l >= MAX).length;
-    html += `<button type="button" class="${cls.join(' ')}" data-day="${day.getTime()}" aria-label="${esc(day.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' }))}${hol ? `, ${esc(hol.name)}` : ''}${games.length ? ', HSV-Spiel' : ''}${here.length ? `, ${here.length} Termin${here.length === 1 ? '' : 'e'}` : ''}">
+    html += `<button type="button" class="${cls.join(' ')}" data-day="${day.getTime()}" aria-label="${esc(day.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' }))}${hol ? `, ${esc(hol.name)}` : ''}${games.length ? ', HSV-Spiel' : ''}${here.length ? `, ${here.length} Einträge` : ''}">
       <span class="cal-num">${day.getDate()}${hol ? `<em class="cal-hol">${esc(hol.short)}</em>` : ''}</span>
       <span class="cal-bars">${bars}</span>
       ${more ? `<span class="cal-more">+${more}</span>` : ''}
@@ -2614,6 +2732,17 @@ function weekHtml(weekStart, month, today) {
     </button>`;
   }
   return html;
+}
+
+function dayRowHtml(ev, day) {
+  const inv = myInvite(ev);
+  const done = isTodo(ev) && doneInfo(ev);
+  return `<button type="button" class="day-ev${isTodo(ev) ? ' is-todo' : ''}${done ? ' is-done' : ''}" data-event="${esc(ev.id)}" data-occ="${esc(ev.occ || '')}" style="--c:${eventColor(ev)}">
+    <span class="day-ev-heads">${isTodo(ev) ? '<span class="todo-bell">🔔</span>' : eventHeads(ev)}</span>
+    <span class="day-ev-time">${esc(eventTimeOnDay(ev, day))}</span>
+    <span class="day-ev-main"><b>${done ? '✓ ' : ''}${esc(ev.title)}</b>${ev.location ? `<small>📍 ${esc(ev.location)}</small>` : ''}${ev.recurrence ? `<small>🔁 ${esc(recurrenceLabel(ev.recurrence))}</small>` : ''}</span>
+    ${inv && inv.status === 'pending' ? '<span class="day-ev-badge">Einladung</span>' : ''}
+  </button>`;
 }
 
 function dayPanelHtml() {
@@ -2631,18 +2760,100 @@ function dayPanelHtml() {
         <span class="day-ev-time">${esc(formatTimeOnly(g.kickoff))}</span>
         <span class="day-ev-main"><b>${esc(hsvTitle(g))}</b><small>${esc(g.league)}${g.round ? ` · ${esc(g.round)}` : ''} · ${g.isHome ? 'Heimspiel' : 'Auswärts'}${g.finished && g.result ? ` · ${esc(g.result)}` : ''}</small></span>
       </button>`).join('')}
-      ${list.length ? list.map((ev) => {
-        const inv = myInvite(ev);
-        return `<button type="button" class="day-ev" data-event="${esc(ev.id)}" style="--c:${eventColor(ev)}">
-          <span class="day-ev-heads">${eventHeads(ev)}</span>
-          <span class="day-ev-time">${esc(eventTimeOnDay(ev, day))}</span>
-          <span class="day-ev-main"><b>${esc(ev.title)}</b>${ev.location ? `<small>📍 ${esc(ev.location)}</small>` : ''}</span>
-          ${inv && inv.status === 'pending' ? '<span class="day-ev-badge">Einladung</span>' : ''}
-        </button>`;
-      }).join('') : (games.length ? '' : '<p class="cal-empty">Keine Termine an diesem Tag.</p>')}
+      ${list.length ? list.map((ev) => dayRowHtml(ev, day)).join('') : (games.length ? '' : '<p class="cal-empty">Keine Termine an diesem Tag.</p>')}
       <button type="button" class="cal-add" id="cal-add">＋ Termin am ${esc(day.toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' }))}</button>
     </div>
   </section>`;
+}
+
+/** Zeitraster für Tag/Woche: Termine als Blöcke, Überschneidungen nebeneinander */
+function layoutBlocks(blocks) {
+  blocks.sort((a, b) => a.s - b.s || b.e - a.e);
+  let cluster = [], end = -Infinity;
+  const flush = () => {
+    const cols = [];
+    for (const b of cluster) {
+      let i = cols.findIndex((e) => e <= b.s);
+      if (i < 0) { i = cols.length; cols.push(0); }
+      cols[i] = b.e;
+      b.col = i;
+    }
+    for (const b of cluster) b.cols = cols.length;
+    cluster = [];
+  };
+  for (const b of blocks) {
+    if (cluster.length && b.s >= end) { flush(); end = -Infinity; }
+    cluster.push(b);
+    end = Math.max(end, b.e);
+  }
+  if (cluster.length) flush();
+  return blocks;
+}
+
+function timeGridHtml(days) {
+  const H = state.calView === 'day' ? 52 : 42;
+  const today = startOfDay(new Date());
+  const from = days[0], to = new Date(addDays(days[days.length - 1], 1).getTime() - 1);
+  const inst = instancesInRange(from, to);
+  const head = days.map((d) => {
+    const hol = holidayOn(d);
+    return `<button type="button" class="tg-dayhead${sameDay(d, today) ? ' today' : ''}${hol && hol.legal ? ' holiday' : ''}" data-goday="${d.getTime()}">
+      <span>${WEEKDAYS[(d.getDay() + 6) % 7]}</span><b>${d.getDate()}</b></button>`;
+  }).join('');
+  const allDay = days.map((d) => {
+    const t = d.getTime();
+    const items = inst.filter((ev) => (ev.allDay || evStartDay(ev) < evEndDay(ev)) && evStartDay(ev).getTime() <= t && evEndDay(ev).getTime() >= t);
+    const hols = holidaysOn(d).filter((h) => h.kind !== 'church' || state.calView === 'day');
+    return `<div class="tg-allday-cell">
+      ${hols.map((h) => `<span class="tg-chip hol k-${h.kind}">${h.emoji} ${esc(state.calView === 'day' ? h.name : h.short)}</span>`).join('')}
+      ${items.map((ev) => `<button type="button" class="tg-chip${isTodo(ev) ? ' todo' : ''}${isTodo(ev) && doneInfo(ev) ? ' done' : ''}" data-event="${esc(ev.id)}" data-occ="${esc(ev.occ)}" style="--c:${eventColor(ev)}">${isTodo(ev) ? '🔔 ' : ''}${esc(ev.title)}</button>`).join('')}
+    </div>`;
+  }).join('');
+  const cols = days.map((d) => {
+    const ds = d.getTime(), de = addDays(d, 1).getTime();
+    const blocks = inst
+      .filter((ev) => !ev.allDay && Date.parse(ev.startAt) < de && Date.parse(ev.endAt) > ds && sameDay(evStartDay(ev), evEndDay(ev)))
+      .map((ev) => ({ ev, s: Math.max(Date.parse(ev.startAt), ds), e: Math.min(Math.max(Date.parse(ev.endAt), Date.parse(ev.startAt) + 15 * 60e3), de) }));
+    for (const g of hsvOnDay(d)) {
+      const s = Date.parse(g.kickoff);
+      blocks.push({ hsv: g, s, e: Math.min(s + 115 * 60e3, de) });
+    }
+    layoutBlocks(blocks);
+    const html = blocks.map((b) => {
+      const top = ((b.s - ds) / 3600e3) * H;
+      const height = Math.max(20, ((b.e - b.s) / 3600e3) * H - 2);
+      const pos = `top:${top}px;height:${height}px;left:calc(${(b.col / b.cols) * 100}% + 1px);width:calc(${100 / b.cols}% - 3px)`;
+      if (b.hsv) {
+        return `<button type="button" class="tg-block hsv${b.hsv.isHome ? ' home' : ''}" data-hsv="${esc(b.hsv.id)}" style="${pos}">
+          <b>⚽ ${esc(state.calView === 'day' ? hsvTitle(b.hsv) : 'HSV')}</b><small>${esc(formatTimeOnly(b.hsv.kickoff))}</small></button>`;
+      }
+      const ev = b.ev;
+      const done = isTodo(ev) && doneInfo(ev);
+      return `<button type="button" class="tg-block${height < 34 ? ' short' : ''}${isTodo(ev) ? ' todo' : ''}${done ? ' done' : ''}" data-event="${esc(ev.id)}" data-occ="${esc(ev.occ)}" style="${pos};--c:${eventColor(ev)}">
+        <b>${isTodo(ev) ? '🔔 ' : ''}${esc(ev.title)}</b>
+        <small>${esc(formatTimeOnly(ev.startAt))}${ev.endAt !== ev.startAt ? `–${esc(formatTimeOnly(ev.endAt))}` : ''}${state.calView === 'day' && ev.location ? ` · 📍 ${esc(ev.location)}` : ''}</small>
+        ${state.calView === 'day' ? `<span class="tg-heads">${eventHeads(ev, 'bar-head')}</span>` : ''}
+      </button>`;
+    }).join('');
+    const now = sameDay(d, today) ? `<span class="tg-now" style="top:${((Date.now() - ds) / 3600e3) * H}px"></span>` : '';
+    return `<div class="tg-col${sameDay(d, today) ? ' today' : ''}" data-colday="${ds}" style="height:${24 * H}px">${html}${now}</div>`;
+  }).join('');
+  const hours = Array.from({ length: 24 }, (_, h) => `<span style="top:${h * H}px">${String(h).padStart(2, '0')}:00</span>`).join('');
+  return `<div class="tg tg-${state.calView}" style="--H:${H}px;--n:${days.length}">
+    <div class="tg-head"><span class="tg-gutter"></span>${head}</div>
+    <div class="tg-allday"><span class="tg-gutter">ganzt.</span>${allDay}</div>
+    <div class="tg-scroll" id="tg-scroll">
+      <div class="tg-body"><div class="tg-hours" style="height:${24 * H}px">${hours}</div><div class="tg-cols">${cols}</div></div>
+    </div>
+  </div>`;
+}
+
+function calTitle() {
+  const d = state.calDay;
+  if (state.calView === 'month') return state.calMonth.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
+  if (state.calView === 'day') return d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'long' });
+  const ws = weekStartOf(d), we = addDays(ws, 6);
+  return `${ws.getDate()}.${ws.getMonth() !== we.getMonth() ? ` ${ws.toLocaleDateString('de-DE', { month: 'short' })}` : ''} – ${we.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' })}`;
 }
 
 function renderCalendar(view) {
@@ -2654,33 +2865,46 @@ function renderCalendar(view) {
   }
   calState();
   if (hsvEnabled() && !state.hsvRequested) { state.hsvRequested = true; loadHsv(); }
-  const m = state.calMonth;
   const today = startOfDay(new Date());
-  const first = new Date(m.getFullYear(), m.getMonth(), 1);
-  const gridStart = addDays(first, -((first.getDay() + 6) % 7));
-  const last = new Date(m.getFullYear(), m.getMonth() + 1, 0);
-  const weeks = Math.ceil((((first.getDay() + 6) % 7) + last.getDate()) / 7);
-  let grid = '';
-  for (let w = 0; w < weeks; w++) grid += weekHtml(addDays(gridStart, w * 7), m.getMonth(), today);
-  const title = m.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
+  let body;
+  if (state.calView === 'month') {
+    const m = state.calMonth;
+    const first = new Date(m.getFullYear(), m.getMonth(), 1);
+    const gridStart = addDays(first, -((first.getDay() + 6) % 7));
+    const last = new Date(m.getFullYear(), m.getMonth() + 1, 0);
+    const weeks = Math.ceil((((first.getDay() + 6) % 7) + last.getDate()) / 7);
+    let grid = '';
+    for (let w = 0; w < weeks; w++) grid += weekHtml(addDays(gridStart, w * 7), m.getMonth(), today);
+    body = `<div class="cal-week">${WEEKDAYS.map((d, i) => `<span${i >= 5 ? ' class="weekend"' : ''}>${d}</span>`).join('')}</div>
+      <div class="cal-grid cal-swipe" id="cal-grid">${grid}</div>`;
+  } else {
+    const days = state.calView === 'day' ? [state.calDay] : Array.from({ length: 7 }, (_, i) => addDays(weekStartOf(state.calDay), i));
+    body = `<div class="cal-swipe">${timeGridHtml(days)}</div>`;
+  }
   view.innerHTML = `<div class="cal-page">
     <div class="cal-dex">
       <div class="cal-head">
-        <button type="button" class="cal-nav" data-month="-1" aria-label="Vorheriger Monat">◀</button>
-        <h2 class="cal-title">${esc(title)}</h2>
-        <button type="button" class="cal-nav" data-month="1" aria-label="Nächster Monat">▶</button>
+        <button type="button" class="cal-nav" data-shift="-1" aria-label="Zurück">◀</button>
+        <h2 class="cal-title">${esc(calTitle())}</h2>
+        <button type="button" class="cal-nav" data-shift="1" aria-label="Weiter">▶</button>
       </div>
-      <div class="cal-week">${WEEKDAYS.map((d, i) => `<span${i >= 5 ? ' class="weekend"' : ''}>${d}</span>`).join('')}</div>
-      <div class="cal-grid" id="cal-grid">${grid}</div>
+      <div class="cal-views" role="tablist">${CAL_VIEWS.map(([k, l]) => `<button type="button" role="tab" class="cal-view-btn${state.calView === k ? ' active' : ''}" data-view="${k}" aria-selected="${state.calView === k}">${l}</button>`).join('')}</div>
+      ${body}
       <div class="cal-foot">
-        <span class="cal-legend">${['m', 'w', 'both'].map((g) => `<span style="--c:${GENDER_COLORS[g]}">${g === 'both' ? `<img src="${CAL_HEADS.m}" alt=""><img src="${CAL_HEADS.w}" alt="">` : `<img src="${CAL_HEADS[g]}" alt="">`}${GENDER_NAMES[g]}</span>`).join('')}${hsvEnabled() ? '<span class="leg-hsv">⚽ HSV</span>' : ''}<span class="leg-hol">Feiertag</span></span>
+        <span class="cal-legend">${['m', 'w', 'both'].map((g) => `<span style="--c:${GENDER_COLORS[g]}">${g === 'both' ? `<img src="${CAL_HEADS.m}" alt=""><img src="${CAL_HEADS.w}" alt="">` : `<img src="${CAL_HEADS[g]}" alt="">`}${GENDER_NAMES[g]}</span>`).join('')}<span class="leg-todo">🔔 Erinnerung</span>${hsvEnabled() ? '<span class="leg-hsv">⚽ HSV</span>' : ''}<span class="leg-hol">Feiertag</span></span>
         <button type="button" class="cal-today" id="cal-today">Heute</button>
       </div>
     </div>
-    ${dayPanelHtml()}
+    ${state.calView === 'month' ? dayPanelHtml() : `<button type="button" class="cal-add cal-add-solo" id="cal-add">＋ Termin am ${esc(state.calDay.toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' }))}</button>`}
   </div>`;
 
-  view.querySelectorAll('[data-month]').forEach((b) => b.addEventListener('click', () => shiftMonth(Number(b.dataset.month))));
+  view.querySelectorAll('[data-shift]').forEach((b) => b.addEventListener('click', () => shiftCal(Number(b.dataset.shift))));
+  view.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => {
+    state.calView = b.dataset.view;
+    lsSet('familie.calView', state.calView);
+    if (state.calView === 'month') state.calMonth = new Date(state.calDay.getFullYear(), state.calDay.getMonth(), 1);
+    render();
+  }));
   $('#cal-today', view).addEventListener('click', () => {
     const t = startOfDay(new Date());
     state.calMonth = new Date(t.getFullYear(), t.getMonth(), 1);
@@ -2694,33 +2918,60 @@ function renderCalendar(view) {
     if (d.getMonth() !== state.calMonth.getMonth()) state.calMonth = new Date(d.getFullYear(), d.getMonth(), 1);
     render();
   }));
-  $('#cal-add', view).addEventListener('click', () => openEventForm({ day: state.calDay }));
-  view.querySelectorAll('[data-event]').forEach((b) => b.addEventListener('click', () => openEventDetail(b.dataset.event)));
-  view.querySelectorAll('[data-hsv]').forEach((b) => b.addEventListener('click', () => openHsvMatch(b.dataset.hsv)));
-  // Wischen wechselt den Monat
-  const grid2 = $('#cal-grid', view);
+  view.querySelectorAll('[data-goday]').forEach((b) => b.addEventListener('click', () => {
+    state.calDay = new Date(Number(b.dataset.goday));
+    state.calView = 'day';
+    lsSet('familie.calView', 'day');
+    render();
+  }));
+  // Leere Stelle im Zeitraster antippen → neuer Termin zu dieser Stunde
+  view.querySelectorAll('[data-colday]').forEach((col) => col.addEventListener('click', (e) => {
+    if (e.target.closest('[data-event],[data-hsv]')) return;
+    const H = state.calView === 'day' ? 52 : 42;
+    const y = e.clientY - col.getBoundingClientRect().top;
+    const hour = Math.max(0, Math.min(23, Math.floor(y / H)));
+    openEventForm({ day: new Date(Number(col.dataset.colday)), hour });
+  }));
+  const addBtn = $('#cal-add', view);
+  if (addBtn) addBtn.addEventListener('click', () => openEventForm({ day: state.calDay }));
+  view.querySelectorAll('[data-event]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); openEventDetail(b.dataset.event, b.dataset.occ || null); }));
+  view.querySelectorAll('[data-hsv]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); openHsvMatch(b.dataset.hsv); }));
+  // Zeitraster: zur passenden Uhrzeit scrollen
+  const sc = $('#tg-scroll', view);
+  if (sc) {
+    const H = state.calView === 'day' ? 52 : 42;
+    const showsToday = state.calView === 'day' ? sameDay(state.calDay, today) : sameDay(weekStartOf(state.calDay), weekStartOf(today));
+    sc.scrollTop = Math.max(0, ((showsToday ? new Date().getHours() - 1 : 7)) * H);
+  }
+  // Wischen wechselt Monat / Woche / Tag
+  const sw = $('.cal-swipe', view);
   let sx = null, sy = null;
-  grid2.addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
-  grid2.addEventListener('touchend', (e) => {
+  sw.addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
+  sw.addEventListener('touchend', (e) => {
     if (sx == null) return;
     const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
     sx = null;
-    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) shiftMonth(dx < 0 ? 1 : -1);
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) shiftCal(dx < 0 ? 1 : -1);
   });
 }
 
-function shiftMonth(n) {
-  const m = state.calMonth;
-  state.calMonth = new Date(m.getFullYear(), m.getMonth() + n, 1);
-  const sel = state.calDay;
-  if (!sel || sel.getMonth() !== state.calMonth.getMonth() || sel.getFullYear() !== state.calMonth.getFullYear()) {
-    const t = startOfDay(new Date());
-    state.calDay = t.getMonth() === state.calMonth.getMonth() && t.getFullYear() === state.calMonth.getFullYear() ? t : state.calMonth;
+function shiftCal(n) {
+  if (state.calView === 'month') {
+    const m = state.calMonth;
+    state.calMonth = new Date(m.getFullYear(), m.getMonth() + n, 1);
+    const sel = state.calDay;
+    if (!sel || sel.getMonth() !== state.calMonth.getMonth() || sel.getFullYear() !== state.calMonth.getFullYear()) {
+      const t = startOfDay(new Date());
+      state.calDay = t.getMonth() === state.calMonth.getMonth() && t.getFullYear() === state.calMonth.getFullYear() ? t : state.calMonth;
+    }
+  } else {
+    state.calDay = addDays(state.calDay, n * (state.calView === 'week' ? 7 : 1));
+    state.calMonth = new Date(state.calDay.getFullYear(), state.calDay.getMonth(), 1);
   }
   render();
 }
 
-/* ---- Termin anlegen / bearbeiten ------------------------------------ */
+/* ---- Termin / Erinnerung anlegen & bearbeiten ----------------------- */
 
 const toDateInput = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
@@ -2734,32 +2985,91 @@ function reminderRowHtml(allDay, spec = null) {
   </div>`;
 }
 
-function openEventForm({ day = null, event = null } = {}) {
+function repeatFieldHtml(rec) {
+  const p = repeatPreset(rec);
+  return `<div class="field rep-field"><span>Wiederholen</span>
+    <select name="rep" class="rem-sel">
+      ${[['none', 'Nie'], ['daily', 'Täglich'], ['weekly', 'Wöchentlich'], ['biweekly', 'Alle 14 Tage'], ['monthly', 'Monatlich'], ['custom', 'Benutzerdefiniert …']]
+        .map(([k, l]) => `<option value="${k}"${k === p ? ' selected' : ''}>${l}</option>`).join('')}
+    </select>
+    <div class="rep-custom"${p === 'custom' ? '' : ' hidden'}>alle
+      <input type="number" name="repN" min="1" max="365" value="${rec && p === 'custom' ? rec.n : 2}" inputmode="numeric">
+      <select name="repU" class="rem-sel">${[['day', 'Tage'], ['week', 'Wochen'], ['month', 'Monate']].map(([k, l]) => `<option value="${k}"${rec && rec.u === k ? ' selected' : ''}>${l}</option>`).join('')}</select>
+    </div>
+    <div class="rep-end"${p === 'none' ? ' hidden' : ''}>
+      <select name="repEnd" class="rem-sel"><option value="never"${rec && rec.until ? '' : ' selected'}>Endet nie</option><option value="until"${rec && rec.until ? ' selected' : ''}>Endet am …</option></select>
+      <input type="date" name="repUntil" class="dt"${rec && rec.until ? ` value="${rec.until}"` : ' hidden'}>
+    </div>
+  </div>`;
+}
+
+/** Bei wiederkehrenden Einträgen: nur dieser oder alle folgenden? */
+function askSeriesScope(ev, action) {
+  if (!ev.recurrence) return Promise.resolve('all');
+  const first = Date.parse(ev.occ || ev.startAt) <= Date.parse(ev.seriesStart || ev.startAt);
+  return dsChoose(`Das ist ein wiederkehrender ${isTodo(ev) ? 'Eintrag' : 'Termin'}. Was möchtest du ${action}?`, [
+    { label: `Nur diesen (${new Date(ev.occ || ev.startAt).toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' })})`, value: 'one' },
+    { label: first ? 'Die ganze Serie' : 'Diesen und alle folgenden', value: 'following' },
+    { label: 'Abbrechen', value: null },
+  ]);
+}
+
+async function deleteEventFlow(inst, after) {
+  const scope = await askSeriesScope(inst, 'löschen');
+  if (!scope) return;
+  if (scope === 'all' && !(await dsAsk(`„${inst.title}“ wirklich löschen?${isTodo(inst) ? '' : ' Eingeladene sehen den Termin dann auch nicht mehr.'}`, { yes: 'Löschen', danger: true }))) return;
+  try {
+    if (scope === 'one') must(await sb.rpc('event_exclude', { p_event: inst.id, p_occ: inst.occ }));
+    else if (scope === 'following') must(await sb.rpc('event_split', { p_event: inst.id, p_occ: inst.occ }));
+    else must(await sb.from('events').delete().eq('id', inst.id));
+    await loadEvents().catch(() => {});
+    if (after) after();
+    render();
+    toast(scope === 'one' ? '🗑️ Dieser Termin wurde entfernt.' : scope === 'following' ? '🗑️ Dieser und alle folgenden wurden entfernt.' : '🗑️ Gelöscht.');
+  } catch (ex) { toast(ex.message); }
+}
+
+async function editEventFlow(inst, before) {
+  const scope = await askSeriesScope(inst, 'bearbeiten');
+  if (!scope) return;
+  if (before) before();
+  openEventForm({ event: inst, scope });
+}
+
+function openEventForm({ day = null, event = null, kind = null, hour = null, scope = 'all' } = {}) {
   const ev = event;
+  const todo = (ev ? ev.kind : kind) === 'todo';
   const base = day || startOfDay(new Date());
   const now = new Date();
   let start, end;
   if (ev) { start = new Date(ev.startAt); end = new Date(ev.endAt); } else {
-    start = new Date(base.getFullYear(), base.getMonth(), base.getDate(), sameDay(base, startOfDay(now)) ? Math.min(now.getHours() + 1, 23) : 10, 0);
+    const h = hour != null ? hour : sameDay(base, startOfDay(now)) ? Math.min(now.getHours() + 1, 23) : 10;
+    start = new Date(base.getFullYear(), base.getMonth(), base.getDate(), h, 0);
     end = new Date(start.getTime() + 3600e3);
   }
-  const allDay = ev ? ev.allDay : false;
+  const allDay = ev ? ev.allDay : todo && hour == null;
   const invited = ev ? invitesOf(ev).map((i) => i.userId) : [];
   const others = state.users.filter((u) => u.id !== state.me.id);
   const rems = ev && ev.reminders.length ? ev.reminders : [null];
+  // „Nur dieser“: aus der Serie lösen → ohne Wiederholung
+  const rec = ev && scope !== 'one' ? ev.recurrence : null;
+  const noun = todo ? 'Erinnerung' : 'Termin';
 
   openModal(
-    `<div class="modal-head ev-form-head"><h2>${ev ? 'Termin bearbeiten' : 'Neuer Termin'}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+    `<div class="modal-head ev-form-head"><h2>${ev ? `${noun} bearbeiten` : todo ? 'Neue Erinnerung' : 'Neuer Termin'}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+     ${ev && ev.recurrence ? `<p class="hint scope-hint">🔁 ${scope === 'one' ? 'Du änderst nur diesen einen Termin – er wird aus der Serie gelöst.' : 'Du änderst diesen und alle folgenden Termine der Serie.'}</p>` : ''}
      <form class="form" id="ev-form" novalidate>
-       <label class="field"><span>Titel</span><input name="title" maxlength="120" required placeholder="z. B. Zahnarzt" value="${esc(ev ? ev.title : '')}"></label>
-       <label class="field"><span>Ort</span><input name="location" maxlength="200" placeholder="optional" value="${esc(ev ? ev.location : '')}"></label>
-       <div class="toggle-row"><span>Ganztägig</span>${switchToggle('allDay', allDay)}</div>
-       <div class="ev-times">
-         <label class="field"><span>Beginn</span><input name="start" class="dt" type="${allDay ? 'date' : 'datetime-local'}" value="${allDay ? toDateInput(start) : toLocalInput(start)}"></label>
-         <label class="field"><span>Ende</span><input name="end" class="dt" type="${allDay ? 'date' : 'datetime-local'}" value="${allDay ? toDateInput(end) : toLocalInput(end)}"></label>
-       </div>
+       ${todo ? assigneePickerHtml('Für wen?', ev ? ev.assignees : [state.me.id]) : ''}
+       <label class="field"><span>Titel</span><input name="title" maxlength="120" required placeholder="${todo ? 'z. B. Blumen gießen' : 'z. B. Zahnarzt'}" value="${esc(ev ? ev.title : '')}"></label>
+       ${todo ? '' : `<label class="field"><span>Ort</span><input name="location" maxlength="200" placeholder="optional" value="${esc(ev ? ev.location : '')}"></label>`}
        <label class="field"><span>Beschreibung</span><textarea name="description" maxlength="4000" placeholder="optional">${esc(ev ? ev.description : '')}</textarea></label>
-       ${others.length ? `<div class="field"><span>Einladen</span>
+       <div class="toggle-row"><span>${todo ? 'Ganzer Tag (ohne Uhrzeit)' : 'Ganztägig'}</span>${switchToggle('allDay', allDay)}</div>
+       <div class="ev-times">
+         <label class="field"><span>${todo ? 'Am / ab' : 'Beginn'}</span><input name="start" class="dt" type="${allDay ? 'date' : 'datetime-local'}" value="${allDay ? toDateInput(start) : toLocalInput(start)}"></label>
+         <label class="field"><span>${todo ? 'Bis' : 'Ende'}</span><input name="end" class="dt" type="${allDay ? 'date' : 'datetime-local'}" value="${allDay ? toDateInput(end) : toLocalInput(end)}"></label>
+       </div>
+       ${repeatFieldHtml(rec)}
+       ${!todo && others.length ? `<div class="field"><span>Einladen</span>
          <div class="ev-invite">${others.map((u) => `<label class="ev-inv" style="--c:${GENDER_COLORS[u.gender] || GENDER_COLORS.both}">
            <input type="checkbox" name="invite" value="${esc(u.id)}"${invited.includes(u.id) ? ' checked' : ''}>
            <span>${u.gender && CAL_HEADS[u.gender] ? `<img src="${CAL_HEADS[u.gender]}" alt="">` : ''}${esc(u.firstName)}</span></label>`).join('')}</div>
@@ -2768,7 +3078,7 @@ function openEventForm({ day = null, event = null } = {}) {
        <div class="field"><span>Hinweise</span>
          <div class="rem-list" id="rem-list">${rems.map((r) => reminderRowHtml(allDay, r)).join('')}</div>
          <button type="button" class="btn small rem-add" id="rem-add">＋ Hinweis</button>
-         <p class="hint">Hinweise kommen als Benachrichtigung der App – für dich und alle, die zugesagt haben.</p>
+         <p class="hint">${todo ? 'Hinweise kommen als Benachrichtigung an alle, für die die Erinnerung ist.' : 'Hinweise kommen als Benachrichtigung der App – für dich und alle, die zugesagt haben.'}</p>
        </div>
        <p class="error" id="ev-error"></p>
        <div class="modal-actions">
@@ -2799,6 +3109,19 @@ function openEventForm({ day = null, event = null } = {}) {
           $('#rem-add', modal).hidden = remList.children.length >= 6;
           syncCustomMax();
         };
+        // Wiederholen
+        const syncRepeat = () => {
+          const v = form.elements.rep.value;
+          $('.rep-custom', modal).hidden = v !== 'custom';
+          $('.rep-end', modal).hidden = v === 'none';
+          form.elements.repUntil.hidden = form.elements.repEnd.value !== 'until';
+          if (!form.elements.repUntil.hidden && !form.elements.repUntil.value) {
+            const s = readStart() || base;
+            form.elements.repUntil.value = toDateInput(new Date(s.getFullYear(), s.getMonth() + 3, s.getDate()));
+          }
+        };
+        form.elements.rep.addEventListener('change', syncRepeat);
+        form.elements.repEnd.addEventListener('change', syncRepeat);
         form.elements.allDay.addEventListener('change', () => {
           const s = readStart() || base;
           const eRaw = form.elements.end.value;
@@ -2811,12 +3134,10 @@ function openEventForm({ day = null, event = null } = {}) {
             form.elements.start.value = toLocalInput(st);
             form.elements.end.value = toLocalInput(new Date(Math.max(st.getTime() + 3600e3, new Date(e.getFullYear(), e.getMonth(), e.getDate(), 11, 0).getTime())));
           }
-          // Hinweise auf die passenden Auswahlmöglichkeiten umstellen
           const n = remList.children.length;
           remList.innerHTML = Array.from({ length: n }, () => reminderRowHtml(ad)).join('');
           syncRows();
         });
-        // Ende nie vor dem Beginn
         form.elements.start.addEventListener('change', () => {
           const s = readStart();
           if (!s) return;
@@ -2846,16 +3167,7 @@ function openEventForm({ day = null, event = null } = {}) {
         });
         syncRows();
         const delBtn = $('#ev-delete', modal);
-        if (delBtn) delBtn.addEventListener('click', async () => {
-          if (!(await dsAsk('Diesen Termin wirklich löschen? Eingeladene sehen ihn dann auch nicht mehr.', { yes: 'Löschen', danger: true }))) return;
-          try {
-            must(await sb.from('events').delete().eq('id', ev.id));
-            state.events = state.events.filter((x) => x.id !== ev.id);
-            close();
-            render();
-            toast('🗑️ Termin gelöscht.');
-          } catch (ex) { toast(ex.message); }
-        });
+        if (delBtn) delBtn.addEventListener('click', () => deleteEventFlow(ev, close));
         if (!ev && !isIos) form.elements.title.focus();
 
         form.addEventListener('submit', async (e) => {
@@ -2870,6 +3182,19 @@ function openEventForm({ day = null, event = null } = {}) {
           const s = ad ? new Date(`${sv}T00:00:00`) : new Date(sv);
           const en = ad ? new Date(`${evv}T23:59:59`) : new Date(evv);
           if (en < s) { err.textContent = 'Das Ende liegt vor dem Beginn.'; return; }
+          // Wiederholung
+          let recurrence = null;
+          const rv = form.elements.rep.value;
+          if (rv !== 'none') {
+            recurrence = rv === 'custom'
+              ? { u: form.elements.repU.value, n: Math.max(1, Math.min(365, Number(form.elements.repN.value) || 1)) }
+              : { ...REPEAT_PRESETS[rv] };
+            if (form.elements.repEnd.value === 'until') {
+              if (!form.elements.repUntil.value) { err.textContent = 'Bitte angeben, wann die Wiederholung endet.'; return; }
+              if (new Date(`${form.elements.repUntil.value}T23:59:59`) < s) { err.textContent = 'Das Ende der Wiederholung liegt vor dem Beginn.'; return; }
+              recurrence.until = form.elements.repUntil.value;
+            }
+          }
           const reminders = [];
           for (const row of remList.querySelectorAll('.rem-row')) {
             const v = row.querySelector('.rem-sel').value;
@@ -2878,31 +3203,43 @@ function openEventForm({ day = null, event = null } = {}) {
               const at = row.querySelector('.rem-at').value;
               if (!at) { err.textContent = 'Bitte für den benutzerdefinierten Hinweis Datum und Uhrzeit wählen.'; return; }
               const atD = new Date(at);
-              if (atD > s) { err.textContent = 'Ein Hinweis darf nicht nach dem Beginn des Termins liegen.'; return; }
+              if (atD > s) { err.textContent = 'Ein Hinweis darf nicht nach dem Beginn liegen.'; return; }
               reminders.push({ k: 'custom', at: atD.toISOString() });
             } else if (v.startsWith('o:')) reminders.push({ k: 'offset', m: Number(v.slice(2)) });
             else if (v.startsWith('d:')) reminders.push({ k: 'day', d: Number(v.slice(2)) });
           }
           const unique = [...new Map(reminders.map((r) => [JSON.stringify(r), r])).values()];
           const invitees = [...form.querySelectorAll('[name=invite]:checked')].map((i) => i.value);
+          const assignees = [...form.querySelectorAll('[name=assignee]:checked')].map((i) => i.value);
+          if (todo && !assignees.length) { err.textContent = 'Bitte auswählen, für wen die Erinnerung ist.'; return; }
           const btn = form.querySelector('[type=submit]');
           btn.disabled = true;
           try {
+            // Serie: „nur dieser“ → Vorkommen ausnehmen + Einzeltermin; „dieser und folgende“ (nicht der erste) → Serie teilen + neue Serie
+            let targetId = ev ? ev.id : null;
+            if (ev && ev.recurrence && scope === 'one') {
+              must(await sb.rpc('event_exclude', { p_event: ev.id, p_occ: ev.occ }));
+              targetId = null;
+            } else if (ev && ev.recurrence && scope === 'following' && Date.parse(ev.occ) > Date.parse(ev.seriesStart)) {
+              must(await sb.rpc('event_split', { p_event: ev.id, p_occ: ev.occ }));
+              targetId = null;
+            }
             const row = must(await sb.rpc('save_event', {
-              p_id: ev ? ev.id : null, p_title: title, p_location: form.elements.location.value,
+              p_id: targetId, p_title: title, p_location: todo ? '' : form.elements.location.value,
               p_description: form.elements.description.value.trim(), p_all_day: ad,
-              p_start: s.toISOString(), p_end: en.toISOString(), p_reminders: unique, p_invitees: invitees,
+              p_start: s.toISOString(), p_end: en.toISOString(), p_reminders: unique, p_invitees: todo ? [] : invitees,
+              p_kind: todo ? 'todo' : 'event', p_assignees: todo ? assignees : [], p_recurrence: recurrence,
             }));
             const saved = mapEvent(row);
-            upsertBy(state.events, saved);
             await loadEvents().catch(() => {});
-            const fresh = invitees.filter((id) => !invited.includes(id));
-            if (fresh.length || ev) invokeQuiet({ action: 'event', eventId: saved.id, invited: fresh, changed: Boolean(ev) });
+            const fresh = targetId ? invitees.filter((id) => !invited.includes(id)) : invitees;
+            if (todo || fresh.length || ev) invokeQuiet({ action: 'event', eventId: saved.id, invited: fresh, changed: Boolean(ev) });
             close();
             state.calDay = startOfDay(s);
             state.calMonth = new Date(s.getFullYear(), s.getMonth(), 1);
             render();
-            if (ev) toast('📅 Termin gespeichert.'); else catchAnimation(fresh.length ? 'Termin & Einladung raus!' : 'Termin eingetragen!');
+            if (ev) toast(todo ? '🔔 Erinnerung gespeichert.' : '📅 Termin gespeichert.');
+            else catchAnimation(todo ? 'Erinnerung gesetzt!' : fresh.length ? 'Termin & Einladung raus!' : 'Termin eingetragen!');
           } catch (ex) {
             err.textContent = ex.message;
             btn.disabled = false;
@@ -2921,27 +3258,36 @@ function eventDetailHtml(ev) {
   const owner = userById(ev.ownerId);
   const mine = ev.ownerId === state.me.id;
   const inv = myInvite(ev);
+  const todo = isTodo(ev);
+  const done = todo && doneInfo(ev);
   const comments = state.eventComments.filter((c) => c.eventId === ev.id);
-  return `<div class="ev-detail" style="--c:${eventColor(ev)}">
+  const people = eventPeople(ev);
+  const gname = GENDER_NAMES[eventGenders(ev).length > 1 ? 'both' : eventGenders(ev)[0] || 'both'];
+  return `<div class="ev-detail${todo ? ' is-todo' : ''}" style="--c:${eventColor(ev)}">
     <div class="ev-banner">
       <div class="ev-banner-sprites">${eventSprites(ev)}</div>
       <div class="ev-banner-text">
-        <span class="ev-tag">📅 TERMIN · ${esc(GENDER_NAMES[eventGenders(ev).length > 1 ? 'both' : eventGenders(ev)[0] || 'both'])}</span>
-        <h2>${esc(ev.title)}</h2>
+        <span class="ev-tag">${todo ? '🔔 ERINNERUNG' : '📅 TERMIN'} · ${esc(gname)}</span>
+        <h2>${done ? '✓ ' : ''}${esc(ev.title)}</h2>
       </div>
       <button class="icon-btn" data-close aria-label="Schließen">✕</button>
     </div>
     <div class="ev-rows">
       <div class="ev-row"><span>🕒</span><b>${esc(eventTimeText(ev))}</b></div>
+      ${ev.recurrence ? `<div class="ev-row"><span>🔁</span><b>${esc(recurrenceLabel(ev.recurrence))}</b></div>` : ''}
       ${ev.location ? `<div class="ev-row"><span>📍</span><b>${esc(ev.location)}</b></div>` : ''}
       ${ev.description ? `<div class="ev-row"><span>📝</span><p>${esc(ev.description)}</p></div>` : ''}
       <div class="ev-row"><span>👤</span><div class="ev-people">
-        <div>${owner ? esc(fullName(owner)) : 'Unbekannt'} <small>· Ersteller</small></div>
-        ${invitesOf(ev).map((i) => { const u = userById(i.userId); return `<div>${esc(u ? fullName(u) : '?')} <small>· ${INVITE_STATUS[i.status]}</small></div>`; }).join('')}
+        ${todo ? `<div>Für ${people.map((u) => esc(u.id === state.me.id ? 'dich' : u.firstName)).join(' & ')} <small>· von ${esc(owner ? owner.firstName : '?')}</small></div>`
+          : `<div>${owner ? esc(fullName(owner)) : 'Unbekannt'} <small>· Ersteller</small></div>
+        ${invitesOf(ev).map((i) => { const u = userById(i.userId); return `<div>${esc(u ? fullName(u) : '?')} <small>· ${INVITE_STATUS[i.status]}</small></div>`; }).join('')}`}
       </div></div>
+      ${done ? `<div class="ev-row"><span>✅</span><b>Erledigt von ${esc(nameOf(done.by, 'jemandem'))} · ${esc(formatDateTime(done.at))} Uhr</b></div>` : ''}
       ${ev.reminders.length ? `<div class="ev-row"><span>🔔</span><div class="ev-people">${ev.reminders.map((r) => `<div>${esc(reminderLabel(r, ev.allDay))}</div>`).join('')}
-        <small class="hint">${mine || (inv && inv.status === 'accepted') ? 'Gilt auch für dich.' : 'Gilt nur für den Ersteller und alle, die zugesagt haben.'}</small></div></div>` : ''}
+        <small class="hint">${todo ? 'Gilt für alle, für die die Erinnerung ist.' : mine || (inv && inv.status === 'accepted') ? 'Gilt auch für dich.' : 'Gilt nur für den Ersteller und alle, die zugesagt haben.'}</small></div></div>` : ''}
     </div>
+    ${todo && todoResponsible(ev) ? `<div class="ev-answer"><span>${done ? 'Schon erledigt.' : 'Noch offen.'}</span>
+      <div class="ev-answer-btns"><button type="button" class="btn ${done ? '' : 'primary'}" data-todo-toggle="${done ? '0' : '1'}">${done ? '↩️ Wieder öffnen' : '✓ Erledigt'}</button></div></div>` : ''}
     ${inv ? `<div class="ev-answer">
       ${inv.status === 'pending' ? '<span>Du bist eingeladen:</span>' : `<span>${INVITE_STATUS[inv.status]}</span>`}
       <div class="ev-answer-btns">
@@ -2964,31 +3310,40 @@ function eventDetailHtml(ev) {
 }
 
 function openEventById(id) {
-  const go = () => (state.events.some((e) => e.id === id) ? openEventDetail(id) : toast('Diesen Termin gibt es nicht mehr.'));
+  const go = () => (state.events.some((e) => e.id === id) ? openEventDetail(id) : toast('Diesen Eintrag gibt es nicht mehr.'));
   if (state.eventsLoaded) go(); else loadEvents().then(go).catch((e) => toast(e.message));
 }
 
-function openEventDetail(id) {
-  const ev = state.events.find((e) => e.id === id);
-  if (!ev) return;
-  openModal(eventDetailHtml(ev), {
+async function toggleTodoDone(inst, done) {
+  if (!(await confirmStep(done ? `„${inst.title}“ als erledigt abhaken?` : `„${inst.title}“ wieder öffnen?`, done ? 'Ja, erledigt' : 'Ja, öffnen'))) return false;
+  try {
+    must(await sb.rpc('set_event_done', { p_event: inst.id, p_occ: inst.occ || inst.startAt, p_done: done }));
+    await loadEvents().catch(() => {});
+    render();
+    if (done) catchAnimation('Erledigt!');
+    return true;
+  } catch (ex) { toast(ex.message); return false; }
+}
+
+function openEventDetail(id, occ = null) {
+  const first = instanceById(id, occ);
+  if (!first) return;
+  const occKey = first.occ;
+  openModal(eventDetailHtml(first), {
     cls: 'ev-modal',
     onMount: (modal, close) => {
+      const current = () => instanceById(id, occKey);
       const bind = () => {
-        const cur = state.events.find((e) => e.id === id);
+        const cur = current();
         if (!cur) { close(); return; }
         const edit = $('#ev-edit', modal);
-        if (edit) edit.addEventListener('click', () => { close(); openEventForm({ event: cur }); });
+        if (edit) edit.addEventListener('click', () => editEventFlow(cur, close));
         const del = $('#ev-del', modal);
-        if (del) del.addEventListener('click', async () => {
-          if (!(await dsAsk('Diesen Termin wirklich löschen? Eingeladene sehen ihn dann auch nicht mehr.', { yes: 'Löschen', danger: true }))) return;
-          try {
-            must(await sb.from('events').delete().eq('id', cur.id));
-            state.events = state.events.filter((x) => x.id !== cur.id);
-            close(); render(); toast('🗑️ Termin gelöscht.');
-          } catch (ex) { toast(ex.message); }
-        });
+        if (del) del.addEventListener('click', () => deleteEventFlow(cur, close));
         modal.querySelectorAll('[data-respond]').forEach((b) => b.addEventListener('click', () => respondEvent(cur.id, b.dataset.respond === '1', b)));
+        modal.querySelectorAll('[data-todo-toggle]').forEach((b) => b.addEventListener('click', async () => {
+          if (await toggleTodoDone(cur, b.dataset.todoToggle === '1')) refresh();
+        }));
         modal.querySelectorAll('[data-del-ev-comment]').forEach((b) => b.addEventListener('click', async () => {
           try {
             must(await sb.from('event_comments').delete().eq('id', b.dataset.delEvComment));
@@ -3012,7 +3367,7 @@ function openEventDetail(id) {
         });
       };
       const refresh = () => {
-        const cur = state.events.find((e) => e.id === id);
+        const cur = current();
         if (!cur) { close(); return; }
         modal.innerHTML = eventDetailHtml(cur);
         bind();
@@ -3024,6 +3379,8 @@ function openEventDetail(id) {
 }
 
 async function respondEvent(id, accept, btn) {
+  const ev = state.events.find((e) => e.id === id);
+  if (!(await confirmStep(`${accept ? 'Zusagen' : 'Absagen'}${ev ? ` für „${ev.title}“` : ''}?`, accept ? 'Ja, zusagen' : 'Ja, absagen'))) return;
   if (btn) btn.disabled = true;
   try {
     const r = must(await sb.rpc('respond_event', { p_event: id, p_accept: accept }));
@@ -3039,9 +3396,9 @@ async function respondEvent(id, accept, btn) {
   }
 }
 
-/* ---- Termine auf der Startseite -------------------------------------- */
+/* ---- Termine & Erinnerungen auf der Startseite ----------------------- */
 
-/** In welchen Start-Bereich gehört ein Termin? (null = nicht auf Start) */
+/** In welchen Start-Bereich gehört ein Termin-Vorkommen? (null = nicht auf Start) */
 function eventSection(ev, now = new Date()) {
   const t = now.getTime();
   const today = startOfDay(now);
@@ -3057,17 +3414,60 @@ function eventSection(ev, now = new Date()) {
   return null;
 }
 
-function eventCardHtml(ev) {
+/** Erinnerung: nach Tag einsortiert; Überfälliges bleibt unter „Heute“, bis es erledigt ist */
+function todoSection(inst) {
+  const today = startOfDay(new Date());
+  const d = evStartDay(inst).getTime(), ed = evEndDay(inst).getTime();
+  if (d < today.getTime() && ed < today.getTime()) return 'heute'; // überfällig
+  if (d <= today.getTime()) return 'heute';
+  const diff = Math.round((d - today.getTime()) / 86400e3);
+  if (diff === 1) return 'morgen';
+  if (diff < 8) return 'woche';
+  return null;
+}
+
+/** Alles aus dem Kalender, was auf Start gehört (je Serie das nächste Vorkommen) */
+function startEventItems() {
+  const today = startOfDay(new Date());
+  const out = [];
+  for (const ev of state.events) {
+    if (isTodo(ev)) {
+      const list = occurrenceStarts(ev, addDays(today, -60).getTime(), addDays(today, 8).getTime()).map((o) => instanceOf(ev, o))
+        .filter((i) => !doneInfo(i));
+      const overdue = list.filter((i) => evEndDay(i) < today).pop();
+      const next = list.find((i) => evEndDay(i) >= today);
+      for (const i of [overdue, next]) {
+        if (!i) continue;
+        const sec = todoSection(i);
+        if (sec) out.push({ ev: i, sec, overdue: i === overdue });
+      }
+    } else {
+      const list = occurrenceStarts(ev, addDays(today, -40).getTime(), addDays(today, 8).getTime()).map((o) => instanceOf(ev, o));
+      const seen = new Set();
+      for (const i of list) {
+        const sec = eventSection(i);
+        if (!sec || (ev.recurrence && seen.size)) continue; // Serien: nur das nächste Vorkommen
+        seen.add(sec);
+        out.push({ ev: i, sec });
+      }
+    }
+  }
+  return out;
+}
+
+function eventCardHtml(ev, { overdue = false } = {}) {
+  if (isTodo(ev)) return todoCardHtml(ev, overdue);
   const inv = myInvite(ev);
   const comments = state.eventComments.filter((c) => c.eventId === ev.id).length;
   const pendingOthers = invitesOf(ev).filter((i) => i.status === 'pending').length;
-  return `<article class="ev-card" data-event-card="${esc(ev.id)}" tabindex="0" style="--c:${eventColor(ev)}">
+  return `<article class="ev-card" data-event-card="${esc(ev.id)}" data-occ="${esc(ev.occ || '')}" tabindex="0" style="--c:${eventColor(ev)}">
     <div class="ev-card-side">${eventHeads(ev, 'ev-card-head')}</div>
     <div class="ev-card-body">
       <span class="ev-tag">📅 TERMIN</span>
       <h3>${esc(ev.title)}</h3>
       <div class="ev-card-meta">
         <span>🕒 ${esc(eventTimeText(ev, true))}</span>
+        ${ev.recurrence ? `<span>🔁 ${esc(recurrenceLabel(ev.recurrence))}</span>` : ''}
         ${ev.location ? `<span>📍 ${esc(ev.location)}</span>` : ''}
         ${inv && inv.status === 'accepted' ? '<span>✅ Du hast zugesagt</span>' : ''}
         ${pendingOthers && ev.ownerId === state.me.id ? `<span>⏳ ${pendingOthers} Antwort${pendingOthers === 1 ? '' : 'en'} offen</span>` : ''}
@@ -3077,12 +3477,34 @@ function eventCardHtml(ev) {
   </article>`;
 }
 
+function todoCardHtml(ev, overdue) {
+  const people = eventPeople(ev);
+  const when = ev.allDay
+    ? evStartDay(ev).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' })
+    : eventTimeText(ev, true);
+  return `<article class="todo-card${overdue ? ' overdue' : ''}" data-event-card="${esc(ev.id)}" data-occ="${esc(ev.occ || '')}" tabindex="0" style="--c:${eventColor(ev)}">
+    <span class="todo-icon" aria-hidden="true">🔔</span>
+    <div class="todo-body">
+      <span class="todo-tag">ERINNERUNG${overdue ? ' · ÜBERFÄLLIG' : ''}</span>
+      <h3>${esc(ev.title)}</h3>
+      ${ev.description ? `<p class="desc">${esc(ev.description)}</p>` : ''}
+      <div class="todo-meta">
+        <span>🗓️ ${esc(when)}</span>
+        ${ev.recurrence ? `<span>🔁 ${esc(recurrenceLabel(ev.recurrence))}</span>` : ''}
+        <span class="todo-for">${people.map((u) => `${u.gender && CAL_HEADS[u.gender] ? `<img class="fw-head" src="${CAL_HEADS[u.gender]}" alt="">` : ''}${esc(u.id === state.me.id ? 'Du' : u.firstName)}`).join(' & ')}</span>
+      </div>
+    </div>
+    ${todoResponsible(ev) ? `<button type="button" class="todo-check" data-todo-done="${esc(ev.id)}" data-occ="${esc(ev.occ || ev.startAt)}" aria-label="Erledigt">✓</button>` : ''}
+  </article>`;
+}
+
 function invitationCardsHtml() {
   if (!state.me) return '';
   const now = Date.now();
   const list = state.invites.filter((i) => i.userId === state.me.id && i.status === 'pending')
     .map((i) => state.events.find((e) => e.id === i.eventId))
-    .filter((ev) => ev && Date.parse(ev.endAt) > now);
+    .filter((ev) => ev && (ev.recurrence ? nextInstance(ev) : Date.parse(ev.endAt) > now))
+    .map((ev) => (ev.recurrence ? nextInstance(ev) : ev));
   if (!list.length) return '';
   return `<section class="invites">${list.map((ev) => {
     const owner = userById(ev.ownerId);
@@ -3090,7 +3512,7 @@ function invitationCardsHtml() {
       <div class="invite-top"><span class="invite-stamp">📨 EINLADUNG</span><span>von ${esc(owner ? owner.firstName : '?')}</span></div>
       <button type="button" class="invite-main" data-event-card="${esc(ev.id)}">
         <span class="invite-heads">${eventHeads(ev, 'ev-card-head')}</span>
-        <span><b>${esc(ev.title)}</b><small>🕒 ${esc(eventTimeText(ev))}${ev.location ? ` · 📍 ${esc(ev.location)}` : ''}</small></span>
+        <span><b>${esc(ev.title)}</b><small>🕒 ${esc(eventTimeText(ev))}${ev.recurrence ? ` · 🔁 ${esc(recurrenceLabel(ev.recurrence))}` : ''}${ev.location ? ` · 📍 ${esc(ev.location)}` : ''}</small></span>
       </button>
       <div class="invite-btns">
         <button type="button" class="btn primary" data-invite-accept="${esc(ev.id)}">✅ Zusagen</button>
@@ -3102,10 +3524,15 @@ function invitationCardsHtml() {
 
 function bindEventCards(view) {
   view.querySelectorAll('[data-event-card]').forEach((el) => {
-    const open = () => openEventDetail(el.dataset.eventCard);
-    el.addEventListener('click', open);
+    const open = () => openEventDetail(el.dataset.eventCard, el.dataset.occ || null);
+    el.addEventListener('click', (e) => { if (!e.target.closest('[data-todo-done]')) open(); });
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
   });
+  view.querySelectorAll('[data-todo-done]').forEach((b) => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const inst = instanceById(b.dataset.todoDone, b.dataset.occ);
+    if (inst) toggleTodoDone(inst, true);
+  }));
   view.querySelectorAll('[data-invite-accept]').forEach((b) => b.addEventListener('click', () => respondEvent(b.dataset.inviteAccept, true, b)));
   view.querySelectorAll('[data-invite-decline]').forEach((b) => b.addEventListener('click', () => respondEvent(b.dataset.inviteDecline, false, b)));
 }
@@ -4499,8 +4926,22 @@ function openDossier(userId) {
  *  blau für Trainer, rosa für Trainerinnen
  * ---------------------------------------------------------------------- */
 
-const APP_VERSION = '1.0.0.5';
+const APP_VERSION = '1.1.0';
 const CHANGELOG = [
+  {
+    version: '1.1.0', date: '2026-11-19', title: 'Großes Kalender-Update',
+    intro: 'Der Kalender kann jetzt Tag, Woche und Monat – und Termine wiederholen sich auf Wunsch von selbst. Neu auf Start: Erinnerungen zum Abhaken.',
+    items: [
+      'Kalender-Ansichten Tag / Woche / Monat',
+      'Tag & Woche zeigen Termine als Zeitblöcke – Überschneidungen nebeneinander',
+      'Termine wiederholen: täglich, wöchentlich, 14-tägig, monatlich oder eigener Rhythmus',
+      'Bei Serien: nur diesen oder alle folgenden bearbeiten/löschen',
+      'Neu: Erinnerungen – für dich oder andere, mit Hinweis, auch wiederkehrend',
+      'Erinnerungen bleiben auf Start, bis sie abgehakt sind',
+      'Meldungen: oben auswählen, für wen sie sind',
+      'Jede Rückmeldung auf Start wird noch einmal bestätigt – keine Fehlklicks mehr',
+    ],
+  },
   {
     version: '1.0.0.5', date: '2026-11-19', title: 'Nächste 7 Tage',
     items: [
@@ -4754,7 +5195,8 @@ function awayFeed() {
   for (const n of state.notes || []) if (n.updatedBy && n.updatedBy !== me) push(n.updatedAt, '📝', `${who(n.updatedBy)} hat die Notiz „${n.title || 'Ohne Überschrift'}“ bearbeitet`, { note: n.id });
   for (const ev of state.events || []) {
     if (ev.ownerId !== me) {
-      if (!invitesOf(ev).some((i) => i.userId === me)) push(ev.createdAt, '📅', `${who(ev.ownerId)} trägt einen Termin ein: „${ev.title}“`, { event: ev.id });
+      if (isTodo(ev)) push(ev.createdAt, '🔔', `${who(ev.ownerId)} setzt eine Erinnerung${ev.assignees.includes(me) ? ' für dich' : ''}: „${ev.title}“`, { tab: 'start' });
+      else if (!invitesOf(ev).some((i) => i.userId === me)) push(ev.createdAt, '📅', `${who(ev.ownerId)} trägt einen Termin ein: „${ev.title}“`, { event: ev.id });
       if (Date.parse(ev.updatedAt) - Date.parse(ev.createdAt) > 5000) push(ev.updatedAt, '📅', `${who(ev.ownerId)} ändert den Termin „${ev.title}“`, { event: ev.id });
     }
     for (const i of invitesOf(ev)) {
@@ -5019,6 +5461,7 @@ function startRealtime() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'events' }, () => refreshEvents())
     .on('postgres_changes', { event: '*', schema: 'public', table: 'event_invites' }, () => refreshEvents())
     .on('postgres_changes', { event: '*', schema: 'public', table: 'event_comments' }, () => refreshEvents())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'event_done' }, () => refreshEvents())
     .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, async () => {
       await loadNotes().catch(() => {});
       const ed = document.querySelector('.modal.note-modal');

@@ -66,17 +66,21 @@ Deno.serve(async (req) => {
     const { data: ev } = await admin.from('events').select('*').eq('id', rem.event_id).maybeSingle();
     if (!ev) continue;
     const { data: acc } = await admin.from('event_invites').select('user_id').eq('event_id', ev.id).eq('status', 'accepted');
-    const toUsers = [ev.owner_id, ...(acc ?? []).map((a) => a.user_id)];
-    const mins = Math.round((Date.parse(ev.start_at) - Date.now()) / 60000);
+    // Erinnerungen gehen an die Zuständigen, Termine an Ersteller + Zugesagte
+    const toUsers = ev.kind === 'todo'
+      ? (ev.assignees?.length ? ev.assignees : [ev.owner_id])
+      : [ev.owner_id, ...(acc ?? []).map((a) => a.user_id)];
+    const occStart = rem.occ ?? ev.start_at;
+    const mins = Math.round((Date.parse(occStart) - Date.now()) / 60000);
     const when = ev.all_day
       ? (mins <= 0 ? 'heute' : mins < 1440 * 1.5 ? 'morgen' : `in ${Math.round(mins / 1440)} Tagen`)
       : mins <= 0 ? 'jetzt' : mins < 60 ? `in ${mins} Minuten` : mins < 1440 ? `in ${Math.round(mins / 60)} Stunden` : `in ${Math.round(mins / 1440)} Tagen`;
-    const time = ev.all_day ? 'ganztägig' : new Date(ev.start_at).toLocaleString('de-DE', { timeZone: 'Europe/Berlin', weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const time = ev.all_day ? 'ganztägig' : new Date(occStart).toLocaleString('de-DE', { timeZone: 'Europe/Berlin', weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
     const r = await sendPush({
-      title: `📅 ${ev.title} – ${when}`,
+      title: `${ev.kind === 'todo' ? '🔔 Erinnerung: ' : '📅 '}${ev.title} – ${when}`,
       body: [time, ev.location ? `📍 ${ev.location}` : ''].filter(Boolean).join(' · '),
       tag: `event-${ev.id}`,
-      url: `?tab=kalender&event=${ev.id}`,
+      url: ev.kind === 'todo' ? '?tab=start' : `?tab=kalender&event=${ev.id}`,
       urgency: 'wichtig',
     }, { toUsers, high: true });
     sent += r.sent; termine++;

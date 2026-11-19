@@ -31,20 +31,25 @@ Deno.serve(async (req) => {
       const { data: msg } = await admin.from('messages').select('*')
         .eq('id', body.messageId).eq('author_id', me.id).maybeSingle();
       if (!msg) return json({ error: 'Nachricht nicht gefunden' }, 404);
+      // Für wen? Zuständige (ohne einen selbst), sonst alle anderen
+      const assignees: string[] = (msg.assignees ?? []).filter((id: string) => id !== me.id);
+      if (msg.assignees?.length && !assignees.length) return json({ sent: 0 }); // nur für sich selbst
       const result = await sendPush({
         title: `${URGENCY_LABELS[msg.urgency] ?? msg.urgency}: ${msg.title}`,
         body: `${meName}${msg.description ? ' – ' + msg.description.slice(0, 140) : ''}`,
         tag: msg.id,
         url: `?tab=start&msg=${msg.id}`,
         urgency: msg.urgency,
-      }, { exceptUser: me.id, high: msg.urgency === 'dringend', contact: origin });
+      }, assignees.length ? { toUsers: assignees, high: msg.urgency === 'dringend', contact: origin }
+        : { exceptUser: me.id, high: msg.urgency === 'dringend', contact: origin });
       return json(result);
     }
 
     if (body.action === 'done') {
       const { data: msg } = await admin.from('messages').select('*').eq('id', body.messageId).maybeSingle();
       if (!msg) return json({ error: 'Meldung nicht gefunden' }, 404);
-      if (msg.author_id === me.id) return json({ error: 'Der Urheber kann die eigene Meldung nicht als erledigt markieren' }, 400);
+      const responsible = msg.assignees?.length ? msg.assignees.includes(me.id) : msg.author_id !== me.id;
+      if (!responsible) return json({ error: 'Nur die zuständige Person kann die Meldung erledigen' }, 400);
       if (!msg.delete_on_done && !msg.needs_ack && !msg.deadline_at) return json({ error: 'Für diese Meldung ist keine Rückmeldung vorgesehen' }, 400);
       if (msg.done_by) return json({ error: 'Schon erledigt' }, 409);
       if (msg.closed_at) return json({ error: 'Die Meldung ist bereits geschlossen' }, 409);
@@ -58,7 +63,7 @@ Deno.serve(async (req) => {
           tag: `done-${msg.id}`,
           url: `?tab=start&msg=${msg.id}`,
           urgency: 'dringend',
-        }, { toUsers: [msg.author_id], high: true, contact: origin });
+        }, { toUsers: [msg.author_id].filter((id) => id !== me.id), high: true, contact: origin });
         return json({ ok: true, deleted: false, review: true });
       }
 
@@ -83,7 +88,8 @@ Deno.serve(async (req) => {
       const { data: msg } = await admin.from('messages').select('*').eq('id', body.messageId).maybeSingle();
       if (!msg) return json({ error: 'Meldung nicht gefunden' }, 404);
       if (!msg.needs_ack) return json({ error: 'Für diese Meldung ist keine Rückmeldung vorgesehen' }, 400);
-      if (msg.author_id === me.id) return json({ error: 'Auf die eigene Meldung kann man nicht antworten' }, 400);
+      const mayRespond = msg.assignees?.length ? msg.assignees.includes(me.id) : msg.author_id !== me.id;
+      if (!mayRespond) return json({ error: 'Nur die zuständige Person kann antworten' }, 400);
       if (msg.closed_at) return json({ error: 'Die Meldung ist bereits geschlossen' }, 409);
       const options: string[] = msg.ack_options?.length ? msg.ack_options : ['Erledigt'];
       const option = String(body.option ?? '');
@@ -223,6 +229,17 @@ Deno.serve(async (req) => {
       // Ersteller hat einen Termin gespeichert: neue Einladungen verschicken, Zugesagte über Änderungen informieren
       const { data: ev } = await admin.from('events').select('*').eq('id', body.eventId).eq('owner_id', me.id).maybeSingle();
       if (!ev) return json({ error: 'Termin nicht gefunden' }, 404);
+      if (ev.kind === 'todo') {
+        // Neue/geänderte Erinnerung für andere → Zuständige informieren
+        const to = (ev.assignees ?? []).filter((id: string) => id !== me.id);
+        if (!to.length) return json({ sent: 0 });
+        const r = await sendPush({
+          title: `🔔 ${body.changed ? 'Erinnerung geändert' : 'Neue Erinnerung'}: ${ev.title}`,
+          body: `${meName}${ev.description ? ' – ' + String(ev.description).slice(0, 120) : ''}`,
+          tag: `todo-${ev.id}`, url: '?tab=start', urgency: 'info',
+        }, { toUsers: to, contact: origin });
+        return json(r);
+      }
       const { data: inv } = await admin.from('event_invites').select('user_id, status').eq('event_id', ev.id);
       const fresh: string[] = (body.invited ?? []).filter((id: string) => (inv ?? []).some((i) => i.user_id === id && i.status === 'pending'));
       const when = ev.all_day
