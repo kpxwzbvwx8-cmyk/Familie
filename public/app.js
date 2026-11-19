@@ -3134,13 +3134,29 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
             form.elements.start.value = toLocalInput(st);
             form.elements.end.value = toLocalInput(new Date(Math.max(st.getTime() + 3600e3, new Date(e.getFullYear(), e.getMonth(), e.getDate(), 11, 0).getTime())));
           }
+          lastVal.start = form.elements.start.value; lastVal.end = form.elements.end.value;
           const n = remList.children.length;
           remList.innerHTML = Array.from({ length: n }, () => reminderRowHtml(ad)).join('');
           syncRows();
         });
+        // iOS „Zurücksetzen“ im Datums-Rad leert das Feld – dann den letzten Wert wiederherstellen
+        const lastVal = { start: form.elements.start.value, end: form.elements.end.value };
+        const keepFilled = (name) => {
+          const el = form.elements[name];
+          if (el.value) { lastVal[name] = el.value; return; }
+          const other = form.elements[name === 'start' ? 'end' : 'start'].value;
+          el.value = lastVal[name] && (lastVal[name].length === other.length || !other) ? lastVal[name] : other;
+          lastVal[name] = el.value;
+        };
+        ['start', 'end'].forEach((name) => {
+          form.elements[name].addEventListener('blur', () => keepFilled(name));
+          form.elements[name].addEventListener('change', () => { if (!form.elements[name].value) keepFilled(name); });
+        });
+        form.elements.end.addEventListener('change', () => { if (form.elements.end.value) lastVal.end = form.elements.end.value; });
         form.elements.start.addEventListener('change', () => {
           const s = readStart();
           if (!s) return;
+          lastVal.start = form.elements.start.value;
           const eRaw = form.elements.end.value;
           const e = eRaw ? (isAllDay() ? new Date(`${eRaw}T00:00:00`) : new Date(eRaw)) : null;
           if (!e || e < s) form.elements.end.value = isAllDay() ? toDateInput(s) : toLocalInput(new Date(s.getTime() + 3600e3));
@@ -3177,6 +3193,7 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
           const title = form.elements.title.value.trim();
           if (!title) { err.textContent = 'Bitte einen Titel angeben.'; return; }
           const ad = isAllDay();
+          keepFilled('start'); keepFilled('end');
           const sv = form.elements.start.value, evv = form.elements.end.value;
           if (!sv || !evv) { err.textContent = 'Bitte Beginn und Ende angeben.'; return; }
           const s = ad ? new Date(`${sv}T00:00:00`) : new Date(sv);
