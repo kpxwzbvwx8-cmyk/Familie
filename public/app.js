@@ -1130,7 +1130,6 @@ function messageCardHtml(m) {
     <div class="bc-body">
       ${time || needsMyAnswer ? `<div class="bc-top">${time}${needsMyAnswer ? '<span class="bc-flag me">✉️ Antwort fehlt</span>' : ''}</div>` : ''}
       <h3 class="bc-title">${esc(m.title)}</h3>
-      ${m.description ? `<p class="bc-desc">${esc(m.description)}</p>` : ''}
       <div class="bc-meta">
         <span class="sl-who">${headImg(author)}${esc(mine ? 'Du' : author ? author.firstName : '?')}${forWhom.length ? `<span class="sl-arrow">➜</span>${forWhom.map(headImg).join('')}${esc(forWhom.map((u) => (u.id === state.me.id ? 'dich' : u.firstName)).join(' & '))}` : ''}</span>
         ${status ? `<span class="bc-status">${status}</span>` : ''}
@@ -1158,7 +1157,6 @@ function eventBigCardHtml(ev, overdue = false) {
     <div class="bc-body">
       <div class="bc-top"><span class="bc-time${overdue ? ' over' : ''}">${todo ? '🔔' : '🕒'} ${esc(time)}</span></div>
       <h3 class="bc-title">${esc(ev.title)}</h3>
-      ${ev.description ? `<p class="bc-desc">${esc(ev.description)}</p>` : ''}
       <div class="bc-meta">
         <span class="sl-who">${people.map((u) => `${headImg(u)}${esc(u.id === state.me.id ? 'Du' : u.firstName)}`).join(' & ')}</span>
         ${ev.location ? `<span>📍 ${esc(ev.location)}</span>` : ''}
@@ -1730,7 +1728,7 @@ function startFilter() {
 /** Ansicht von Start: 'list' = Pokédex-Liste (schmal) · 'cards' = Sammelkarten (groß) */
 const START_LAYOUTS = {
   list: { icon: '📋', name: 'Pokédex-Liste', sub: 'Schmal & kompakt – Zeit und Titel auf einen Blick' },
-  cards: { icon: '🃏', name: 'Sammelkarten', sub: 'Große Karten mit Beschreibung und allen Eckdaten' },
+  cards: { icon: '🃏', name: 'Sammelkarten', sub: 'Große Karten mit allen Eckdaten auf einen Blick' },
 };
 const startLayout = () => startFilter().layout;
 function setStartFilter(f) { lsSet(START_FILTER_KEY, f); }
@@ -5621,6 +5619,7 @@ const CHANGELOG = [
       'Neue Kommentare werden nur noch den anderen angezeigt – und verschwinden, sobald du sie geöffnet hast',
       'Auch Termine zeigen jetzt ungelesene Kommentare an',
       'Der Knopf „In Kalender“ bei Aufgaben ist weg – Aufgaben stehen ja schon im Kalender',
+      'Beschreibungen stehen nur noch im Popup – die Karten auf START bleiben schlank',
     ],
   },
   {
