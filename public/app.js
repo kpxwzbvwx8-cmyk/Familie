@@ -1238,7 +1238,7 @@ function messageFullHtml(m) {
       </div>
       <div class="msg-actions">
         ${canMarkDone ? `<button class="btn small primary" data-done="${esc(m.id)}">✓ Erledigt</button>` : ''}
-        ${m.openEnded ? '' : `<a class="btn small" href="${esc(icsUrl(m))}" target="_blank" rel="noopener" title="In Kalender übernehmen">📅 In Kalender</a>`}
+        ${m.openEnded || isInfo(m) ? '' : `<a class="btn small" href="${esc(icsUrl(m))}" target="_blank" rel="noopener" title="In Kalender übernehmen">📅 In Kalender</a>`}
         ${mine ? `<button class="btn small danger" data-delete="${esc(m.id)}">Löschen</button>` : ''}
       </div>
       ${m.needsAck ? `<div class="msg-replies msg-extra">
@@ -2045,9 +2045,12 @@ function openNewMessage(preset = 'normal') {
        <label class="field"><span>Titel</span><input name="title" required maxlength="120" placeholder="Worum geht's?"></label>
        <label class="field"><span>Beschreibung</span><textarea name="description" maxlength="4000" placeholder="Details …"></textarea></label>
        <label class="field"><span>Urheber</span><input value="${esc(fullName(state.me))}" readonly></label>
-       ${preset === 'info' ? '' : `<div class="toggle-row open-row"><span>⚡ Sofort &amp; offen – bis erledigt</span>${helpBtn('openEnded')}${switchToggle('openEnded')}</div>
-       <p class="hint tight" id="open-hint" hidden>Ohne Termin und ohne Deadline. Bleibt unter „Fortlaufend“, bis sie erledigt ist – mit oder ohne Rückmeldung.</p>`}
-       <div id="timing-box">
+       <p class="hint info-only" id="info-hint"${preset === 'info' ? '' : ' hidden'}>ℹ️ Eine Info gilt sofort – ohne Zeitpunkt, Deadline oder Rückmeldung. Sie erscheint beim Öffnen der App als Popup.</p>
+       <div id="open-box"${preset === 'info' ? ' hidden' : ''}>
+       <div class="toggle-row open-row"><span>⚡ Sofort &amp; offen – bis erledigt</span>${helpBtn('openEnded')}${switchToggle('openEnded')}</div>
+       <p class="hint tight" id="open-hint" hidden>Ohne Termin und ohne Deadline. Bleibt unter „Fortlaufend“, bis sie erledigt ist – mit oder ohne Rückmeldung.</p>
+       </div>
+       <div id="timing-box"${preset === 'info' ? ' hidden' : ''}>
        <div class="field">
          <div class="field-head"><span>Zeitpunkt</span>${bellToggle('remind', true, 'Beim Beginn des Ereignisses vibrieren')}${helpBtn('remind')}</div>
          <input name="eventAt" type="datetime-local" value="${toLocalInput(now)}" aria-label="Startzeitpunkt" class="dt">
@@ -2075,6 +2078,7 @@ function openNewMessage(preset = 'normal') {
          <p class="hint">Die Nachricht verschwindet zu diesem Zeitpunkt für alle.</p>
        </div>
        </div>
+       <div id="task-box"${preset === 'info' ? ' hidden' : ''}>
        <div class="toggle-row"><span>Rückmeldung?</span>${helpBtn('ack')}${switchToggle('needsAck')}</div>
        <div class="field" id="ack-box" hidden>
          <div class="ack-list" id="ack-list">${ackOptionRow('Erledigt')}</div>
@@ -2083,6 +2087,7 @@ function openNewMessage(preset = 'normal') {
          <input name="respondBy" type="datetime-local" class="dt" id="respond-by-box" hidden aria-label="Rückmeldung bis">
        </div>
        <div class="toggle-row"><span>Löschen, wenn erledigt?</span>${helpBtn('doneDelete')}${switchToggle('deleteOnDone')}</div>
+       </div>
        <p class="error" id="msg-error"></p>
        <div class="modal-actions">
          <button type="button" class="btn" data-close>Abbrechen</button>
@@ -2166,6 +2171,20 @@ function openNewMessage(preset = 'normal') {
           }
         };
         if (form.elements.openEnded) form.elements.openEnded.addEventListener('change', syncOpen);
+        // Info: sofort – keine Zeiten, Fristen oder Rückmeldungen
+        const isInfoSel = () => (form.querySelector('input[name=urgency]:checked') || {}).value === 'info';
+        const syncInfo = () => {
+          const info = isInfoSel();
+          $('#info-hint', modal).hidden = !info;
+          $('#open-box', modal).hidden = info;
+          $('#task-box', modal).hidden = info;
+          if (info) {
+            $('#timing-box', modal).hidden = true;
+            ['openEnded', 'hasEnd', 'hasDeadline', 'autoDelete', 'hasRespondBy', 'threatStrike', 'needsAck', 'deleteOnDone'].forEach((n) => { if (form.elements[n]) form.elements[n].checked = false; });
+            ['#end-box', '#deadline-box', '#auto-delete-box', '#respond-by-box', '#ack-box', '#open-hint'].forEach((b) => { if ($(b, modal)) $(b, modal).hidden = true; });
+          } else syncOpen();
+        };
+        form.querySelectorAll('input[name=urgency]').forEach((r) => r.addEventListener('change', syncInfo));
         const ackList = $('#ack-list', modal);
         const syncAck = () => {
           const rows = ackList.querySelectorAll('.ack-opt');
@@ -2191,17 +2210,18 @@ function openNewMessage(preset = 'normal') {
           const err = $('#msg-error', modal);
           const toIso = (v) => (v ? new Date(v).toISOString() : null);
           const title = f.get('title').trim();
-          const openEnded = Boolean(form.elements.openEnded && form.elements.openEnded.checked);
-          const eventAt = openEnded ? null : toIso(f.get('eventAt'));
+          const isInfoMsg = f.get('urgency') === 'info';
+          const openEnded = !isInfoMsg && Boolean(form.elements.openEnded && form.elements.openEnded.checked);
+          const eventAt = openEnded || isInfoMsg ? null : toIso(f.get('eventAt'));
           const endAt = form.elements.hasEnd.checked ? toIso(f.get('endAt')) : null;
           const deadlineAt = form.elements.hasDeadline.checked ? toIso(f.get('deadlineAt')) : null;
           const respondBy = form.elements.needsAck.checked && form.elements.hasRespondBy.checked ? toIso(f.get('respondBy')) : null;
           const deleteAt = form.elements.autoDelete.checked ? toIso(f.get('deleteAt')) : null;
           // Erinnerung nur, wenn der Start noch mindestens 2 Minuten entfernt ist (sonst käme sie sofort)
-          const remind = !openEnded && form.elements.remind.checked && eventAt && Date.parse(eventAt) > Date.now() + 2 * 60e3;
+          const remind = Boolean(!openEnded && form.elements.remind.checked && eventAt && Date.parse(eventAt) > Date.now() + 2 * 60e3);
           err.textContent = '';
           if (!title) { err.textContent = 'Bitte einen Titel angeben.'; return; }
-          if (!eventAt && !openEnded) { err.textContent = 'Bitte einen Startzeitpunkt angeben.'; return; }
+          if (!eventAt && !openEnded && !isInfoMsg) { err.textContent = 'Bitte einen Startzeitpunkt angeben.'; return; }
           if (form.elements.hasEnd.checked && !endAt) { err.textContent = 'Bitte das Ende des Zeitraums angeben.'; return; }
           if (form.elements.hasDeadline.checked && !deadlineAt) { err.textContent = 'Bitte eine Deadline angeben.'; return; }
           if (form.elements.needsAck.checked && form.elements.hasRespondBy.checked && !respondBy) { err.textContent = 'Bitte angeben, bis wann geantwortet werden soll.'; return; }
