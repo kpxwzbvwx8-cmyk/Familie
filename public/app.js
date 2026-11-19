@@ -2025,7 +2025,7 @@ function openCreateMenu() {
     { key: 'info', label: 'Info', sub: 'Zum Wissen – ohne Handlungsbedarf', icon: ballSvg('master', 44), cls: 'cm-info' },
     { key: 'meldung', label: 'Aufgabe', sub: 'Etwas, das passieren muss', icon: ballSvg('poke', 44), cls: 'cm-msg' },
     { key: 'termin', label: 'Termin', sub: 'Eintrag in den Kalender', icon: calIcon, cls: 'cm-event' },
-    { key: 'erinnerung', label: 'Erinnerung', sub: 'Abhaken nicht vergessen – auch wiederkehrend', icon: '<span class="cm-bell">🔔</span>', cls: 'cm-todo' },
+    { key: 'erinnerung', label: 'Erinnerung', sub: 'Ganztägig mit Hinweis zur Wunschzeit – auch wiederkehrend', icon: '<span class="cm-bell">🔔</span>', cls: 'cm-todo' },
   ];
   openModal(
     `<div class="cm">
@@ -2784,8 +2784,8 @@ const REMINDERS_TIMED = [
   ['o:1440', '1 Tag vorher'], ['o:2880', '2 Tage vorher'], ['o:10080', '1 Woche vorher'], ['custom', 'Benutzerdefiniert …'],
 ];
 const REMINDERS_ALLDAY = [
-  ['none', 'Ohne'], ['d:0', 'Am Tag des Ereignisses (9:00)'], ['d:1', '1 Tag vorher (9:00)'], ['d:2', '2 Tage vorher (9:00)'],
-  ['d:7', '1 Woche vorher (9:00)'], ['custom', 'Benutzerdefiniert …'],
+  ['none', 'Ohne'], ['d:0', 'Am Tag selbst'], ['d:1', '1 Tag vorher'], ['d:2', '2 Tage vorher'],
+  ['d:7', '1 Woche vorher'], ['custom', 'Benutzerdefiniert …'],
 ];
 const specToValue = (r) => (r.k === 'offset' ? `o:${r.m}` : r.k === 'day' ? `d:${r.d}` : 'custom');
 function reminderLabel(r, allDay) {
@@ -2793,7 +2793,8 @@ function reminderLabel(r, allDay) {
   const v = specToValue(r);
   const hit = (allDay ? REMINDERS_ALLDAY : REMINDERS_TIMED).find(([k]) => k === v)
     || REMINDERS_TIMED.find(([k]) => k === v) || REMINDERS_ALLDAY.find(([k]) => k === v);
-  return hit ? hit[1] : '';
+  if (!hit) return '';
+  return r.k === 'day' ? `${hit[1]} um ${r.h || '09:00'} Uhr` : hit[1];
 }
 
 /* ---- Daten ------------------------------------------------------------ */
@@ -3524,6 +3525,7 @@ function reminderRowHtml(allDay, spec = null) {
   const v = spec ? specToValue(spec) : 'none';
   return `<div class="rem-row">
     <select class="rem-sel" aria-label="Hinweis">${opts.map(([k, l]) => `<option value="${k}"${k === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
+    <input type="time" class="rem-h dt" value="${esc(spec && spec.k === 'day' && spec.h ? spec.h : '09:00')}"${allDay && v.startsWith('d:') ? '' : ' hidden'} aria-label="Uhrzeit des Hinweises">
     <input type="datetime-local" class="rem-at dt"${spec && spec.k === 'custom' ? ` value="${toLocalInput(new Date(spec.at))}"` : ' hidden'} aria-label="Hinweis am">
     <button type="button" class="rem-del" aria-label="Hinweis entfernen">✕</button>
   </div>`;
@@ -3604,13 +3606,13 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
     start = new Date(base.getFullYear(), base.getMonth(), base.getDate(), h, 0);
     end = new Date(start.getTime() + 3600e3);
   }
-  const allDay = ev ? ev.allDay : infoStart ? infoAllDay : todo && hour == null;
+  // Erinnerungen sind immer ganztägig – die Uhrzeit kommt über den Hinweis
+  const allDay = todo ? true : ev ? ev.allDay : infoStart ? infoAllDay : false;
   const infoPeople = info ? [...new Set([info.authorId, ...info.assignees])].filter((id) => id !== state.me.id) : [];
   const invited = ev ? invitesOf(ev).map((i) => i.userId) : infoPeople;
-  const needsDone = ev ? ev.needsDone !== false : true;
   const infoDesc = info ? [info.description, `– aus der Info von ${nameOf(info.authorId, '?')} (${formatDateTime(info.createdAt)})`].filter(Boolean).join('\n\n') : '';
   const others = state.users.filter((u) => u.id !== state.me.id);
-  const rems = ev && ev.reminders.length ? ev.reminders : [null];
+  const rems = ev && ev.reminders.length ? ev.reminders : [todo ? { k: 'day', d: 0, h: '09:00' } : null];
   // „Nur dieser“: aus der Serie lösen → ohne Wiederholung
   const rec = ev && scope !== 'one' ? ev.recurrence : null;
   const noun = todo ? 'Erinnerung' : 'Termin';
@@ -3624,9 +3626,8 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
        <label class="field"><span>Titel</span><input name="title" maxlength="120" required placeholder="${todo ? 'z. B. Blumen gießen' : 'z. B. Zahnarzt'}" value="${esc(ev ? ev.title : info ? info.title : '')}"></label>
        ${todo ? '' : `<label class="field"><span>Ort</span><input name="location" maxlength="200" placeholder="optional" value="${esc(ev ? ev.location : '')}"></label>`}
        <label class="field"><span>Beschreibung</span><textarea name="description" maxlength="4000" placeholder="optional">${esc(ev ? ev.description : infoDesc)}</textarea></label>
-       ${todo ? `<div class="toggle-row"><span>✓ Mit Erledigt-Knopf</span>${switchToggle('needsDone', needsDone)}</div>
-       <p class="hint tight">An: erscheint auf Start als Karte und bleibt, bis sie abgehakt ist. Aus: nur ein kleiner Balken an dem Tag.</p>` : ''}
-       <div class="toggle-row"><span>${todo ? 'Ganzer Tag (ohne Uhrzeit)' : 'Ganztägig'}</span>${switchToggle('allDay', allDay)}</div>
+       <div class="toggle-row"${todo ? ' hidden' : ''}><span>Ganztägig</span>${switchToggle('allDay', allDay)}</div>
+       ${todo ? '<p class="hint tight">🔔 Erinnerungen gelten für den ganzen Tag. Wann du erinnert wirst, stellst du unten beim Hinweis ein – eine Uhrzeit kannst du auch in Titel oder Beschreibung schreiben.</p>' : ''}
        <div class="ev-times">
          <label class="field"><span>${todo ? 'Am / ab' : 'Beginn'}</span><input name="start" class="dt" type="${allDay ? 'date' : 'datetime-local'}" value="${allDay ? toDateInput(start) : toLocalInput(start)}"></label>
          <label class="field"><span>${todo ? 'Bis' : 'Ende'}</span><input name="end" class="dt" type="${allDay ? 'date' : 'datetime-local'}" value="${allDay ? toDateInput(end) : toLocalInput(end)}"></label>
@@ -3662,11 +3663,12 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
         };
         const syncCustomMax = () => {
           const s = readStart();
-          remList.querySelectorAll('.rem-at').forEach((i) => { if (s) i.max = toLocalInput(s); });
+          remList.querySelectorAll('.rem-at').forEach((i) => { if (s) i.max = toLocalInput(isAllDay() ? new Date(s.getFullYear(), s.getMonth(), s.getDate(), 23, 59) : s); });
         };
         const syncRows = () => {
           remList.querySelectorAll('.rem-row').forEach((row) => {
             row.querySelector('.rem-at').hidden = row.querySelector('.rem-sel').value !== 'custom';
+            row.querySelector('.rem-h').hidden = !(isAllDay() && row.querySelector('.rem-sel').value.startsWith('d:'));
             row.querySelector('.rem-del').hidden = remList.children.length <= 1;
           });
           $('#rem-add', modal).hidden = remList.children.length >= 6;
@@ -3783,10 +3785,10 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
               const at = row.querySelector('.rem-at').value;
               if (!at) { err.textContent = 'Bitte für den benutzerdefinierten Hinweis Datum und Uhrzeit wählen.'; return; }
               const atD = new Date(at);
-              if (atD > s) { err.textContent = 'Ein Hinweis darf nicht nach dem Beginn liegen.'; return; }
+              if (atD > (ad ? en : s)) { err.textContent = ad ? 'Ein Hinweis darf nicht nach dem Tag liegen.' : 'Ein Hinweis darf nicht nach dem Beginn liegen.'; return; }
               reminders.push({ k: 'custom', at: atD.toISOString() });
             } else if (v.startsWith('o:')) reminders.push({ k: 'offset', m: Number(v.slice(2)) });
-            else if (v.startsWith('d:')) reminders.push({ k: 'day', d: Number(v.slice(2)) });
+            else if (v.startsWith('d:')) reminders.push({ k: 'day', d: Number(v.slice(2)), h: (row.querySelector('.rem-h').value || '09:00').slice(0, 5) });
           }
           const unique = [...new Map(reminders.map((r) => [JSON.stringify(r), r])).values()];
           const invitees = [...form.querySelectorAll('[name=invite]:checked')].map((i) => i.value);
@@ -3811,9 +3813,6 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
               p_kind: todo ? 'todo' : 'event', p_assignees: todo ? assignees : [], p_recurrence: recurrence,
             }));
             const saved = mapEvent(row);
-            if (todo && form.elements.needsDone && form.elements.needsDone.checked !== saved.needsDone) {
-              await sb.rpc('set_event_needs_done', { p_event: saved.id, p_value: form.elements.needsDone.checked }).then((r) => r.error && toast(r.error.message));
-            }
             if (info && state.me && !readOf(info)) { await markInfo(info); }
             await loadEvents().catch(() => {});
             const fresh = targetId ? invitees.filter((id) => !invited.includes(id)) : invitees;
