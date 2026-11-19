@@ -1092,6 +1092,87 @@ const headImg = (u) => (u && u.gender && CAL_HEADS[u.gender] ? `<img class="fw-h
 
 /** Schmale Karte auf Start – nur das Wichtigste; Antippen öffnet das Details-Popup */
 function messageHtml(m) {
+  return startLayout() === 'cards' ? messageCardHtml(m) : messageSlimHtml(m);
+}
+/* ---- Start-Ansicht „Sammelkarten“: große, einheitliche Karten (Antippen → Popup) ---- */
+
+/** Zeit für große Karten: heute nur Uhrzeit, sonst Wochentag/Datum + Uhrzeit */
+function cardWhen(iso) {
+  return isTodayIso(iso) ? formatTimeOnly(iso) : `${new Date(iso).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' })}, ${formatTimeOnly(iso)}`;
+}
+
+function messageCardHtml(m) {
+  const mine = state.me && m.authorId === state.me.id;
+  const unread = unreadComments(m);
+  const responsible = isResponsible(m);
+  const forWhom = m.assignees.map(userById).filter(Boolean);
+  const awaitingReview = m.threatStrike && !m.closedAt && isFrozen(m);
+  const author = userById(m.authorId);
+  const exp = expiryOf(m);
+  const resps = state.responses.get(m.id) || [];
+  const myResp = state.me ? resps.find((r) => r.userId === state.me.id) : null;
+  const comments = (state.comments.get(m.id) || []).length;
+  const needsMyAnswer = m.needsAck && responsible && !myResp && !m.closedAt;
+  const timed = m.eventAt && (m.endAt || Date.parse(m.eventAt) > Date.parse(m.createdAt) + 5 * 60e3);
+  const done = m.doneBy && !awaitingReview;
+  let time = '';
+  if (exp) time = `<span class="bc-time exp">⌛ ${exp.kind === 'respond' ? 'Antwort' : 'Deadline'} · <span data-left="${esc(exp.at)}">${esc(timeLeft(exp.at))}</span></span>`;
+  else if (m.deadlineAt && !m.closedAt && !done) time = `<span class="bc-time dl${Date.parse(m.deadlineAt) < Date.now() ? ' over' : ''}">⏳ bis ${esc(cardWhen(m.deadlineAt))}</span>`;
+  else if (timed) time = `<span class="bc-time">🕒 ${esc(cardWhen(m.eventAt))}${m.endAt ? `–${esc(isTodayIso(m.endAt) && isTodayIso(m.eventAt) ? formatTimeOnly(m.endAt) : cardWhen(m.endAt))}` : ''}</span>`;
+  else if (m.openEnded && !done && !m.closedAt) time = '<span class="bc-time open">⚡ Offen bis erledigt</span>';
+  const status = m.closedAt
+    ? (m.reviewStatus === 'accepted' ? '👍 Abgenommen' : m.reviewStatus === 'rejected' || m.reviewStatus === 'missed' ? '😈 Strich vergeben' : '🔒 Geschlossen')
+    : awaitingReview ? (mine ? '⏸️ Bitte abnehmen' : '⏸️ Wartet auf Abnahme') : done ? `✓ Erledigt von ${esc(nameOf(m.doneBy, '?'))}` : '';
+  return `
+  <article class="bcard bc-task u-${esc(m.urgency)}${m.closedAt ? ' is-closed' : ''}${done ? ' is-done' : ''}${needsMyAnswer || (mine && awaitingReview) ? ' needs-me' : ''}${exp ? ' expiring' : ''}${state.highlight === m.id ? ' flash' : ''}"
+    id="msg-${esc(m.id)}" data-msg="${esc(m.id)}" tabindex="0" role="button" aria-label="${esc(m.title)} – Details öffnen">
+    <div class="bc-side">${ballSvg(urgencyInfo(m.urgency).ball, 38)}<span class="bc-badge">${esc(urgencyLabel(m.urgency))}</span></div>
+    <div class="bc-body">
+      ${time || needsMyAnswer ? `<div class="bc-top">${time}${needsMyAnswer ? '<span class="bc-flag me">✉️ Antwort fehlt</span>' : ''}</div>` : ''}
+      <h3 class="bc-title">${esc(m.title)}</h3>
+      ${m.description ? `<p class="bc-desc">${esc(m.description)}</p>` : ''}
+      <div class="bc-meta">
+        <span class="sl-who">${headImg(author)}${esc(mine ? 'Du' : author ? author.firstName : '?')}${forWhom.length ? `<span class="sl-arrow">➜</span>${forWhom.map(headImg).join('')}${esc(forWhom.map((u) => (u.id === state.me.id ? 'dich' : u.firstName)).join(' & '))}` : ''}</span>
+        ${status ? `<span class="bc-status">${status}</span>` : ''}
+        ${m.threatStrike && !m.closedAt ? '<span>😈 Strich droht</span>' : ''}
+        ${m.needsAck && !needsMyAnswer ? `<span>✉️ ${resps.length} Antwort${resps.length === 1 ? '' : 'en'}</span>` : ''}
+        ${comments ? `<span class="${unread ? 'bc-new' : ''}">💬 ${comments}${unread ? ` · ${unread} neu` : ''}</span>` : ''}
+      </div>
+    </div>
+  </article>`;
+}
+
+function eventBigCardHtml(ev, overdue = false) {
+  const todo = isTodo(ev);
+  const inv = myInvite(ev);
+  const comments = state.eventComments.filter((c) => c.eventId === ev.id).length;
+  const pendingOthers = invitesOf(ev).filter((i) => i.status === 'pending').length;
+  const people = eventPeople(ev);
+  const sd = evStartDay(ev), ed = evEndDay(ev);
+  let time;
+  if (ev.allDay) time = sameDay(sd, ed) ? (isTodayIso(ev.startAt) ? 'Heute · ganztägig' : `${sd.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' })} · ganztägig`)
+    : `${sd.toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' })} – ${ed.toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' })}`;
+  else time = `${cardWhen(ev.startAt)}${ev.endAt !== ev.startAt ? `–${sameDay(sd, ed) ? formatTimeOnly(ev.endAt) : cardWhen(ev.endAt)}` : ''}`;
+  return `<article class="bcard bc-ev${todo ? ' bc-todo' : ''}${overdue ? ' overdue' : ''}" data-event-card="${esc(ev.id)}" data-occ="${esc(ev.occ || '')}" tabindex="0" role="button" style="--c:${eventColor(ev)}">
+    <div class="bc-side">${todo ? '<span class="bc-bell">🔔</span>' : `<span class="bc-heads">${eventHeads(ev, 'bc-head')}</span>`}<span class="bc-badge">${todo ? 'ERINN.' : 'TERMIN'}</span></div>
+    <div class="bc-body">
+      <div class="bc-top"><span class="bc-time${overdue ? ' over' : ''}">${todo ? '🔔' : '🕒'} ${esc(time)}</span></div>
+      <h3 class="bc-title">${esc(ev.title)}</h3>
+      ${ev.description ? `<p class="bc-desc">${esc(ev.description)}</p>` : ''}
+      <div class="bc-meta">
+        <span class="sl-who">${people.map((u) => `${headImg(u)}${esc(u.id === state.me.id ? 'Du' : u.firstName)}`).join(' & ')}</span>
+        ${ev.location ? `<span>📍 ${esc(ev.location)}</span>` : ''}
+        ${ev.recurrence ? `<span>🔁 ${esc(recurrenceLabel(ev.recurrence))}</span>` : ''}
+        ${inv && inv.status === 'accepted' ? '<span>✅ zugesagt</span>' : ''}
+        ${pendingOthers && ev.ownerId === state.me.id ? `<span>⏳ ${pendingOthers} Antwort${pendingOthers === 1 ? '' : 'en'} offen</span>` : ''}
+        ${comments ? `<span>💬 ${comments}</span>` : ''}
+      </div>
+    </div>
+  </article>`;
+}
+
+
+function messageSlimHtml(m) {
   const mine = state.me && m.authorId === state.me.id;
   const unread = unreadComments(m);
   const responsible = isResponsible(m);
@@ -1637,8 +1718,14 @@ function sectionOf(m, now = new Date()) {
 const START_FILTER_KEY = 'familie.startFilter';
 function startFilter() {
   const f = lsGet(START_FILTER_KEY, null) || {};
-  return { hide: Array.isArray(f.hide) ? f.hide : [], sort: f.sort === 'person' ? 'person' : 'time' };
+  return { hide: Array.isArray(f.hide) ? f.hide : [], sort: f.sort === 'person' ? 'person' : 'time', layout: f.layout === 'cards' ? 'cards' : 'list' };
 }
+/** Ansicht von Start: 'list' = Pokédex-Liste (schmal) · 'cards' = Sammelkarten (groß) */
+const START_LAYOUTS = {
+  list: { icon: '📋', name: 'Pokédex-Liste', sub: 'Schmal & kompakt – Zeit und Titel auf einen Blick' },
+  cards: { icon: '🃏', name: 'Sammelkarten', sub: 'Große Karten mit Beschreibung und allen Eckdaten' },
+};
+const startLayout = () => startFilter().layout;
 function setStartFilter(f) { lsSet(START_FILTER_KEY, f); }
 const filterShows = (key, f = startFilter()) => !f.hide.includes(key);
 /** Sichtbar, wenn mindestens eine beteiligte Person angehakt ist (Gemeinsames erscheint also bei jedem) */
@@ -1656,7 +1743,7 @@ const eventPeopleIds = (ev) => eventPeople(ev).map((u) => u.id);
 function filterButtonHtml() {
   return `<div class="start-tools">
     <button type="button" class="filter-btn" id="start-filter" aria-label="Filter und Sortierung">
-      <span class="fb-ball">${ballSvg('poke', 20)}</span><span class="fb-label">Filter</span>
+      <span class="fb-ball">${ballSvg('poke', 20)}</span><span class="fb-label">Ansicht &amp; Filter</span>
     </button>
   </div>`;
 }
@@ -1686,7 +1773,10 @@ function openStartFilter() {
   const html = () => {
     const f = startFilter();
     return `<div class="sf">
-      <div class="cm-box sf-box"><p>Was möchtest du auf START sehen?</p><span class="cm-arrow" aria-hidden="true">▼</span></div>
+      <div class="cm-box sf-box"><p>Wie möchtest du START sehen?</p><span class="cm-arrow" aria-hidden="true">▼</span></div>
+      ${sfGroup('view', 'Ansicht', `${START_LAYOUTS[f.layout].icon} ${START_LAYOUTS[f.layout].name}`, `<div class="sf-layouts">${Object.entries(START_LAYOUTS).map(([k, l]) => `<button type="button" class="sf-layout${f.layout === k ? ' on' : ''}" data-layout="${k}">
+        <span class="sf-prev sf-prev-${k}" aria-hidden="true"><i></i><i></i><i></i></span>
+        <b>${l.icon} ${esc(l.name)}</b><small>${esc(l.sub)}</small></button>`).join('')}</div>`)}
       ${sfGroup('who', 'Wer?', `${rows.filter((r) => filterShows(r.key, f)).length}/${rows.length}`, `<div class="sf-list">${rows.map((r) => rowHtml(r, f)).join('')}</div>
       <p class="hint sf-hint">Gemeinsames erscheint, sobald eine der beteiligten Personen angehakt ist.</p>`)}
       ${sfGroup('what', 'Was?', `${kinds.filter((r) => filterShows(r.key, f)).length}/${kinds.length}`, `<div class="sf-list sf-grid">${kinds.map((r) => rowHtml(r, f)).join('')}</div>`)}
@@ -1701,7 +1791,7 @@ function openStartFilter() {
   openModal(html(), {
     cls: 'create-menu sf-modal',
     onMount: (modal) => {
-      typeText($('.sf-box p', modal), 'Was möchtest du auf START sehen?');
+      typeText($('.sf-box p', modal), 'Wie möchtest du START sehen?');
       modal.addEventListener('click', (e) => {
         const f = startFilter();
         const fold = e.target.closest('[data-sfold]');
@@ -1714,7 +1804,9 @@ function openStartFilter() {
         }
         const row = e.target.closest('[data-sf]');
         const opt = e.target.closest('[data-sort]');
-        if (!row && !opt) return;
+        const lay = e.target.closest('[data-layout]');
+        if (!row && !opt && !lay) return;
+        if (lay) f.layout = lay.dataset.layout;
         if (row) {
           const k = row.dataset.sf;
           f.hide = filterShows(k, f) ? [...f.hide, k] : f.hide.filter((x) => x !== k);
@@ -1993,7 +2085,7 @@ function renderAustausch(view) {
   const pushBtn = $('#enable-push', view);
   if (pushBtn) pushBtn.addEventListener('click', enablePush);
 
-  view.querySelectorAll('.msg-slim[data-msg]').forEach((el) => bindMessage(el));
+  view.querySelectorAll('.msg-slim[data-msg], .bcard[data-msg]').forEach((el) => bindMessage(el));
   refreshMessageDetail();
 
   if (state.highlight) {
@@ -4040,6 +4132,7 @@ function startEventItems() {
 
 /** Termin als schmale Karte (Ticket-Kante links in Personenfarbe) – Antippen öffnet die Details */
 function eventCardHtml(ev, { overdue = false } = {}) {
+  if (startLayout() === 'cards') return eventBigCardHtml(ev, overdue);
   if (isTodo(ev)) return todoCardHtml(ev, overdue);
   const inv = myInvite(ev);
   const comments = state.eventComments.filter((c) => c.eventId === ev.id).length;
@@ -5510,8 +5603,25 @@ function openDossier(userId) {
  *  blau für Trainer, rosa für Trainerinnen
  * ---------------------------------------------------------------------- */
 
-const APP_VERSION = '1.1.2';
+const APP_VERSION = '1.2.0';
 const CHANGELOG = [
+  {
+    version: '1.2.0', date: '2026-11-19', title: 'Pokédex-Liste & Sammelkarten',
+    intro: 'START hat zwei Ansichten bekommen – wähle oben unter „Ansicht & Filter“, wie du deine Einträge sehen willst. Dazu: Aufgaben statt Meldungen, Aufgaben im Kalender und ganztägige Erinnerungen.',
+    items: [
+      'Zwei Ansichten für START: 📋 Pokédex-Liste (schmal) und 🃏 Sammelkarten (groß)',
+      'Antippen öffnet immer das Detail-Popup – kein Ausklappen mehr',
+      '„Meldung“ heißt jetzt „Aufgabe“',
+      'Kalender und Aufgaben stehen auf START getrennt – Aufgaben nach Dringlichkeit',
+      'Alles auf- und zuklappbar: Bereiche, Gruppen und das Filter-Menü',
+      'Filter nach Art: Aufgaben, Infos, Termine, Erinnerungen, HSV, Feiertage',
+      'Heute steht die Uhrzeit im Vordergrund',
+      'Aufgaben erscheinen im Kalender – als kleine Markierung, die Termine nicht verdeckt',
+      'Erinnerungen sind ganztägig – die Uhrzeit wählst du beim Hinweis',
+      'Infos gelten sofort – ohne Zeitpunkt und Deadline',
+      'Update über den Pokéball: Nachricht vollständig und Bestätigung nach dem Neuladen',
+    ],
+  },
   {
     version: '1.1.2', date: '2026-11-19', title: 'Läuft aus!',
     intro: 'Nichts verpasst mehr seine Frist: Was in den nächsten 12 Stunden ausläuft, steht ganz oben auf START – und du bekommst Bescheid.',
