@@ -50,7 +50,7 @@ Deno.serve(async (req) => {
       if (!msg) return json({ error: 'Meldung nicht gefunden' }, 404);
       const responsible = msg.assignees?.length ? msg.assignees.includes(me.id) : msg.author_id !== me.id;
       if (!responsible) return json({ error: 'Nur die zuständige Person kann die Meldung erledigen' }, 400);
-      if (!msg.delete_on_done && !msg.needs_ack && !msg.deadline_at) return json({ error: 'Für diese Meldung ist keine Rückmeldung vorgesehen' }, 400);
+      if (!msg.delete_on_done && !msg.needs_ack && !msg.deadline_at && !msg.open_ended) return json({ error: 'Für diese Meldung ist keine Rückmeldung vorgesehen' }, 400);
       if (msg.done_by) return json({ error: 'Schon erledigt' }, 409);
       if (msg.closed_at) return json({ error: 'Die Meldung ist bereits geschlossen' }, 409);
 

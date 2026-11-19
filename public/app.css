@@ -2064,3 +2064,44 @@ input.dt::-webkit-datetime-edit { padding: 0; }
 .from-info { margin: 0 0 6px; }
 .hint.tight { margin-top: -6px; }
 @media (prefers-reduced-motion: reduce) { .ip-ball, .mini-new, .sf-row.on .sf-check { animation: none; } }
+
+/* ===================== v1.1.2: Läuft aus · Sofort & offen ===================== */
+
+/* Bereich „Läuft aus“ – ganz oben, wie eine Warnung im Spiel (rot blinkender HP-Balken) */
+.sec-expiry {
+  padding: 10px 10px 12px; border-radius: 16px; margin-bottom: 18px;
+  background: repeating-linear-gradient(-45deg, color-mix(in srgb, #e0485a 10%, var(--surface)) 0 12px, color-mix(in srgb, #e0485a 4%, var(--surface)) 12px 24px);
+  border: 3px solid #e0485a; box-shadow: 0 3px 0 #8a1f2c, 0 0 0 0 rgba(224,72,90,.5);
+  animation: exp-pulse 2.2s ease-in-out infinite;
+}
+@keyframes exp-pulse { 50% { box-shadow: 0 3px 0 #8a1f2c, 0 0 0 6px rgba(224,72,90,.18); } }
+.sec-expiry .section-head { margin-top: 0; }
+.sec-expiry .section-title { color: #e0485a; }
+.sec-glass { display: inline-block; font-size: 1.5rem; margin-right: 6px; animation: glass-turn 3s ease-in-out infinite; }
+@keyframes glass-turn { 0%, 70% { transform: rotate(0); } 85%, 100% { transform: rotate(180deg); } }
+
+/* Countdown-Leiste auf der Karte (wie der HP-Balken im Kampf) */
+.exp-bar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap; align-self: flex-start;
+  padding: 2px 10px 2px 6px; border-radius: 999px; font-size: .88rem; color: #fff;
+  background: linear-gradient(90deg, #e0485a, #f08a2c); box-shadow: 0 2px 0 #8a1f2c;
+}
+.exp-bar b { letter-spacing: .04em; }
+.exp-bar small { opacity: .9; }
+.exp-glass { display: inline-block; animation: glass-turn 3s ease-in-out infinite; }
+.msg.expiring { border-color: #e0485a; animation: exp-card 1.6s ease-in-out infinite; }
+@keyframes exp-card { 50% { box-shadow: 0 0 0 4px rgba(224,72,90,.28), var(--shadow); } }
+.todo-card.expiring { border-style: solid; border-color: #e0485a; }
+.todo-card .exp-bar { margin-bottom: 4px; }
+
+/* ⚡ Sofort & offen */
+.mc-open { color: #fff; background: #7a3fa0; border-radius: 999px; padding: 0 8px; }
+.open-row span:first-child { font-weight: 700; }
+
+/* In-App-Banner „Läuft aus“ */
+.nb-expiry { border-color: #e0485a; background: linear-gradient(90deg, color-mix(in srgb, #e0485a 16%, var(--surface)), var(--surface)); box-shadow: inset 6px 0 0 #e0485a, 0 8px 24px rgba(0,0,0,.22); padding-left: 16px; }
+.nb-glass { display: inline-block; animation: glass-turn 3s ease-in-out infinite; }
+
+/* Filterknopf schlicht */
+.filter-btn { padding-right: 14px; }
+@media (prefers-reduced-motion: reduce) { .sec-expiry, .sec-glass, .exp-glass, .msg.expiring, .nb-glass { animation: none; } }

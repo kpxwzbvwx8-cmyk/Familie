@@ -163,6 +163,7 @@ function mapMessage(r) {
     reviewStatus: r.review_status || null,
     strikeNote: r.strike_note || null,
     respondBy: r.respond_by || null,
+    openEnded: Boolean(r.open_ended),
   };
 }
 
@@ -591,6 +592,7 @@ function bannerKind(d) {
   if (tag.startsWith('event-')) return 'event';
   if (tag.startsWith('comment-')) return 'comment';
   if (tag.startsWith('start-')) return 'reminder';
+  if (tag.startsWith('expiry-')) return 'expiry';
   if (/^(strike|board|review)-/.test(tag)) {
     if (/VERURTEILT|rechtskräftig|😈/.test(title)) return 'hell';
     if (tag.startsWith('review-')) return 'msg';
@@ -607,6 +609,7 @@ function bannerIcon(kind, d) {
     case 'comment': return '<span class="nb-emoji">💬</span>';
     case 'reminder': return `<span class="nb-stack">${ballSvg(ball, 30)}<i>⏰</i></span>`;
     case 'hell': return '<span class="nb-emoji">😈</span>';
+    case 'expiry': return '<span class="nb-emoji nb-glass">⌛</span>';
     case 'judge': return judgeEmblem(36);
     default: return ballSvg(ball, 32);
   }
@@ -643,7 +646,7 @@ function showBanner(d) {
   el.className = `nb nb-${kind} u-${esc(d.urgency || 'normal')}`;
   el.setAttribute('role', 'status');
   el.innerHTML = `<span class="nb-icon">${bannerIcon(kind, d)}</span>
-    <span class="nb-text"><b>${esc(d.title)}</b>${d.body ? `<small>${esc(d.body)}</small>` : ''}</span>
+    <span class="nb-text"><b>${esc(kind === 'expiry' ? String(d.title).replace(/^⌛\s*/, '') : d.title)}</b>${d.body ? `<small>${esc(d.body)}</small>` : ''}</span>
     <span class="nb-time">jetzt</span>`;
   root.prepend(el);
   while (root.children.length > 3) root.lastElementChild.remove();
@@ -1012,6 +1015,7 @@ function icsUrl(m) {
 }
 
 const HELP = {
+  openEnded: 'Die Meldung gilt ab sofort – ohne Uhrzeit, ohne Deadline. Sie steht unter „Fortlaufend“, bis sie erledigt ist. Mit „Rückmeldung“ bleibt sie, bis alle geantwortet haben; sonst hakt die zuständige Person sie mit „Erledigt“ ab.',
   strike: 'Wird die Meldung bis zur Deadline nicht erfüllt, gibt es einen Strich auf dem Board der Schande. Reagiert jemand vorher, friert der Timer ein und du nimmst das Ergebnis ab. Eine Meldung mit Androhung ist automatisch dringend.',
   autoDelete: 'Die Meldung verschwindet zum eingestellten Zeitpunkt automatisch für alle – praktisch für Dinge, die sich danach erledigt haben.',
   event: 'Für Termine mit Dauer: Zusätzlich zum Start gibst du das Ende des Zeitraums an (von Minuten bis Jahren). Der Zeitraum wird auch so in den Kalender übernommen.',
@@ -1080,10 +1084,11 @@ function messageHtml(m) {
   if (expanded) markCommentsSeen(m.id);
   const unread = expanded ? 0 : unreadComments(m);
   const responsible = state.me && (m.assignees.length ? m.assignees.includes(state.me.id) : !mine);
-  const canMarkDone = responsible && !m.doneBy && !m.closedAt && !m.needsAck && (m.deleteOnDone || m.deadlineAt);
+  const canMarkDone = responsible && !m.doneBy && !m.closedAt && !m.needsAck && (m.deleteOnDone || m.deadlineAt || m.openEnded);
   const forWhom = m.assignees.map(userById).filter(Boolean);
   const awaitingReview = m.threatStrike && !m.closedAt && isFrozen(m);
   const author = userById(m.authorId);
+  const exp = expiryOf(m);
   const resps = state.responses.get(m.id) || [];
   const myResp = state.me ? resps.find((r) => r.userId === state.me.id) : null;
   const comments = state.comments.get(m.id) || [];
@@ -1097,18 +1102,20 @@ function messageHtml(m) {
   const heads = (list) => list.map((u) => (u.gender && CAL_HEADS[u.gender] ? `<img class="fw-head" src="${CAL_HEADS[u.gender]}" alt="">` : '')).join('');
   const lastComments = comments.slice(-2);
   return `
-  <article class="msg compact u-${esc(m.urgency)}${m.closedAt ? ' is-closed' : ''}${expanded ? ' expanded' : ''}${unread ? ' has-unread' : ''}${m.doneBy && !awaitingReview ? ' is-done' : ''}${needsMyAnswer || (mine && awaitingReview) ? ' needs-me' : ''}${state.highlight === m.id ? ' flash' : ''}"
+  <article class="msg compact u-${esc(m.urgency)}${m.closedAt ? ' is-closed' : ''}${expanded ? ' expanded' : ''}${unread ? ' has-unread' : ''}${m.doneBy && !awaitingReview ? ' is-done' : ''}${needsMyAnswer || (mine && awaitingReview) ? ' needs-me' : ''}${exp ? ' expiring' : ''}${state.highlight === m.id ? ' flash' : ''}"
     id="msg-${esc(m.id)}" data-msg="${esc(m.id)}" tabindex="0" aria-expanded="${expanded}">
     <div class="msg-side">
       ${ballSvg(urgencyInfo(m.urgency).ball, 30)}
       <span class="badge">${esc(urgencyLabel(m.urgency))}</span>
     </div>
     <div class="msg-body">
+      ${exp ? `<div class="exp-bar"><span class="exp-glass" aria-hidden="true">⌛</span><b>${exp.kind === 'respond' ? 'Antwort fehlt' : 'Deadline'}</b><span data-left="${esc(exp.at)}">${esc(timeLeft(exp.at))}</span><small>bis ${esc(formatTimeOnly(exp.at))}</small></div>` : ''}
       <h3>${esc(m.title)}</h3>
       <div class="msg-chips">
+        ${m.openEnded && !m.closedAt && !m.doneBy ? '<span class="mc-open">⚡ Offen bis erledigt</span>' : ''}
         <span class="mc-from" title="Von ${esc(author ? author.firstName : '?')}">${author && author.gender && CAL_HEADS[author.gender] ? `<img class="fw-head" src="${CAL_HEADS[author.gender]}" alt="">` : ''}${esc(mine ? 'Du' : author ? author.firstName : '?')}${forWhom.length ? ` ➜ ${heads(forWhom)}${esc(forWhom.map((u) => (u.id === state.me.id ? 'dich' : u.firstName)).join(' & '))}` : ''}</span>
         ${timed ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt || m.deadlineAt))}</span>` : ''}
-        ${m.deadlineAt && !m.closedAt ? `<span class="deadline${Date.parse(m.deadlineAt) < Date.now() ? ' over' : ''}">⏳ ${esc(formatDateTime(m.deadlineAt))}</span>` : ''}
+        ${m.deadlineAt && !m.closedAt && !(exp && exp.kind === 'deadline') ? `<span class="deadline${Date.parse(m.deadlineAt) < Date.now() ? ' over' : ''}">⏳ ${esc(formatDateTime(m.deadlineAt))}</span>` : ''}
         ${m.threatStrike && !m.closedAt ? '<span title="Strich bei Nichterfüllung">😈</span>' : ''}
         ${status ? `<span class="mc-status">${status}</span>` : ''}
         ${needsMyAnswer ? '<span class="mc-todo">✉️ Deine Antwort fehlt</span>' : m.needsAck ? `<span>✉️ ${resps.length}</span>` : ''}
@@ -1189,7 +1196,7 @@ function messageFullHtml(m) {
   const pin = prefs.pins[m.id] && Date.parse(prefs.pins[m.id]) > Date.now() ? prefs.pins[m.id] : null;
   // zuständig: die ausgewählten Personen (ältere Meldungen ohne Auswahl: alle außer dem Urheber)
   const responsible = state.me && (m.assignees.length ? m.assignees.includes(state.me.id) : !mine);
-  const canMarkDone = responsible && !m.doneBy && !m.closedAt && !m.needsAck && (m.deleteOnDone || m.deadlineAt);
+  const canMarkDone = responsible && !m.doneBy && !m.closedAt && !m.needsAck && (m.deleteOnDone || m.deadlineAt || m.openEnded);
   const forWhom = m.assignees.map(userById).filter(Boolean);
   const awaitingReview = m.threatStrike && !m.closedAt && isFrozen(m);
   const statusLine = m.closedAt
@@ -1216,6 +1223,7 @@ function messageFullHtml(m) {
       <div class="msg-meta">
         <span class="author"><span class="dot" style="--c:${esc(author ? author.color : '#888888')}"></span>${esc(author ? fullName(author) : 'Unbekannt')} · <span data-rel="${esc(m.createdAt)}">${esc(relative(m.createdAt))}</span></span>
         ${forWhom.length ? `<span class="for-whom">👉 Für ${forWhom.map((u) => `${u.gender && CAL_HEADS[u.gender] ? `<img class="fw-head" src="${CAL_HEADS[u.gender]}" alt="">` : ''}${esc(u.id === state.me.id ? 'dich' : u.firstName)}`).join(' & ')}</span>` : ''}
+        ${m.openEnded ? `<span>⚡ Sofort & offen – bleibt unter „Fortlaufend“, bis ${m.needsAck ? 'alle geantwortet haben' : 'sie erledigt ist'}</span>` : ''}
         ${m.eventAt ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt || m.deadlineAt))}${m.remindAtStart ? ' <span title="Erinnerung zum Beginn">🔔</span>' : ''}</span>` : ''}
         ${statusLine ? `<span class="status-line${m.reviewStatus === 'rejected' || m.reviewStatus === 'missed' ? ' bad' : ''}">${esc(statusLine)}</span>` : ''}
         ${m.threatStrike && !m.closedAt ? '<span class="strike-threat">😈 Strich auf dem Board der Schande bei Nichterfüllung</span>' : ''}
@@ -1230,7 +1238,7 @@ function messageFullHtml(m) {
       </div>
       <div class="msg-actions">
         ${canMarkDone ? `<button class="btn small primary" data-done="${esc(m.id)}">✓ Erledigt</button>` : ''}
-        <a class="btn small" href="${esc(icsUrl(m))}" target="_blank" rel="noopener" title="In Kalender übernehmen">📅 In Kalender</a>
+        ${m.openEnded ? '' : `<a class="btn small" href="${esc(icsUrl(m))}" target="_blank" rel="noopener" title="In Kalender übernehmen">📅 In Kalender</a>`}
         ${mine ? `<button class="btn small danger" data-delete="${esc(m.id)}">Löschen</button>` : ''}
       </div>
       ${m.needsAck ? `<div class="msg-replies msg-extra">
@@ -1541,10 +1549,11 @@ async function markDone(id, btn) {
 
 /* ---- Bereiche der Startseite ---- */
 const SECTIONS = [
+  { key: 'auslaufend', label: 'Läuft aus', open: true },
   { key: 'heute', label: 'Heute', open: true },
   { key: 'morgen', label: 'Morgen', open: true },
   { key: 'woche', label: 'Nächste 7 Tage', open: true },
-  { key: 'laufend', label: 'Laufend', open: true },
+  { key: 'laufend', label: 'Fortlaufend', open: true },
   { key: 'spaeter', label: 'Später', open: false },
   { key: 'vergangen', label: 'Vergangen', open: false },
 ];
@@ -1565,6 +1574,41 @@ function compareMessages(a, b) {
   return Date.parse(a.eventAt || a.createdAt) - Date.parse(b.eventAt || b.createdAt);
 }
 
+/* ---- Läuft aus: Deadline / Rückmelde-Frist in den letzten 12 Stunden ---- */
+const EXPIRY_WINDOW = 12 * 3600e3;
+const isResponsible = (m) => Boolean(state.me) && (m.assignees.length ? m.assignees.includes(state.me.id) : m.authorId !== state.me.id);
+/** Was läuft für mich bald aus? → { at, kind: 'deadline' | 'respond' } oder null */
+function expiryOf(m, now = Date.now()) {
+  if (!state.me || m.closedAt || isInfo(m) || !isResponsible(m)) return null;
+  const soon = (iso) => iso && Date.parse(iso) > now && Date.parse(iso) - now <= EXPIRY_WINDOW;
+  const opts = [];
+  if (soon(m.deadlineAt) && !m.doneBy) opts.push({ at: m.deadlineAt, kind: 'deadline' });
+  if (m.needsAck && soon(m.respondBy) && !(state.responses.get(m.id) || []).some((r) => r.userId === state.me.id)) opts.push({ at: m.respondBy, kind: 'respond' });
+  return opts.sort((a, b) => Date.parse(a.at) - Date.parse(b.at))[0] || null;
+}
+/** Erinnerung (mit Erledigt-Knopf) mit Uhrzeit, deren Ende in den nächsten 12 Stunden liegt */
+function todoExpiry(inst, now = Date.now()) {
+  if (!isTodo(inst) || !inst.needsDone || inst.allDay || doneInfo(inst) || !todoResponsible(inst)) return null;
+  const end = Date.parse(inst.endAt);
+  return end > now && end - now <= EXPIRY_WINDOW ? { at: inst.endAt, kind: 'todo' } : null;
+}
+/** „noch 3 Std. 20 Min.“ */
+function timeLeft(iso) {
+  const mins = Math.max(0, Math.round((Date.parse(iso) - Date.now()) / 60000));
+  if (mins < 1) return 'gleich';
+  if (mins < 60) return `noch ${mins} Min.`;
+  const h = Math.floor(mins / 60), mm = mins % 60;
+  return `noch ${h} Std.${mm ? ` ${mm} Min.` : ''}`;
+}
+/** Offene Meldung (sofort, ohne Termin): erledigt, wenn abgehakt bzw. alle Zuständigen geantwortet haben */
+function openEndedDone(m) {
+  if (m.doneBy || m.closedAt) return true;
+  if (!m.needsAck) return false;
+  const answered = new Set((state.responses.get(m.id) || []).map((r) => r.userId));
+  const ids = m.assignees.length ? m.assignees : state.users.filter((u) => u.id !== m.authorId).map((u) => u.id);
+  return ids.length > 0 && ids.every((id) => answered.has(id));
+}
+
 /** Zuordnung nach Startzeitpunkt; laufende Zeiträume/Deadlines und gepinnte Infos → „Laufend“. */
 function sectionOf(m, now = new Date()) {
   const t = now.getTime();
@@ -1578,6 +1622,8 @@ function sectionOf(m, now = new Date()) {
   const pin = prefs.pins[m.id] ? Date.parse(prefs.pins[m.id]) : null;
 
   if (m.closedAt) return 'vergangen';
+  if (expiryOf(m, t)) return 'auslaufend';
+  if (m.openEnded) return openEndedDone(m) ? 'vergangen' : 'laufend';
   if (pin && pin > t) return 'laufend';
   if (m.threatStrike && deadline && deadline <= t && isFrozen(m)) return 'laufend';   // wartet auf Abnahme
   if (start <= t && end && end > t && end >= tomorrow.getTime()) return 'laufend';   // läuft über mehrere Tage
@@ -1611,18 +1657,9 @@ function messagePeople(m) {
 const eventPeopleIds = (ev) => eventPeople(ev).map((u) => u.id);
 
 function filterButtonHtml() {
-  const f = startFilter();
-  const users = [...state.users].sort((a, b) => (b.id === state.me.id) - (a.id === state.me.id));
-  const shown = users.filter((u) => filterShows(u.id, f));
-  const active = f.hide.length > 0;
   return `<div class="start-tools">
-    <button type="button" class="filter-btn${active ? ' active' : ''}" id="start-filter" aria-label="Filter und Sortierung">
-      <span class="fb-ball">${ballSvg('poke', 20)}</span>
-      <span class="fb-heads">${shown.map((u) => (u.gender && CAL_HEADS[u.gender] ? `<img src="${CAL_HEADS[u.gender]}" alt="${esc(u.firstName)}">` : `<i>${esc(u.firstName[0] || '?')}</i>`)).join('')}</span>
-      ${filterShows('hsv', f) && hsvEnabled() ? '<span class="fb-ico hsv-diamond small" title="HSV"></span>' : ''}
-      ${filterShows('hol', f) ? '<span class="fb-ico" title="Feiertage">🎉</span>' : ''}
-      <span class="fb-sort">${f.sort === 'person' ? '👥 Person' : '🕒 Uhrzeit'}</span>
-      <span class="fb-label">Filter</span>
+    <button type="button" class="filter-btn" id="start-filter" aria-label="Filter und Sortierung">
+      <span class="fb-ball">${ballSvg('poke', 20)}</span><span class="fb-label">Filter</span>
     </button>
   </div>`;
 }
@@ -1830,12 +1867,13 @@ function renderAustausch(view) {
   }
   for (const x of startEventItems()) {
     const mini = x.ev.allDay && !isTodo(x.ev) || (isTodo(x.ev) && !x.ev.needsDone);
-    entries.push({ sec: x.sec, kind: mini ? 'mini' : 'card', people: eventPeopleIds(x.ev), t: Date.parse(x.ev.startAt), ev: x.ev, overdue: x.overdue,
+    entries.push({ sec: todoExpiry(x.ev) ? 'auslaufend' : x.sec, kind: mini ? 'mini' : 'card', people: eventPeopleIds(x.ev), t: Date.parse(x.ev.startAt), ev: x.ev, overdue: x.overdue,
       html: mini ? eventMiniHtml(x.ev) : null });
   }
   for (const c of compactStartItems()) entries.push({ ...c, kind: 'mini', general: true, people: [] });
 
-  const shown = entries.filter((x) => (x.general ? filterShows(x.genKey, f) : peopleVisible(x.people, f)));
+  // „Läuft aus“ betrifft immer dich selbst – wird nie weggefiltert
+  const shown = entries.filter((x) => x.sec === 'auslaufend' || (x.general ? filterShows(x.genKey, f) : peopleVisible(x.people, f)));
   const hiddenCount = entries.length - shown.length;
   const cardHtml = (x) => (x.ev ? eventCardHtml(x.ev, { overdue: x.overdue }) : messageHtml(x.m));
   const byTime = (a, b) => (b.ev && b.ev.allDay ? 1 : 0) - (a.ev && a.ev.allDay ? 1 : 0) || a.t - b.t;
@@ -1871,14 +1909,15 @@ function renderAustausch(view) {
         const general = items.filter((x) => x.general);
         const rest = items.filter((x) => !x.general);
         body = general.length ? `<div class="mini-rows">${general.sort(byTime).map((x) => x.html).join('')}</div>` : '';
-        if (f.sort === 'person') {
+        if (f.sort === 'person' && sec.key !== 'auslaufend') {
           const groups = order.map((k) => [k, rest.filter((x) => groupKey(x) === k)]).filter(([, g]) => g.length);
           body += groups.map(([k, g]) => `<div class="person-group">${groupHead(k)}${block(g)}</div>`).join('');
         } else body += block(rest);
       }
-      return `<section class="msg-section${open ? ' open' : ''}" data-section="${sec.key}">
+      const urgent = sec.key === 'auslaufend';
+      return `<section class="msg-section${open ? ' open' : ''}${urgent ? ' sec-expiry' : ''}" data-section="${sec.key}">
         <button type="button" class="section-head" aria-expanded="${open}">
-          <span class="section-title">${sec.label}</span>
+          ${urgent ? '<span class="sec-glass" aria-hidden="true">⌛</span>' : ''}<span class="section-title">${sec.label}</span>
           ${count ? `<span class="section-count">${count}</span>` : ''}${unread || newInfo ? '<span class="section-dot" title="Neues"></span>' : ''}
           <span class="section-chevron" aria-hidden="true">▾</span>
         </button>
@@ -2006,6 +2045,9 @@ function openNewMessage(preset = 'normal') {
        <label class="field"><span>Titel</span><input name="title" required maxlength="120" placeholder="Worum geht's?"></label>
        <label class="field"><span>Beschreibung</span><textarea name="description" maxlength="4000" placeholder="Details …"></textarea></label>
        <label class="field"><span>Urheber</span><input value="${esc(fullName(state.me))}" readonly></label>
+       ${preset === 'info' ? '' : `<div class="toggle-row open-row"><span>⚡ Sofort &amp; offen – bis erledigt</span>${helpBtn('openEnded')}${switchToggle('openEnded')}</div>
+       <p class="hint tight" id="open-hint" hidden>Ohne Termin und ohne Deadline. Bleibt unter „Fortlaufend“, bis sie erledigt ist – mit oder ohne Rückmeldung.</p>`}
+       <div id="timing-box">
        <div class="field">
          <div class="field-head"><span>Zeitpunkt</span>${bellToggle('remind', true, 'Beim Beginn des Ereignisses vibrieren')}${helpBtn('remind')}</div>
          <input name="eventAt" type="datetime-local" value="${toLocalInput(now)}" aria-label="Startzeitpunkt" class="dt">
@@ -2032,11 +2074,12 @@ function openNewMessage(preset = 'normal') {
          ${quickChips('deleteAt')}
          <p class="hint">Die Nachricht verschwindet zu diesem Zeitpunkt für alle.</p>
        </div>
+       </div>
        <div class="toggle-row"><span>Rückmeldung?</span>${helpBtn('ack')}${switchToggle('needsAck')}</div>
        <div class="field" id="ack-box" hidden>
          <div class="ack-list" id="ack-list">${ackOptionRow('Erledigt')}</div>
          <button type="button" class="btn small ack-add" id="ack-add" aria-label="Weitere Antwortmöglichkeit">＋</button>
-         <div class="toggle-row"><span>Rückmeldung bis?</span>${helpBtn('respondBy')}${switchToggle('hasRespondBy')}</div>
+         <div class="toggle-row" id="respond-by-row"><span>Rückmeldung bis?</span>${helpBtn('respondBy')}${switchToggle('hasRespondBy')}</div>
          <input name="respondBy" type="datetime-local" class="dt" id="respond-by-box" hidden aria-label="Rückmeldung bis">
        </div>
        <div class="toggle-row"><span>Löschen, wenn erledigt?</span>${helpBtn('doneDelete')}${switchToggle('deleteOnDone')}</div>
@@ -2111,6 +2154,18 @@ function openNewMessage(preset = 'normal') {
           }
           syncBoxes();
         }));
+        // ⚡ Sofort & offen: keine Zeiten, keine Fristen
+        const syncOpen = () => {
+          const on = Boolean(form.elements.openEnded && form.elements.openEnded.checked);
+          $('#timing-box', modal).hidden = on;
+          $('#respond-by-row', modal).hidden = on;
+          if ($('#open-hint', modal)) $('#open-hint', modal).hidden = !on;
+          if (on) {
+            ['hasEnd', 'hasDeadline', 'autoDelete', 'hasRespondBy', 'threatStrike'].forEach((n) => { form.elements[n].checked = false; });
+            ['#end-box', '#deadline-box', '#auto-delete-box', '#respond-by-box'].forEach((b) => { $(b, modal).hidden = true; });
+          }
+        };
+        if (form.elements.openEnded) form.elements.openEnded.addEventListener('change', syncOpen);
         const ackList = $('#ack-list', modal);
         const syncAck = () => {
           const rows = ackList.querySelectorAll('.ack-opt');
@@ -2136,20 +2191,21 @@ function openNewMessage(preset = 'normal') {
           const err = $('#msg-error', modal);
           const toIso = (v) => (v ? new Date(v).toISOString() : null);
           const title = f.get('title').trim();
-          const eventAt = toIso(f.get('eventAt'));
+          const openEnded = Boolean(form.elements.openEnded && form.elements.openEnded.checked);
+          const eventAt = openEnded ? null : toIso(f.get('eventAt'));
           const endAt = form.elements.hasEnd.checked ? toIso(f.get('endAt')) : null;
           const deadlineAt = form.elements.hasDeadline.checked ? toIso(f.get('deadlineAt')) : null;
           const respondBy = form.elements.needsAck.checked && form.elements.hasRespondBy.checked ? toIso(f.get('respondBy')) : null;
           const deleteAt = form.elements.autoDelete.checked ? toIso(f.get('deleteAt')) : null;
           // Erinnerung nur, wenn der Start noch mindestens 2 Minuten entfernt ist (sonst käme sie sofort)
-          const remind = form.elements.remind.checked && eventAt && Date.parse(eventAt) > Date.now() + 2 * 60e3;
+          const remind = !openEnded && form.elements.remind.checked && eventAt && Date.parse(eventAt) > Date.now() + 2 * 60e3;
           err.textContent = '';
           if (!title) { err.textContent = 'Bitte einen Titel angeben.'; return; }
-          if (!eventAt) { err.textContent = 'Bitte einen Startzeitpunkt angeben.'; return; }
+          if (!eventAt && !openEnded) { err.textContent = 'Bitte einen Startzeitpunkt angeben.'; return; }
           if (form.elements.hasEnd.checked && !endAt) { err.textContent = 'Bitte das Ende des Zeitraums angeben.'; return; }
           if (form.elements.hasDeadline.checked && !deadlineAt) { err.textContent = 'Bitte eine Deadline angeben.'; return; }
           if (form.elements.needsAck.checked && form.elements.hasRespondBy.checked && !respondBy) { err.textContent = 'Bitte angeben, bis wann geantwortet werden soll.'; return; }
-          if (endAt && Date.parse(endAt) < Date.parse(eventAt)) { err.textContent = 'Das Ende liegt vor dem Beginn.'; return; }
+          if (endAt && eventAt && Date.parse(endAt) < Date.parse(eventAt)) { err.textContent = 'Das Ende liegt vor dem Beginn.'; return; }
           if (form.elements.autoDelete.checked && !deleteAt) { err.textContent = 'Bitte ein Löschdatum wählen.'; return; }
           const ackOptions = form.elements.needsAck.checked
             ? [...new Set([...modal.querySelectorAll('#ack-list input')].map((i) => i.value.trim()).filter(Boolean))]
@@ -2176,6 +2232,7 @@ function openNewMessage(preset = 'normal') {
               ack_options: ackOptions,
               delete_on_done: form.elements.deleteOnDone.checked,
               threat_strike: form.elements.hasDeadline.checked && form.elements.threatStrike.checked,
+              ...(openEnded ? { open_ended: true } : {}),
             }).select().single());
             upsertMessage(mapMessage(row));
             close();
@@ -3896,9 +3953,11 @@ function todoCardHtml(ev, overdue) {
   const when = ev.allDay
     ? evStartDay(ev).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' })
     : eventTimeText(ev, true);
-  return `<article class="todo-card${overdue ? ' overdue' : ''}" data-event-card="${esc(ev.id)}" data-occ="${esc(ev.occ || '')}" tabindex="0" style="--c:${eventColor(ev)}">
+  const exp = todoExpiry(ev);
+  return `<article class="todo-card${overdue ? ' overdue' : ''}${exp ? ' expiring' : ''}" data-event-card="${esc(ev.id)}" data-occ="${esc(ev.occ || '')}" tabindex="0" style="--c:${eventColor(ev)}">
     <span class="todo-icon" aria-hidden="true">🔔</span>
     <div class="todo-body">
+      ${exp ? `<div class="exp-bar"><span class="exp-glass" aria-hidden="true">⌛</span><b>Fällig</b><span data-left="${esc(exp.at)}">${esc(timeLeft(exp.at))}</span><small>bis ${esc(formatTimeOnly(exp.at))}</small></div>` : ''}
       <span class="todo-tag">ERINNERUNG${overdue ? ' · ÜBERFÄLLIG' : ''}</span>
       <h3>${esc(ev.title)}</h3>
       ${ev.description ? `<p class="desc">${esc(ev.description)}</p>` : ''}
@@ -5340,8 +5399,19 @@ function openDossier(userId) {
  *  blau für Trainer, rosa für Trainerinnen
  * ---------------------------------------------------------------------- */
 
-const APP_VERSION = '1.1.1';
+const APP_VERSION = '1.1.2';
 const CHANGELOG = [
+  {
+    version: '1.1.2', date: '2026-11-19', title: 'Läuft aus!',
+    intro: 'Nichts verpasst mehr seine Frist: Was in den nächsten 12 Stunden ausläuft, steht ganz oben auf START – und du bekommst Bescheid.',
+    items: [
+      'Neuer Bereich „Läuft aus“ ganz oben – Deadlines, Rückmelde-Fristen und fällige Erinnerungen der letzten 12 Stunden',
+      'Mit Countdown und Benachrichtigung, sobald Handlungsbedarf besteht',
+      'Neu bei Meldungen: „⚡ Sofort & offen“ – ohne Termin, bleibt unter „Fortlaufend“, bis sie erledigt ist',
+      'Offene Meldungen gehen mit oder ohne Rückmeldung',
+      'Der Filter auf Start ist jetzt nur noch ein schlichter Knopf',
+    ],
+  },
   {
     version: '1.1.1', date: '2026-11-19', title: 'Aufgeräumter Start',
     intro: 'START ist jetzt viel übersichtlicher: Kleinkram steht als schmaler Balken, Meldungen sind kompakt – und mit dem Filter bestimmst du selbst, was du siehst.',
@@ -5924,7 +5994,22 @@ setInterval(() => {
     const t = relative(el.dataset.rel);
     if (el.textContent !== t) el.textContent = t;
   });
+  document.querySelectorAll('#view [data-left]').forEach((el) => {
+    const t = timeLeft(el.dataset.left);
+    if (el.textContent !== t) el.textContent = t;
+  });
+  // Rutscht etwas in „Läuft aus“ (oder wieder heraus) → neu zeichnen
+  if (state.tab === 'start') {
+    const sig = expirySignature();
+    if (sig !== lastExpirySig) { lastExpirySig = sig; if (!$('.modal-backdrop')) render(); }
+  }
 }, 30_000);
+let lastExpirySig = '';
+function expirySignature() {
+  const ids = state.messages.filter((m) => expiryOf(m)).map((m) => m.id);
+  for (const x of startEventItems()) if (todoExpiry(x.ev)) ids.push(`${x.ev.id}|${x.ev.occ}`);
+  return ids.sort().join(',');
+}
 
 // iOS beendet Verbindungen im Hintergrund – beim Zurückkehren neu laden
 document.addEventListener('visibilitychange', () => {

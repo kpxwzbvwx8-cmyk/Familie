@@ -55,6 +55,58 @@ Deno.serve(async (req) => {
     }, { toUsers, high: true });
     sent += r.sent; fristen++;
   }
+  // Läuft aus: 12 Stunden vor Deadline / Rückmelde-Frist die Zuständigen warnen (Handlungsbedarf)
+  const in12h = new Date(Date.now() + 12 * 3600e3).toISOString();
+  const { data: members } = await admin.from('profiles').select('id');
+  const allIds = (members ?? []).map((m) => m.id as string);
+  const responsibleOf = (msg: { assignees: string[] | null; author_id: string }) =>
+    msg.assignees?.length ? msg.assignees : allIds.filter((id) => id !== msg.author_id);
+  const fmt = (iso: string) => new Date(iso).toLocaleString('de-DE', { timeZone: 'Europe/Berlin', weekday: 'short', hour: '2-digit', minute: '2-digit' });
+  const left = (iso: string) => {
+    const mins = Math.max(1, Math.round((Date.parse(iso) - Date.now()) / 60000));
+    return mins < 60 ? `${mins} Minuten` : `${Math.round(mins / 60)} Stunde${Math.round(mins / 60) === 1 ? '' : 'n'}`;
+  };
+  // gerade erst angelegt → die Meldung selbst kam eben schon als Benachrichtigung
+  const fresh = (msg: { created_at: string }) => Date.parse(msg.created_at) > Date.now() - 15 * 60e3;
+  let auslaufend = 0;
+  const { data: dl } = await admin.from('messages')
+    .update({ deadline_warned: true })
+    .eq('deadline_warned', false).not('deadline_at', 'is', null).is('closed_at', null)
+    .lte('deadline_at', in12h)
+    .select('*');
+  for (const msg of dl ?? []) {
+    if (Date.parse(msg.deadline_at) < Date.now() || msg.done_by || fresh(msg)) continue;
+    const toUsers = responsibleOf(msg);
+    if (!toUsers.length) continue;
+    const r = await sendPush({
+      title: `⌛ Läuft aus: ${msg.title}`,
+      body: `Noch ${left(msg.deadline_at)} bis zur Deadline (${fmt(msg.deadline_at)}) – hier ist Handlungsbedarf!${msg.threat_strike ? ' 😈 Sonst gibt es einen Strich.' : ''}`,
+      tag: `expiry-${msg.id}`,
+      url: `?tab=start&msg=${msg.id}`,
+      urgency: 'dringend',
+    }, { toUsers, high: true });
+    sent += r.sent; auslaufend++;
+  }
+  const { data: rb } = await admin.from('messages')
+    .update({ respond_warned: true })
+    .eq('respond_warned', false).eq('needs_ack', true).not('respond_by', 'is', null)
+    .lte('respond_by', in12h)
+    .select('*');
+  for (const msg of rb ?? []) {
+    if (Date.parse(msg.respond_by) < Date.now() || msg.closed_at || fresh(msg)) continue;
+    const { data: answered } = await admin.from('message_responses').select('user_id').eq('message_id', msg.id);
+    const done = new Set((answered ?? []).map((r) => r.user_id));
+    const toUsers = responsibleOf(msg).filter((id) => !done.has(id));
+    if (!toUsers.length) continue;
+    const r = await sendPush({
+      title: `⌛ Läuft aus: ${msg.title}`,
+      body: `Noch ${left(msg.respond_by)} für deine Rückmeldung (bis ${fmt(msg.respond_by)}) – bitte antworte!`,
+      tag: `expiry-${msg.id}`,
+      url: `?tab=start&msg=${msg.id}`,
+      urgency: 'dringend',
+    }, { toUsers, high: true });
+    sent += r.sent; auslaufend++;
+  }
   // Kalender-Hinweise: an den Ersteller und alle, die zugesagt haben
   const { data: evDue } = await admin.from('event_reminders')
     .update({ sent_at: new Date().toISOString() })
@@ -86,5 +138,5 @@ Deno.serve(async (req) => {
     sent += r.sent; termine++;
   }
   await admin.from('event_reminders').update({ sent_at: new Date().toISOString() }).is('sent_at', null).lt('remind_at', since);
-  return json({ reminders: due?.length ?? 0, fristen, termine, sent });
+  return json({ reminders: due?.length ?? 0, fristen, termine, auslaufend, sent });
 });
