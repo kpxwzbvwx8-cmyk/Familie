@@ -2105,3 +2105,66 @@ input.dt::-webkit-datetime-edit { padding: 0; }
 /* Filterknopf schlicht */
 .filter-btn { padding-right: 14px; }
 @media (prefers-reduced-motion: reduce) { .sec-expiry, .sec-glass, .exp-glass, .msg.expiring, .nb-glass { animation: none; } }
+
+/* ===================== Start: Aufgaben und Kalender getrennt ===================== */
+.kind-group { display: grid; gap: 8px; }
+.kind-group + .kind-group { margin-top: 8px; }
+.kind-head {
+  display: flex; align-items: center; gap: 6px; font-size: .82rem; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted); padding: 0 2px;
+}
+.kind-head::after { content: ""; flex: 1; height: 2px; border-radius: 2px; background: repeating-linear-gradient(90deg, var(--border) 0 6px, transparent 6px 10px); }
+.kh-ico { display: grid; place-items: center; width: 20px; height: 20px; }
+.kh-ico img { width: 20px; height: 20px; object-fit: contain; image-rendering: pixelated; }
+.kh-n { min-width: 20px; height: 20px; border-radius: 999px; display: inline-grid; place-items: center; padding: 0 6px; font-size: .78rem; background: var(--surface); border: 1px solid var(--border); }
+.kh-task { color: #c7300c; }
+.kh-cal { color: #3b78d8; }
+.section-date { color: var(--muted); font-size: .9rem; }
+.sf-grid { grid-template-columns: 1fr 1fr; }
+.sf-grid .sf-row { grid-template-columns: 34px 1fr; padding: 8px 10px; position: relative; }
+.sf-grid .sf-icon { width: 34px; height: 34px; font-size: 1.2rem; }
+.sf-grid .sf-text small { font-size: .78rem; line-height: 1.2; }
+.sf-grid .sf-check { position: absolute; top: 4px; right: 4px; }
+.sf-grid .sf-check .ball-svg { width: 18px; height: 18px; }
+.sf-pix { width: 26px; height: 26px; image-rendering: pixelated; object-fit: contain; }
+.sf-sort-title { color: var(--muted); font-size: .9rem; letter-spacing: .06em; text-transform: uppercase; }
+
+/* ===================== Aufgaben im Kalender ===================== */
+/* Monat: kleine Bälle unter den Termin-Balken */
+.cal-tasks { display: flex; align-items: center; gap: 1px; padding: 0 3px; min-height: 13px; }
+.cal-tasks i { display: grid; line-height: 0; }
+.cal-tasks i.done { opacity: .4; filter: grayscale(.7); }
+.cal-tasks b { font-size: .62rem; font-weight: 400; color: var(--cal-num); margin-left: 1px; }
+
+/* Tages-Info: eigene Liste „Aufgaben“ unter den Terminen */
+.day-tasks { display: grid; gap: 6px; margin-top: 4px; }
+.day-task {
+  --u: var(--u-normal);
+  display: grid; grid-template-columns: auto 64px 1fr; align-items: center; gap: 8px; width: 100%; text-align: left;
+  padding: 7px 10px; border-radius: 12px; font: inherit; color: var(--text); cursor: pointer;
+  border: 2px dashed color-mix(in srgb, var(--u) 70%, transparent); background: color-mix(in srgb, var(--u) 7%, var(--surface));
+}
+.day-task.u-info { --u: var(--u-info); } .day-task.u-wichtig { --u: var(--u-wichtig); } .day-task.u-dringend { --u: var(--u-dringend); }
+.day-task.is-done { opacity: .6; }
+.day-task.is-done b { text-decoration: line-through; }
+.day-task-ball { display: grid; }
+.day-task small { color: var(--muted); display: block; }
+
+/* Zeitraster: Markierung rechts, Linie über die Spalte – Termine bleiben darunter sichtbar */
+.tg-task {
+  --u: var(--u-normal);
+  position: absolute; z-index: 4; right: calc(2px + var(--k, 0) * 14px); transform: translateY(-50%);
+  display: flex; align-items: center; gap: 4px; max-width: 62%; height: 20px; padding: 0 6px 0 2px;
+  border-radius: 999px; border: 2px solid var(--u); background: color-mix(in srgb, var(--surface) 88%, transparent);
+  font: inherit; font-size: .7rem; color: var(--text); cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.25);
+  backdrop-filter: blur(2px);
+}
+.tg-task-line { position: absolute; left: 0; right: 0; height: 0; border-top: 2px dotted var(--u, var(--u-normal)); opacity: .6; z-index: 3; pointer-events: none; }
+.tg-task-line.u-info { --u: var(--u-info); } .tg-task-line.u-wichtig { --u: var(--u-wichtig); } .tg-task-line.u-dringend { --u: var(--u-dringend); }
+.tg-task.u-info { --u: var(--u-info); } .tg-task.u-wichtig { --u: var(--u-wichtig); } .tg-task.u-dringend { --u: var(--u-dringend); }
+.tg-task.done { opacity: .55; }
+.tg-task-pin { display: grid; }
+.tg-task-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tg-week .tg-task { padding: 0 2px; height: 18px; }
+.leg-task { display: inline-flex; align-items: center; gap: 3px; }
+.tg-day .tg-task { right: 4px; transform: translateY(calc(-50% + var(--k, 0) * 23px)); }

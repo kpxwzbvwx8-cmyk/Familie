@@ -1670,22 +1670,33 @@ function openStartFilter() {
   const rows = [
     ...users.map((u) => ({ key: u.id, icon: u.gender && CAL_HEADS[u.gender] ? `<img class="sf-head" src="${CAL_HEADS[u.gender]}" alt="">` : '👤',
       label: u.id === state.me.id ? `${u.firstName} (ich)` : u.firstName, sub: u.id === state.me.id ? 'Alles, was für dich ist' : `Alles, was für ${u.firstName} ist`, c: GENDER_COLORS[u.gender] || GENDER_COLORS.both })),
+  ];
+  const kinds = [
+    { key: 'k:task', icon: ballSvg('poke', 30), label: 'Aufgaben', sub: 'Was erledigt oder beantwortet werden muss', c: '#e3350d' },
+    { key: 'k:info', icon: ballSvg('master', 30), label: 'Infos', sub: 'Zum Wissen', c: '#7a3fa0' },
+    { key: 'k:event', icon: `<img class="sf-pix" src="${asset('img/menu/cal.png')}" alt="">`, label: 'Termine', sub: 'Aus dem Kalender', c: '#3b78d8' },
+    { key: 'k:todo', icon: '🔔', label: 'Erinnerungen', sub: 'Aus dem Kalender – zum Abhaken', c: '#e8772e' },
     { key: 'hsv', icon: '<i class="hsv-diamond"></i>', label: 'HSV', sub: hsvEnabled() ? 'Spiele des HSV' : 'In den Einstellungen ausgeschaltet', c: '#0a3d91' },
     { key: 'hol', icon: '🎉', label: 'Feiertage', sub: 'Feiertage & besondere Tage', c: '#d98a1c' },
   ];
+  const rowHtml = (r, f) => `<button type="button" class="sf-row${filterShows(r.key, f) ? ' on' : ''}" data-sf="${esc(r.key)}" style="--c:${r.c}" aria-pressed="${filterShows(r.key, f)}">
+        <span class="sf-icon">${r.icon}</span><span class="sf-text"><b>${esc(r.label)}</b><small>${esc(r.sub)}</small></span>
+        <span class="sf-check">${ballSvg('poke', 26)}</span></button>`;
   const html = () => {
     const f = startFilter();
     return `<div class="sf">
       <div class="cm-box sf-box"><p>Was möchtest du auf START sehen?</p><span class="cm-arrow" aria-hidden="true">▼</span></div>
-      <div class="sf-list">${rows.map((r) => `<button type="button" class="sf-row${filterShows(r.key, f) ? ' on' : ''}" data-sf="${esc(r.key)}" style="--c:${r.c}" aria-pressed="${filterShows(r.key, f)}">
-        <span class="sf-icon">${r.icon}</span><span class="sf-text"><b>${esc(r.label)}</b><small>${esc(r.sub)}</small></span>
-        <span class="sf-check">${ballSvg('poke', 26)}</span></button>`).join('')}</div>
+      <div class="sf-sort-title">Wer?</div>
+      <div class="sf-list">${rows.map((r) => rowHtml(r, f)).join('')}</div>
       <p class="hint sf-hint">Gemeinsames erscheint, sobald eine der beteiligten Personen angehakt ist.</p>
-      <div class="sf-sort-title">Sortierung</div>
+      <div class="sf-sort-title">Was?</div>
+      <div class="sf-list sf-grid">${kinds.map((r) => rowHtml(r, f)).join('')}</div>
+      <div class="sf-sort-title">Reihenfolge</div>
       <div class="sf-sort">
-        <button type="button" class="sf-opt${f.sort === 'time' ? ' on' : ''}" data-sort="time"><b>🕒 Nach Uhrzeit</b><small>Alles der Reihe nach</small></button>
-        <button type="button" class="sf-opt${f.sort === 'person' ? ' on' : ''}" data-sort="person"><b>👥 Nach Person</b><small>Erst nach Person, dann nach Uhrzeit</small></button>
+        <button type="button" class="sf-opt${f.sort === 'time' ? ' on' : ''}" data-sort="time"><b>⚡ Dringlichkeit</b><small>Aufgaben: dringend zuerst · Kalender: nach Uhrzeit</small></button>
+        <button type="button" class="sf-opt${f.sort === 'person' ? ' on' : ''}" data-sort="person"><b>👥 Person</b><small>Erst nach Person, darin genauso</small></button>
       </div>
+      <p class="hint sf-hint">„Läuft aus“ wird nie weggefiltert – da musst du handeln.</p>
       <button type="button" class="cm-cancel" data-close><span class="ds-key ds-key-a">A</span> Fertig</button>
     </div>`;
   };
@@ -1702,6 +1713,7 @@ function openStartFilter() {
           const k = row.dataset.sf;
           f.hide = filterShows(k, f) ? [...f.hide, k] : f.hide.filter((x) => x !== k);
           if (!users.some((u) => filterShows(u.id, f))) { toast('Mindestens eine Person muss angehakt bleiben.'); return; }
+          if (!['k:task', 'k:info', 'k:event', 'k:todo'].some((x) => filterShows(x, f))) { toast('Mindestens eine Art muss angehakt bleiben.'); return; }
         }
         if (opt) f.sort = opt.dataset.sort;
         setStartFilter(f);
@@ -1862,25 +1874,36 @@ function renderAustausch(view) {
     const people = messagePeople(m);
     if (isInfo(m)) {
       const sec = infoUnread(m) ? 'heute' : sectionOf(m);
-      entries.push({ sec, kind: 'mini', people, t: Date.parse(m.eventAt || m.createdAt), html: infoMiniHtml(m), m });
-    } else entries.push({ sec: sectionOf(m), kind: 'card', people, t: Date.parse(m.eventAt || m.createdAt), m });
+      entries.push({ sec, kind: 'mini', type: 'k:info', people, t: Date.parse(m.createdAt), html: infoMiniHtml(m), m });
+    } else {
+      const exp = expiryOf(m);
+      entries.push({ sec: sectionOf(m), kind: 'card', type: 'k:task', people, t: Date.parse(exp ? exp.at : m.deadlineAt || m.eventAt || m.createdAt), m });
+    }
   }
   for (const x of startEventItems()) {
     const mini = x.ev.allDay && !isTodo(x.ev) || (isTodo(x.ev) && !x.ev.needsDone);
-    entries.push({ sec: todoExpiry(x.ev) ? 'auslaufend' : x.sec, kind: mini ? 'mini' : 'card', people: eventPeopleIds(x.ev), t: Date.parse(x.ev.startAt), ev: x.ev, overdue: x.overdue,
+    entries.push({ sec: todoExpiry(x.ev) ? 'auslaufend' : x.sec, kind: mini ? 'mini' : 'card', type: isTodo(x.ev) ? 'k:todo' : 'k:event', people: eventPeopleIds(x.ev), t: Date.parse(x.ev.startAt), ev: x.ev, overdue: x.overdue,
       html: mini ? eventMiniHtml(x.ev) : null });
   }
   for (const c of compactStartItems()) entries.push({ ...c, kind: 'mini', general: true, people: [] });
 
   // „Läuft aus“ betrifft immer dich selbst – wird nie weggefiltert
-  const shown = entries.filter((x) => x.sec === 'auslaufend' || (x.general ? filterShows(x.genKey, f) : peopleVisible(x.people, f)));
+  const shown = entries.filter((x) => x.sec === 'auslaufend' || (x.general ? filterShows(x.genKey, f) : peopleVisible(x.people, f) && filterShows(x.type, f)));
   const hiddenCount = entries.length - shown.length;
   const cardHtml = (x) => (x.ev ? eventCardHtml(x.ev, { overdue: x.overdue }) : messageHtml(x.m));
   const byTime = (a, b) => (b.ev && b.ev.allDay ? 1 : 0) - (a.ev && a.ev.allDay ? 1 : 0) || a.t - b.t;
+  // Aufgaben: dringend zuerst, dann nach Zeit · Kalender: nach Uhrzeit (ganztägig oben)
+  const byUrgency = (a, b) => (URGENCY_RANK[a.m.urgency] ?? 2) - (URGENCY_RANK[b.m.urgency] ?? 2) || a.t - b.t;
+  const minisHtml = (list) => (list.length ? `<div class="mini-rows">${list.map((x) => x.html).join('')}</div>` : '');
+  const subHead = (icon, label, n, cls) => `<div class="kind-head ${cls}"><span class="kh-ico">${icon}</span><span>${label}</span><span class="kh-n">${n}</span></div>`;
   const block = (items) => {
-    const minis = items.filter((x) => x.kind === 'mini').sort(byTime);
-    const cards = items.filter((x) => x.kind === 'card').sort(byTime);
-    return (minis.length ? `<div class="mini-rows">${minis.map((x) => x.html).join('')}</div>` : '') + cards.map(cardHtml).join('');
+    const tasks = items.filter((x) => x.m);
+    const cal = items.filter((x) => x.ev);
+    const tasksHtml = minisHtml(tasks.filter((x) => x.kind === 'mini').sort(byTime)) + tasks.filter((x) => x.kind === 'card').sort(byUrgency).map(cardHtml).join('');
+    const calHtml = minisHtml(cal.filter((x) => x.kind === 'mini').sort(byTime)) + cal.filter((x) => x.kind === 'card').sort(byTime).map(cardHtml).join('');
+    if (!tasks.length || !cal.length) return tasksHtml + calHtml;
+    return `<div class="kind-group">${subHead(ballSvg('poke', 18), 'Aufgaben &amp; Infos', tasks.length, 'kh-task')}${tasksHtml}</div>`
+      + `<div class="kind-group">${subHead(`<img src="${asset('img/menu/cal.png')}" alt="">`, 'Kalender', cal.length, 'kh-cal')}${calHtml}</div>`;
   };
   const groupKey = (x) => (x.people.length > 1 ? 'both' : x.people[0] || 'both');
   const order = [state.me.id, ...state.users.filter((u) => u.id !== state.me.id).map((u) => u.id), 'both'];
@@ -1917,7 +1940,7 @@ function renderAustausch(view) {
       const urgent = sec.key === 'auslaufend';
       return `<section class="msg-section${open ? ' open' : ''}${urgent ? ' sec-expiry' : ''}" data-section="${sec.key}">
         <button type="button" class="section-head" aria-expanded="${open}">
-          ${urgent ? '<span class="sec-glass" aria-hidden="true">⌛</span>' : ''}<span class="section-title">${sec.label}</span>
+          ${urgent ? '<span class="sec-glass" aria-hidden="true">⌛</span>' : ''}<span class="section-title">${sec.label}</span>${sec.key === 'heute' || sec.key === 'morgen' ? `<span class="section-date">${esc(addDays(startOfDay(new Date()), sec.key === 'morgen' ? 1 : 0).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' }))}</span>` : ''}
           ${count ? `<span class="section-count">${count}</span>` : ''}${unread || newInfo ? '<span class="section-dot" title="Neues"></span>' : ''}
           <span class="section-chevron" aria-hidden="true">▾</span>
         </button>
@@ -3136,6 +3159,33 @@ function calState() {
 }
 const weekStartOf = (d) => addDays(startOfDay(d), -((d.getDay() + 6) % 7));
 
+/* ---- Aufgaben im Kalender: als schmale Markierung, die Termine nie ganz verdeckt ---- */
+
+/** Zeitpunkt einer Aufgabe im Kalender: Deadline, sonst ein bewusst gesetzter Zeitpunkt (offene/zeitlose Aufgaben nicht) */
+function taskCalPoint(m) {
+  if (isInfo(m) || m.openEnded) return null;
+  if (m.deleteAt && Date.parse(m.deleteAt) <= Date.now()) return null;
+  if (m.deadlineAt) return { at: new Date(m.deadlineAt), kind: 'deadline' };
+  if (m.eventAt && (m.endAt || Date.parse(m.eventAt) > Date.parse(m.createdAt) + 5 * 60e3)) return { at: new Date(m.eventAt), kind: 'start' };
+  return null;
+}
+function tasksInRange(from, to) {
+  const f = from.getTime(), t = to.getTime();
+  return state.messages.map((m) => ({ m, p: taskCalPoint(m) }))
+    .filter((x) => x.p && x.p.at.getTime() >= f && x.p.at.getTime() <= t)
+    .sort((a, b) => a.p.at - b.p.at || (URGENCY_RANK[a.m.urgency] ?? 2) - (URGENCY_RANK[b.m.urgency] ?? 2));
+}
+const taskDone = (m) => Boolean(m.closedAt || m.doneBy);
+const tasksOnDay = (day) => tasksInRange(day, new Date(addDays(day, 1).getTime() - 1));
+function taskRowHtml(x) {
+  const m = x.m;
+  return `<button type="button" class="day-task u-${esc(m.urgency)}${taskDone(m) ? ' is-done' : ''}" data-task="${esc(m.id)}">
+    <span class="day-task-ball">${ballSvg(urgencyInfo(m.urgency).ball, 22)}</span>
+    <span class="day-ev-time">${esc(formatTimeOnly(x.p.at.toISOString()))}</span>
+    <span class="day-ev-main"><b>${taskDone(m) ? '✓ ' : ''}${esc(m.title)}</b><small>${x.p.kind === 'deadline' ? '⏳ Deadline' : '🕒 Beginn'} · ${esc(urgencyLabel(m.urgency))}${m.assignees.length ? ` · für ${esc(m.assignees.map((id) => (id === state.me.id ? 'dich' : nameOf(id, '?'))).join(' & '))}` : ''}</small></span>
+  </button>`;
+}
+
 function weekHtml(weekStart, month, today) {
   const weekEnd = addDays(weekStart, 6);
   const evs = instancesInRange(weekStart, new Date(addDays(weekStart, 7).getTime() - 1))
@@ -3178,10 +3228,13 @@ function weekHtml(weekStart, month, today) {
         ? `<span class="cal-bar-label" style="--span:${span}">${isTodo(ev) ? '<i class="bar-bell">🔔</i>' : eventHeads(ev, 'bar-head')}<span>${esc(ev.title)}</span></span>` : ''}</span>`;
     }
     const more = here.filter((ev) => laneOf.get(ev).l >= MAX).length;
+    const tasks = tasksOnDay(day);
+    const pins = tasks.length ? `<span class="cal-tasks">${tasks.slice(0, 3).map((x) => `<i class="u-${esc(x.m.urgency)}${taskDone(x.m) ? ' done' : ''}">${ballSvg(urgencyInfo(x.m.urgency).ball, 11)}</i>`).join('')}${tasks.length > 3 ? `<b>+${tasks.length - 3}</b>` : ''}</span>` : '';
     html += `<button type="button" class="${cls.join(' ')}" data-day="${day.getTime()}" aria-label="${esc(day.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' }))}${hol ? `, ${esc(hol.name)}` : ''}${games.length ? ', HSV-Spiel' : ''}${here.length ? `, ${here.length} Einträge` : ''}">
       <span class="cal-num">${day.getDate()}${hol ? `<em class="cal-hol">${esc(hol.short)}</em>` : ''}</span>
       <span class="cal-bars">${bars}</span>
       ${more ? `<span class="cal-more">+${more}</span>` : ''}
+      ${pins}
       ${games.map((g) => `<span class="cal-hsv${g.isHome ? ' home' : ''}">⚽ ${esc(formatTimeOnly(g.kickoff))}</span>`).join('')}
     </button>`;
   }
@@ -3204,6 +3257,7 @@ function dayPanelHtml() {
   const list = eventsOnDay(day);
   const hols = holidaysOn(day);
   const games = hsvOnDay(day);
+  const tasks = tasksOnDay(day);
   const label = day.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   return `<section class="cal-info">
     <div class="cal-info-head"><span class="cal-info-tag">INFO</span><span>${esc(label)}</span></div>
@@ -3214,7 +3268,8 @@ function dayPanelHtml() {
         <span class="day-ev-time">${esc(formatTimeOnly(g.kickoff))}</span>
         <span class="day-ev-main"><b>${esc(hsvTitle(g))}</b><small>${esc(g.league)}${g.round ? ` · ${esc(g.round)}` : ''} · ${g.isHome ? 'Heimspiel' : 'Auswärts'}${g.finished && g.result ? ` · ${esc(g.result)}` : ''}</small></span>
       </button>`).join('')}
-      ${list.length ? list.map((ev) => dayRowHtml(ev, day)).join('') : (games.length ? '' : '<p class="cal-empty">Keine Termine an diesem Tag.</p>')}
+      ${list.length ? list.map((ev) => dayRowHtml(ev, day)).join('') : (games.length || tasks.length ? '' : '<p class="cal-empty">Keine Termine an diesem Tag.</p>')}
+      ${tasks.length ? `<div class="day-tasks"><div class="kind-head kh-task"><span class="kh-ico">${ballSvg('poke', 18)}</span><span>Aufgaben</span><span class="kh-n">${tasks.length}</span></div>${tasks.map(taskRowHtml).join('')}</div>` : ''}
       <button type="button" class="cal-add" id="cal-add">＋ Termin am ${esc(day.toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' }))}</button>
     </div>
   </section>`;
@@ -3289,8 +3344,17 @@ function timeGridHtml(days) {
         ${state.calView === 'day' ? `<span class="tg-heads">${eventHeads(ev, 'bar-head')}</span>` : ''}
       </button>`;
     }).join('');
+    // Aufgaben: schmale Markierung rechts mit Linie über die Spalte – Termine darunter bleiben sichtbar
+    const marks = tasksOnDay(d).map((x, i, arr) => {
+      const top = ((x.p.at - ds) / 3600e3) * H;
+      const near = arr.slice(0, i).filter((y) => Math.abs(y.p.at - x.p.at) < 30 * 60e3).length; // dicht beieinander → leicht versetzt
+      const m = x.m;
+      return `<span class="tg-task-line u-${esc(m.urgency)}" style="top:${top}px"></span><button type="button" class="tg-task u-${esc(m.urgency)}${taskDone(m) ? ' done' : ''}" data-task="${esc(m.id)}" style="top:${top}px;--k:${near}" title="${esc(m.title)}">
+        <span class="tg-task-pin">${ballSvg(urgencyInfo(m.urgency).ball, 14)}</span>${state.calView === 'day' ? `<span class="tg-task-text">${x.p.kind === 'deadline' ? '⏳' : '🕒'} ${esc(formatTimeOnly(x.p.at.toISOString()))} · ${esc(m.title)}</span>` : ''}
+      </button>`;
+    }).join('');
     const now = sameDay(d, today) ? `<span class="tg-now" style="top:${((Date.now() - ds) / 3600e3) * H}px"></span>` : '';
-    return `<div class="tg-col${sameDay(d, today) ? ' today' : ''}" data-colday="${ds}" style="height:${24 * H}px">${html}${now}</div>`;
+    return `<div class="tg-col${sameDay(d, today) ? ' today' : ''}" data-colday="${ds}" style="height:${24 * H}px">${html}${marks}${now}</div>`;
   }).join('');
   const hours = Array.from({ length: 24 }, (_, h) => `<span style="top:${h * H}px">${String(h).padStart(2, '0')}:00</span>`).join('');
   return `<div class="tg tg-${state.calView}" style="--H:${H}px;--n:${days.length}">
@@ -3345,7 +3409,7 @@ function renderCalendar(view) {
       <div class="cal-views" role="tablist">${CAL_VIEWS.map(([k, l]) => `<button type="button" role="tab" class="cal-view-btn${state.calView === k ? ' active' : ''}" data-view="${k}" aria-selected="${state.calView === k}">${l}</button>`).join('')}</div>
       ${body}
       <div class="cal-foot">
-        <span class="cal-legend">${['m', 'w', 'both'].map((g) => `<span style="--c:${GENDER_COLORS[g]}">${g === 'both' ? `<img src="${CAL_HEADS.m}" alt=""><img src="${CAL_HEADS.w}" alt="">` : `<img src="${CAL_HEADS[g]}" alt="">`}${GENDER_NAMES[g]}</span>`).join('')}<span class="leg-todo">🔔 Erinnerung</span>${hsvEnabled() ? '<span class="leg-hsv">⚽ HSV</span>' : ''}<span class="leg-hol">Feiertag</span></span>
+        <span class="cal-legend">${['m', 'w', 'both'].map((g) => `<span style="--c:${GENDER_COLORS[g]}">${g === 'both' ? `<img src="${CAL_HEADS.m}" alt=""><img src="${CAL_HEADS.w}" alt="">` : `<img src="${CAL_HEADS[g]}" alt="">`}${GENDER_NAMES[g]}</span>`).join('')}<span class="leg-todo">🔔 Erinnerung</span><span class="leg-task">${ballSvg('poke', 12)} Aufgabe</span>${hsvEnabled() ? '<span class="leg-hsv">⚽ HSV</span>' : ''}<span class="leg-hol">Feiertag</span></span>
         <button type="button" class="cal-today" id="cal-today">Heute</button>
       </div>
     </div>
@@ -3380,7 +3444,7 @@ function renderCalendar(view) {
   }));
   // Leere Stelle im Zeitraster antippen → neuer Termin zu dieser Stunde
   view.querySelectorAll('[data-colday]').forEach((col) => col.addEventListener('click', (e) => {
-    if (e.target.closest('[data-event],[data-hsv]')) return;
+    if (e.target.closest('[data-event],[data-hsv],[data-task]')) return;
     const H = state.calView === 'day' ? 52 : 42;
     const y = e.clientY - col.getBoundingClientRect().top;
     const hour = Math.max(0, Math.min(23, Math.floor(y / H)));
@@ -3390,6 +3454,7 @@ function renderCalendar(view) {
   if (addBtn) addBtn.addEventListener('click', () => openEventForm({ day: state.calDay }));
   view.querySelectorAll('[data-event]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); openEventDetail(b.dataset.event, b.dataset.occ || null); }));
   view.querySelectorAll('[data-hsv]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); openHsvMatch(b.dataset.hsv); }));
+  view.querySelectorAll('[data-task]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); openMessageDetail(b.dataset.task); }));
   // Zeitraster: zur passenden Uhrzeit scrollen
   const sc = $('#tg-scroll', view);
   if (sc) {
