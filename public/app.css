@@ -2406,3 +2406,5 @@ button.person-head { padding: 2px 2px 4px; }
   border-top: 1px dashed var(--cal-line); border-bottom: 1px dashed var(--cal-line); text-align: center;
 }
 .tg-fold:active { background: var(--cal-line); }
+.tg-chip.task { --u: var(--u-normal); display: flex; align-items: center; gap: 3px; color: var(--text); background: color-mix(in srgb, var(--u) 14%, var(--surface)); border: 1.5px solid var(--u); }
+.tg-chip.task.u-info { --u: var(--u-info); } .tg-chip.task.u-wichtig { --u: var(--u-wichtig); } .tg-chip.task.u-dringend { --u: var(--u-dringend); }

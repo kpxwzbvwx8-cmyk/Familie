@@ -3333,7 +3333,12 @@ function taskCalPoint(m) {
   if (isInfo(m) || m.openEnded) return null;
   if (m.deleteAt && Date.parse(m.deleteAt) <= Date.now()) return null;
   if (m.deadlineAt) return { at: new Date(m.deadlineAt), kind: 'deadline' };
-  if (m.eventAt && (m.endAt || Date.parse(m.eventAt) > Date.parse(m.createdAt) + 5 * 60e3)) return { at: new Date(m.eventAt), kind: 'start' };
+  if (m.eventAt && (m.endAt || Date.parse(m.eventAt) > Date.parse(m.createdAt) + 5 * 60e3)) {
+    const s = new Date(m.eventAt), e = m.endAt ? new Date(m.endAt) : null;
+    // „Ganzer Tag“ (0:00–23:59) gehört in die Ganztags-Zeile, nicht ins Zeitraster
+    const whole = s.getHours() === 0 && s.getMinutes() === 0 && e && e.getHours() === 23 && e.getMinutes() >= 59;
+    return { at: s, kind: whole ? 'allday' : 'start' };
+  }
   return null;
 }
 function tasksInRange(from, to) {
@@ -3348,8 +3353,8 @@ function taskRowHtml(x) {
   const m = x.m;
   return `<button type="button" class="day-task u-${esc(m.urgency)}${taskDone(m) ? ' is-done' : ''}" data-task="${esc(m.id)}">
     <span class="day-task-ball">${ballSvg(urgencyInfo(m.urgency).ball, 22)}</span>
-    <span class="day-ev-time">${esc(formatTimeOnly(x.p.at.toISOString()))}</span>
-    <span class="day-ev-main"><b>${taskDone(m) ? '✓ ' : ''}${esc(m.title)}</b><small>${x.p.kind === 'deadline' ? '⏳ Deadline' : '🕒 Beginn'} · ${esc(urgencyLabel(m.urgency))}${m.assignees.length ? ` · für ${esc(m.assignees.map((id) => (id === state.me.id ? 'dich' : nameOf(id, '?'))).join(' & '))}` : ''}</small></span>
+    <span class="day-ev-time">${esc(x.p.kind === 'allday' ? 'ganztags' : formatTimeOnly(x.p.at.toISOString()))}</span>
+    <span class="day-ev-main"><b>${taskDone(m) ? '✓ ' : ''}${esc(m.title)}</b><small>${x.p.kind === 'deadline' ? '⏳ Deadline' : x.p.kind === 'allday' ? '📋 Ganzer Tag' : '🕒 Beginn'} · ${esc(urgencyLabel(m.urgency))}${m.assignees.length ? ` · für ${esc(m.assignees.map((id) => (id === state.me.id ? 'dich' : nameOf(id, '?'))).join(' & '))}` : ''}</small></span>
   </button>`;
 }
 
@@ -3482,7 +3487,7 @@ function calHourRange(days, inst) {
       if (s < de && e > ds) take(Math.max(s, ds), Math.min(e, de), ds);
     }
     for (const g of hsvOnDay(d)) { const s = Date.parse(g.kickoff); take(s, Math.min(s + 115 * 60e3, de), ds); }
-    for (const x of tasksOnDay(d)) { const t = x.p.at.getTime(); take(t - 15 * 60e3, t + 30 * 60e3, ds); }
+    for (const x of tasksOnDay(d)) { if (x.p.kind === 'allday') continue; const t = x.p.at.getTime(); take(t - 15 * 60e3, t + 30 * 60e3, ds); }
   }
   if (lo >= hi) return [8, 18];             // nichts mit Uhrzeit → Tagesbereich
   if (hi - lo < 4) { lo = Math.max(0, Math.min(lo, hi - 4)); hi = Math.min(24, lo + 4); }   // mindestens 4 Stunden
@@ -3509,6 +3514,7 @@ function timeGridHtml(days) {
     const hols = holidaysOn(d).filter((h) => h.kind !== 'church' || state.calView === 'day');
     return `<div class="tg-allday-cell">
       ${hols.map((h) => `<span class="tg-chip hol k-${h.kind}">${h.emoji} ${esc(state.calView === 'day' ? h.name : h.short)}</span>`).join('')}
+      ${tasksOnDay(d).filter((x) => x.p.kind === 'allday').map((x) => `<button type="button" class="tg-chip task u-${esc(x.m.urgency)}" data-task="${esc(x.m.id)}">${ballSvg(urgencyInfo(x.m.urgency).ball, 11)} ${esc(x.m.title)}</button>`).join('')}
       ${items.map((ev) => `<button type="button" class="tg-chip${isTodo(ev) ? ' todo' : ''}${isTodo(ev) && doneInfo(ev) ? ' done' : ''}" data-event="${esc(ev.id)}" data-occ="${esc(ev.occ)}" style="--c:${eventColor(ev)}">${isTodo(ev) ? '🔔 ' : ''}${esc(ev.title)}</button>`).join('')}
     </div>`;
   }).join('');
@@ -3539,7 +3545,7 @@ function timeGridHtml(days) {
       </button>`;
     }).join('');
     // Aufgaben: schmale Markierung rechts mit Linie über die Spalte – Termine darunter bleiben sichtbar
-    const marks = tasksOnDay(d).map((x, i, arr) => {
+    const marks = tasksOnDay(d).filter((x) => x.p.kind !== 'allday').map((x, i, arr) => {
       const top = ((x.p.at - ds) / 3600e3) * H - off;
       const near = arr.slice(0, i).filter((y) => Math.abs(y.p.at - x.p.at) < 30 * 60e3).length; // dicht beieinander → leicht versetzt
       const m = x.m;
