@@ -24,6 +24,8 @@ const state = {
   tab: 'start',
   highlight: null,
   expanded: new Set(),
+  reads: new Map(),     // Infos: messageId -> { readAt, hidden } (nur eigene)
+  msgDetail: null,      // offenes Details-Popup einer Meldung
   responses: new Map(), // messageId -> [{ userId, option, createdAt }]
   comments: new Map(),  // messageId -> [{ id, authorId, body, createdAt }]
   notes: [],            // Notizen (eigene + gemeinsame)
@@ -1071,13 +1073,119 @@ function formatRange(start, end) {
   return sameDay ? `${formatDateTime(start)} – ${formatTimeOnly(end)}` : `${formatDateTime(start)} – ${formatDateTime(end)}`;
 }
 
+/** Kompakte Karte auf Start: zu = Titel + eine Zeile; auf = Rückmeldung, Kommentare, „Details“ */
 function messageHtml(m) {
   const mine = state.me && m.authorId === state.me.id;
-  const author = userById(m.authorId);
-  const doneBy = m.doneBy ? userById(m.doneBy) : null;
   const expanded = isExpanded(m);
   if (expanded) markCommentsSeen(m.id);
   const unread = expanded ? 0 : unreadComments(m);
+  const responsible = state.me && (m.assignees.length ? m.assignees.includes(state.me.id) : !mine);
+  const canMarkDone = responsible && !m.doneBy && !m.closedAt && !m.needsAck && (m.deleteOnDone || m.deadlineAt);
+  const forWhom = m.assignees.map(userById).filter(Boolean);
+  const awaitingReview = m.threatStrike && !m.closedAt && isFrozen(m);
+  const author = userById(m.authorId);
+  const resps = state.responses.get(m.id) || [];
+  const myResp = state.me ? resps.find((r) => r.userId === state.me.id) : null;
+  const comments = state.comments.get(m.id) || [];
+  const options = m.needsAck ? (m.ackOptions || ['Erledigt']) : [];
+  const needsMyAnswer = m.needsAck && responsible && !myResp && !m.closedAt;
+  const timed = m.eventAt && (m.endAt || Date.parse(m.eventAt) > Date.parse(m.createdAt) + 5 * 60e3);
+  const status = m.closedAt
+    ? (m.reviewStatus === 'accepted' ? '👍 Abgenommen' : m.reviewStatus === 'rejected' || m.reviewStatus === 'missed' ? '😈 Strich vergeben' : '🔒 Geschlossen')
+    : awaitingReview ? (mine ? '⏸️ Bitte abnehmen' : '⏸️ Wartet auf Abnahme')
+    : m.doneBy ? `✓ Erledigt (${esc(nameOf(m.doneBy, '?'))})` : '';
+  const heads = (list) => list.map((u) => (u.gender && CAL_HEADS[u.gender] ? `<img class="fw-head" src="${CAL_HEADS[u.gender]}" alt="">` : '')).join('');
+  const lastComments = comments.slice(-2);
+  return `
+  <article class="msg compact u-${esc(m.urgency)}${m.closedAt ? ' is-closed' : ''}${expanded ? ' expanded' : ''}${unread ? ' has-unread' : ''}${m.doneBy && !awaitingReview ? ' is-done' : ''}${needsMyAnswer || (mine && awaitingReview) ? ' needs-me' : ''}${state.highlight === m.id ? ' flash' : ''}"
+    id="msg-${esc(m.id)}" data-msg="${esc(m.id)}" tabindex="0" aria-expanded="${expanded}">
+    <div class="msg-side">
+      ${ballSvg(urgencyInfo(m.urgency).ball, 30)}
+      <span class="badge">${esc(urgencyLabel(m.urgency))}</span>
+    </div>
+    <div class="msg-body">
+      <h3>${esc(m.title)}</h3>
+      <div class="msg-chips">
+        <span class="mc-from" title="Von ${esc(author ? author.firstName : '?')}">${author && author.gender && CAL_HEADS[author.gender] ? `<img class="fw-head" src="${CAL_HEADS[author.gender]}" alt="">` : ''}${esc(mine ? 'Du' : author ? author.firstName : '?')}${forWhom.length ? ` ➜ ${heads(forWhom)}${esc(forWhom.map((u) => (u.id === state.me.id ? 'dich' : u.firstName)).join(' & '))}` : ''}</span>
+        ${timed ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt || m.deadlineAt))}</span>` : ''}
+        ${m.deadlineAt && !m.closedAt ? `<span class="deadline${Date.parse(m.deadlineAt) < Date.now() ? ' over' : ''}">⏳ ${esc(formatDateTime(m.deadlineAt))}</span>` : ''}
+        ${m.threatStrike && !m.closedAt ? '<span title="Strich bei Nichterfüllung">😈</span>' : ''}
+        ${status ? `<span class="mc-status">${status}</span>` : ''}
+        ${needsMyAnswer ? '<span class="mc-todo">✉️ Deine Antwort fehlt</span>' : m.needsAck ? `<span>✉️ ${resps.length}</span>` : ''}
+        ${comments.length ? `<span class="count${unread ? ' unread' : ''}">💬 ${comments.length}${unread ? ` <b>+${unread}</b>` : ''}</span>` : ''}
+      </div>
+      <div class="msg-quick msg-extra">
+        ${m.description ? `<p class="desc">${esc(m.description)}</p>` : ''}
+        ${m.needsAck && responsible && !m.closedAt ? `<div class="mq-block"><span class="mq-label">${myResp ? `Deine Antwort: <b>${esc(myResp.option)}</b> – ändern?` : 'Deine Rückmeldung:'}</span>
+          <div class="reply-btns">${options.map((o) => `<button class="btn small${myResp && myResp.option === o ? ' primary' : ''}" data-reply="${esc(m.id)}" data-option="${esc(o)}">${esc(o)}</button>`).join('')}</div></div>` : ''}
+        ${m.needsAck && (mine || !responsible) && resps.length ? `<div class="mq-block"><span class="mq-label">Antworten:</span> ${resps.map((r) => `<b>${esc(nameOf(r.userId, '?'))}:</b> ${esc(r.option)}`).join(' · ')}</div>` : ''}
+        ${mine && awaitingReview ? `<div class="mq-block"><span class="mq-label">Rückmeldung ist da – nimm das Ergebnis ab:</span><div class="reply-btns">
+          <button type="button" class="btn small primary" data-review="${esc(m.id)}" data-verdict="accept">👍 Abnehmen</button>
+          <button type="button" class="btn small danger" data-review="${esc(m.id)}" data-verdict="strike">😈 Strich vergeben</button></div></div>` : ''}
+        <div class="msg-comments">
+          ${comments.length > lastComments.length ? `<button type="button" class="mq-more" data-details="${esc(m.id)}">… ${comments.length - lastComments.length} ältere Kommentare</button>` : ''}
+          ${lastComments.map((c) => { const own = state.me && c.authorId === state.me.id; return `<div class="comment${own ? ' own' : ''}"><span class="c-head"><b>${esc(nameOf(c.authorId, '?'))}</b> · <span data-rel="${esc(c.createdAt)}">${esc(relative(c.createdAt))}</span></span><p>${esc(c.body)}</p></div>`; }).join('')}
+          <form class="comment-form" data-comment-form="${esc(m.id)}">
+            <input name="body" maxlength="1000" placeholder="Kommentar schreiben …" autocomplete="off" aria-label="Kommentar">
+            <button class="btn small primary" type="submit">Senden</button>
+          </form>
+        </div>
+        <div class="mq-actions">
+          ${canMarkDone ? `<button class="btn small primary" data-done="${esc(m.id)}">✓ Erledigt</button>` : ''}
+          <button type="button" class="btn small mq-details" data-details="${esc(m.id)}">📋 Details</button>
+        </div>
+      </div>
+      <span class="msg-chevron" aria-hidden="true">▾</span>
+    </div>
+  </article>`;
+}
+
+/** Details-Popup: alles, was die Karte bietet */
+function openMessageDetail(id) {
+  const m = state.messages.find((x) => x.id === id);
+  if (!m) { toast('Diese Nachricht gibt es nicht mehr.'); return; }
+  if (state.msgDetail) state.msgDetail.close();
+  openModal(`<div class="modal-head msg-detail-head"><h2>${m.urgency === 'info' ? 'ℹ️ Info' : '📋 Meldung'}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+    <div class="msg-detail-body">${messageFullHtml(m)}</div>`, {
+    cls: 'msg-detail-modal',
+    onMount: (modal, close) => {
+      const done = () => { if (state.msgDetail && state.msgDetail.id === id) state.msgDetail = null; close(); };
+      state.msgDetail = { id, close: done, modal };
+      modal.closest('.modal-backdrop').addEventListener('click', (e) => {
+        if (e.target.classList.contains('modal-backdrop') || e.target.closest('[data-close]')) { if (state.msgDetail && state.msgDetail.id === id) state.msgDetail = null; }
+      });
+      bindMessage($('[data-msg-full]', modal), { toggle: false });
+    },
+  });
+}
+
+/** Offenes Details-Popup auf den neuesten Stand bringen (Entwurf im Kommentarfeld bleibt) */
+function refreshMessageDetail(id) {
+  const d = state.msgDetail;
+  if (!d || (id && d.id !== id)) return;
+  if (!d.modal.isConnected) { state.msgDetail = null; return; }
+  const m = state.messages.find((x) => x.id === d.id);
+  if (!m) { d.close(); return; }
+  const el = $('[data-msg-full]', d.modal);
+  const input = el && el.querySelector('.comment-form input');
+  const draft = input ? input.value : '';
+  const tpl = document.createElement('template');
+  tpl.innerHTML = messageFullHtml(m).trim();
+  const fresh = tpl.content.firstElementChild;
+  if (el) el.replaceWith(fresh); else $('.msg-detail-body', d.modal).appendChild(fresh);
+  bindMessage(fresh, { toggle: false });
+  const ni = fresh.querySelector('.comment-form input');
+  if (ni) ni.value = draft;
+}
+
+/** Vollständige Karte – im „Details“-Popup */
+function messageFullHtml(m) {
+  const mine = state.me && m.authorId === state.me.id;
+  const author = userById(m.authorId);
+  const doneBy = m.doneBy ? userById(m.doneBy) : null;
+  const expanded = true;
+  markCommentsSeen(m.id);
+  const unread = 0;
   const pin = prefs.pins[m.id] && Date.parse(prefs.pins[m.id]) > Date.now() ? prefs.pins[m.id] : null;
   // zuständig: die ausgewählten Personen (ältere Meldungen ohne Auswahl: alle außer dem Urheber)
   const responsible = state.me && (m.assignees.length ? m.assignees.includes(state.me.id) : !mine);
@@ -1097,8 +1205,7 @@ function messageHtml(m) {
   const portrait = author && PORTRAITS[author.gender]
     ? `<img class="msg-portrait" src="${PORTRAITS[author.gender]}" alt="${esc(fullName(author))}">` : '';
   return `
-  <article class="msg u-${esc(m.urgency)}${m.closedAt ? ' is-closed' : ''}${expanded ? ' expanded' : ''}${unread ? ' has-unread' : ''}${m.doneBy && !awaitingReview ? ' is-done' : ''}${state.highlight === m.id ? ' flash' : ''}"
-    id="msg-${esc(m.id)}" data-msg="${esc(m.id)}" tabindex="0" aria-expanded="${expanded}">
+  <article class="msg u-${esc(m.urgency)}${m.closedAt ? ' is-closed' : ''}${expanded ? ' expanded' : ''}${unread ? ' has-unread' : ''}${m.doneBy && !awaitingReview ? ' is-done' : ''} msg-full" id="msgd-${esc(m.id)}" data-msg="${esc(m.id)}" data-msg-full="${esc(m.id)}">
     <div class="msg-side">
       <div class="msg-urg">${ballSvg(urgencyInfo(m.urgency).ball, 26)}<span class="badge">${esc(urgencyLabel(m.urgency))}</span></div>
       ${portrait}
@@ -1159,19 +1266,21 @@ function messageHtml(m) {
           <button class="btn small primary" type="submit">Senden</button>
         </form>
       </div>
-      <span class="msg-chevron" aria-hidden="true">▾</span>
     </div>
   </article>`;
 }
 
-function bindMessage(el) {
-  el.addEventListener('click', (e) => {
-    if (e.target.closest('a, button, input, textarea, form')) return;
-    toggleMessage(el);
-  });
-  el.addEventListener('keydown', (e) => {
-    if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); toggleMessage(el); }
-  });
+function bindMessage(el, { toggle = true } = {}) {
+  if (toggle) {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('a, button, input, textarea, form, .msg-quick')) return;
+      toggleMessage(el);
+    });
+    el.addEventListener('keydown', (e) => {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); toggleMessage(el); }
+    });
+  }
+  el.querySelectorAll('[data-details]').forEach((b) => b.addEventListener('click', () => openMessageDetail(b.dataset.details)));
   el.querySelectorAll('[data-done]').forEach((b) => b.addEventListener('click', () => markDone(b.dataset.done, b)));
   el.querySelectorAll('[data-review]').forEach((b) => b.addEventListener('click', () => reviewMessage(b.dataset.review, b.dataset.verdict, b)));
   el.querySelectorAll('[data-pin]').forEach((b) => b.addEventListener('click', () => {
@@ -1187,6 +1296,7 @@ function bindMessage(el) {
       if (!(await dsAsk('Diese Nachricht wirklich löschen?', { yes: 'Löschen', danger: true }))) return;
       try {
         must(await sb.from('messages').delete().eq('id', b.dataset.delete));
+        if (state.msgDetail && state.msgDetail.id === b.dataset.delete) state.msgDetail.close();
         removeMessage(b.dataset.delete);
       } catch (e) {
         toast(e.message);
@@ -1197,6 +1307,7 @@ function bindMessage(el) {
 
 /** Nur eine Karte neu zeichnen – ein angefangener Kommentar bleibt erhalten. */
 function rerenderMessage(id) {
+  refreshMessageDetail(id);
   if (state.tab !== 'start') return;
   const el = document.getElementById(`msg-${id}`);
   const m = state.messages.find((x) => x.id === id);
@@ -1205,6 +1316,7 @@ function rerenderMessage(id) {
   const input = el.querySelector('.comment-form input');
   const draft = input ? input.value : '';
   const focused = input && document.activeElement === input;
+  if (m.urgency === 'info') { render(); return; }
   const tpl = document.createElement('template');
   tpl.innerHTML = messageHtml(m).trim();
   const fresh = tpl.content.firstElementChild;
@@ -1313,7 +1425,7 @@ const prefs = {
 };
 
 function isExpanded(m) {
-  return m.urgency === 'info' ? !prefs.infoClosed.has(m.id) : state.expanded.has(m.id);
+  return state.expanded.has(m.id);
 }
 
 function unreadComments(m) {
@@ -1332,10 +1444,6 @@ function toggleMessage(el) {
   const m = state.messages.find((x) => x.id === id);
   if (!m) return;
   const open = !isExpanded(m);
-  if (m.urgency === 'info') {
-    if (open) prefs.infoClosed.delete(id); else prefs.infoClosed.add(id);
-    lsSet('familie.infoClosed', [...prefs.infoClosed]);
-  }
   if (open) state.expanded.add(id); else state.expanded.delete(id);
   if (open) markCommentsSeen(id);
   // Karte neu aufbauen → beim Zuklappen exakt wieder in der Ausgangsform
@@ -1481,7 +1589,225 @@ function sectionOf(m, now = new Date()) {
   return 'vergangen';
 }
 
+/* ---- Start: Filter & Sortierung (pro Gerät gemerkt) ------------------ */
+
+const START_FILTER_KEY = 'familie.startFilter';
+function startFilter() {
+  const f = lsGet(START_FILTER_KEY, null) || {};
+  return { hide: Array.isArray(f.hide) ? f.hide : [], sort: f.sort === 'person' ? 'person' : 'time' };
+}
+function setStartFilter(f) { lsSet(START_FILTER_KEY, f); }
+const filterShows = (key, f = startFilter()) => !f.hide.includes(key);
+/** Sichtbar, wenn mindestens eine beteiligte Person angehakt ist (Gemeinsames erscheint also bei jedem) */
+const peopleVisible = (ids, f = startFilter()) => !ids.length || ids.some((id) => filterShows(id, f));
+
+/** Für wen ist eine Meldung/Info? (Zuständige – ältere ohne Auswahl: alle außer dem Urheber; wartet sie auf Abnahme, auch der Urheber) */
+function messagePeople(m) {
+  let ids = m.assignees.length ? [...m.assignees] : state.users.filter((u) => u.id !== m.authorId).map((u) => u.id);
+  if (!ids.length) ids = [m.authorId];
+  if (m.threatStrike && !m.closedAt && isFrozen(m) && !ids.includes(m.authorId)) ids.push(m.authorId);
+  return [...new Set(ids)];
+}
+const eventPeopleIds = (ev) => eventPeople(ev).map((u) => u.id);
+
+function filterButtonHtml() {
+  const f = startFilter();
+  const users = [...state.users].sort((a, b) => (b.id === state.me.id) - (a.id === state.me.id));
+  const shown = users.filter((u) => filterShows(u.id, f));
+  const active = f.hide.length > 0;
+  return `<div class="start-tools">
+    <button type="button" class="filter-btn${active ? ' active' : ''}" id="start-filter" aria-label="Filter und Sortierung">
+      <span class="fb-ball">${ballSvg('poke', 20)}</span>
+      <span class="fb-heads">${shown.map((u) => (u.gender && CAL_HEADS[u.gender] ? `<img src="${CAL_HEADS[u.gender]}" alt="${esc(u.firstName)}">` : `<i>${esc(u.firstName[0] || '?')}</i>`)).join('')}</span>
+      ${filterShows('hsv', f) && hsvEnabled() ? '<span class="fb-ico hsv-diamond small" title="HSV"></span>' : ''}
+      ${filterShows('hol', f) ? '<span class="fb-ico" title="Feiertage">🎉</span>' : ''}
+      <span class="fb-sort">${f.sort === 'person' ? '👥 Person' : '🕒 Uhrzeit'}</span>
+      <span class="fb-label">Filter</span>
+    </button>
+  </div>`;
+}
+
+/** Filter wie das Sortier-Menü im Pokédex: ankreuzen, was auf Start erscheint */
+function openStartFilter() {
+  const users = [...state.users].sort((a, b) => (b.id === state.me.id) - (a.id === state.me.id));
+  const rows = [
+    ...users.map((u) => ({ key: u.id, icon: u.gender && CAL_HEADS[u.gender] ? `<img class="sf-head" src="${CAL_HEADS[u.gender]}" alt="">` : '👤',
+      label: u.id === state.me.id ? `${u.firstName} (ich)` : u.firstName, sub: u.id === state.me.id ? 'Alles, was für dich ist' : `Alles, was für ${u.firstName} ist`, c: GENDER_COLORS[u.gender] || GENDER_COLORS.both })),
+    { key: 'hsv', icon: '<i class="hsv-diamond"></i>', label: 'HSV', sub: hsvEnabled() ? 'Spiele des HSV' : 'In den Einstellungen ausgeschaltet', c: '#0a3d91' },
+    { key: 'hol', icon: '🎉', label: 'Feiertage', sub: 'Feiertage & besondere Tage', c: '#d98a1c' },
+  ];
+  const html = () => {
+    const f = startFilter();
+    return `<div class="sf">
+      <div class="cm-box sf-box"><p>Was möchtest du auf START sehen?</p><span class="cm-arrow" aria-hidden="true">▼</span></div>
+      <div class="sf-list">${rows.map((r) => `<button type="button" class="sf-row${filterShows(r.key, f) ? ' on' : ''}" data-sf="${esc(r.key)}" style="--c:${r.c}" aria-pressed="${filterShows(r.key, f)}">
+        <span class="sf-icon">${r.icon}</span><span class="sf-text"><b>${esc(r.label)}</b><small>${esc(r.sub)}</small></span>
+        <span class="sf-check">${ballSvg('poke', 26)}</span></button>`).join('')}</div>
+      <p class="hint sf-hint">Gemeinsames erscheint, sobald eine der beteiligten Personen angehakt ist.</p>
+      <div class="sf-sort-title">Sortierung</div>
+      <div class="sf-sort">
+        <button type="button" class="sf-opt${f.sort === 'time' ? ' on' : ''}" data-sort="time"><b>🕒 Nach Uhrzeit</b><small>Alles der Reihe nach</small></button>
+        <button type="button" class="sf-opt${f.sort === 'person' ? ' on' : ''}" data-sort="person"><b>👥 Nach Person</b><small>Erst nach Person, dann nach Uhrzeit</small></button>
+      </div>
+      <button type="button" class="cm-cancel" data-close><span class="ds-key ds-key-a">A</span> Fertig</button>
+    </div>`;
+  };
+  openModal(html(), {
+    cls: 'create-menu sf-modal',
+    onMount: (modal) => {
+      typeText($('.sf-box p', modal), 'Was möchtest du auf START sehen?');
+      modal.addEventListener('click', (e) => {
+        const f = startFilter();
+        const row = e.target.closest('[data-sf]');
+        const opt = e.target.closest('[data-sort]');
+        if (!row && !opt) return;
+        if (row) {
+          const k = row.dataset.sf;
+          f.hide = filterShows(k, f) ? [...f.hide, k] : f.hide.filter((x) => x !== k);
+          if (!users.some((u) => filterShows(u.id, f))) { toast('Mindestens eine Person muss angehakt bleiben.'); return; }
+        }
+        if (opt) f.sort = opt.dataset.sort;
+        setStartFilter(f);
+        modal.innerHTML = html();
+        if (state.tab === 'start') render();
+      });
+    },
+  });
+}
+
+/* ---- Infos: Popup beim Start, gelesen / ausblenden, daraus Termin oder Erinnerung ---- */
+
+const isInfo = (m) => m.urgency === 'info';
+const readOf = (m) => (state.reads ? state.reads.get(m.id) : null);
+const infoHidden = (m) => Boolean(readOf(m) && readOf(m).hidden);
+/** Ungelesen: von jemand anderem, noch nicht bestätigt, höchstens eine Woche alt */
+const infoUnread = (m) => isInfo(m) && state.me && m.authorId !== state.me.id && !readOf(m)
+  && Date.parse(m.createdAt) > Date.now() - 7 * 86400e3 && (!m.deleteAt || Date.parse(m.deleteAt) > Date.now());
+
+async function markInfo(m, { hidden = false } = {}) {
+  const row = { message_id: m.id, user_id: state.me.id, read_at: new Date().toISOString(), hidden };
+  state.reads.set(m.id, { readAt: row.read_at, hidden });
+  try { must(await sb.from('message_reads').upsert(row, { onConflict: 'message_id,user_id' })); } catch (e) { toast(e.message); }
+}
+
+function infoMiniHtml(m) {
+  const unread = infoUnread(m);
+  const d = new Date(m.eventAt || m.createdAt);
+  const today = startOfDay(new Date()).getTime() === startOfDay(d).getTime();
+  const when = today ? formatTimeOnly(d.toISOString()) : d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' });
+  const n = (state.comments.get(m.id) || []).length;
+  return `<button type="button" class="mini-row mini-info${unread ? ' unread' : ''}" data-info="${esc(m.id)}"><span class="mini-ico">${ballSvg('master', 20)}</span><span class="mini-when">${esc(when)}</span><span class="mini-what">${esc(m.title)}</span>${n ? `<span class="mini-extra">💬${n}</span>` : ''}${unread ? '<span class="mini-new">NEU</span>' : ''}</button>`;
+}
+
+/** Info als Popup (eine oder mehrere hintereinander) */
+function openInfoPopup(ids, start = 0) {
+  let list = ids.filter((id) => state.messages.some((m) => m.id === id));
+  if (!list.length) return;
+  let idx = Math.min(start, list.length - 1);
+  const html = () => {
+    const m = state.messages.find((x) => x.id === list[idx]);
+    if (!m) return '';
+    const mine = m.authorId === state.me.id;
+    const author = userById(m.authorId);
+    const forWhom = m.assignees.map(userById).filter(Boolean);
+    const n = (state.comments.get(m.id) || []).length;
+    const timed = m.eventAt && (m.endAt || Date.parse(m.eventAt) > Date.parse(m.createdAt) + 5 * 60e3);
+    const read = !infoUnread(m);
+    return `<div class="info-pop">
+      <div class="ip-head">
+        <span class="ip-ball">${ballSvg('master', 40)}</span>
+        <span class="ip-from"><b>INFO</b><small>von ${esc(mine ? 'dir' : author ? author.firstName : '?')} · ${esc(relative(m.createdAt))}</small></span>
+        ${list.length > 1 ? `<span class="ip-pager">${idx + 1}/${list.length}</span>` : ''}
+        <button class="icon-btn" data-close aria-label="Schließen">✕</button>
+      </div>
+      <h2 class="ip-title">${esc(m.title)}</h2>
+      <div class="ds-say static ip-text"><p class="ds-say-text">${esc(m.description || 'Keine weiteren Details.')}</p></div>
+      <div class="ip-meta">
+        ${timed ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt))}</span>` : ''}
+        ${forWhom.length ? `<span>👉 Für ${esc(forWhom.map((u) => (u.id === state.me.id ? 'dich' : u.firstName)).join(' & '))}</span>` : ''}
+        ${n ? `<span>💬 ${n} Kommentar${n === 1 ? '' : 'e'}</span>` : ''}
+      </div>
+      <div class="ip-make">
+        <span>Daraus machen:</span>
+        <button type="button" class="btn small ip-mk-ev" data-make="event">📅 Termin</button>
+        <button type="button" class="btn small ip-mk-todo" data-make="todo">🔔 Erinnerung</button>
+      </div>
+      <div class="ip-actions">
+        ${mine ? '<button type="button" class="btn small danger" data-ip="delete">🗑️ Löschen</button>' : '<button type="button" class="btn small" data-ip="hide">🙈 Ausblenden</button>'}
+        <button type="button" class="btn small" data-ip="details">📋 Details</button>
+        ${read ? (list.length > 1 && idx < list.length - 1 ? '<button type="button" class="btn small primary" data-ip="next">Weiter ▶</button>' : '<button type="button" class="btn small primary" data-close>Schließen</button>')
+          : `<button type="button" class="btn small primary" data-ip="read">✓ Gelesen${list.length > 1 && idx < list.length - 1 ? ' ▶' : ''}</button>`}
+      </div>
+    </div>`;
+  };
+  openModal(html(), {
+    cls: 'info-modal',
+    onMount: (modal, close) => {
+      const advance = () => {
+        list = list.filter((id) => state.messages.some((m) => m.id === id));
+        if (idx < list.length - 1) { idx++; modal.innerHTML = html(); } else close();
+      };
+      modal.addEventListener('click', async (e) => {
+        const m = state.messages.find((x) => x.id === list[idx]);
+        if (!m) { close(); return; }
+        const mk = e.target.closest('[data-make]');
+        if (mk) {
+          close();
+          openEventForm({ kind: mk.dataset.make === 'todo' ? 'todo' : null, fromInfo: m });
+          return;
+        }
+        const b = e.target.closest('[data-ip]');
+        if (!b) return;
+        const act = b.dataset.ip;
+        if (act === 'read') { await markInfo(m); render(); advance(); }
+        else if (act === 'next') advance();
+        else if (act === 'details') { close(); openMessageDetail(m.id); }
+        else if (act === 'hide') {
+          if (!(await dsAsk('Diese Info für dich ausblenden? Für die anderen bleibt sie sichtbar.', { yes: 'Ausblenden' }))) return;
+          await markInfo(m, { hidden: true });
+          list.splice(idx, 1); idx--;
+          render(); advance();
+          toast('🙈 Ausgeblendet.');
+        } else if (act === 'delete') {
+          if (!(await dsAsk('Diese Info für alle löschen?', { yes: 'Löschen', danger: true }))) return;
+          try {
+            must(await sb.from('messages').delete().eq('id', m.id));
+            list.splice(idx, 1); idx--;
+            removeMessage(m.id);
+            advance();
+          } catch (ex) { toast(ex.message); }
+        }
+      });
+    },
+  });
+}
+
+/** Beim App-Start: ungelesene Infos nacheinander zeigen */
+function showUnreadInfos() {
+  const ids = state.messages.filter((m) => infoUnread(m) && !infoHidden(m))
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt)).map((m) => m.id);
+  if (!ids.length) return false;
+  openInfoPopup(ids);
+  return true;
+}
+
+/* ---- Start zeichnen ---------------------------------------------------- */
+
+function eventMiniHtml(ev) {
+  const todo = isTodo(ev);
+  const today = startOfDay(new Date());
+  const sd = evStartDay(ev), ed = evEndDay(ev);
+  let when;
+  if (ev.allDay) when = sameDay(sd, ed) ? (sameDay(sd, today) ? 'ganztags' : sd.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' }))
+    : `bis ${ed.toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' })}`;
+  else when = sameDay(sd, today) ? formatTimeOnly(ev.startAt) : `${sd.toLocaleDateString('de-DE', { weekday: 'short' })} ${formatTimeOnly(ev.startAt)}`;
+  const icon = todo ? '<span class="mini-bell">🔔</span>' : eventGenders(ev).map((g) => `<img src="${CAL_HEADS[g]}" alt="">`).join('');
+  const inv = myInvite(ev);
+  return `<button type="button" class="mini-row mini-ev${todo ? ' is-todo' : ''}" data-event-card="${esc(ev.id)}" data-occ="${esc(ev.occ || '')}" style="--c:${eventColor(ev)}"><span class="mini-ico">${icon}</span><span class="mini-when">${esc(when)}</span><span class="mini-what">${esc(ev.title)}</span>${ev.recurrence ? '<span class="mini-extra">🔁</span>' : ''}${inv && inv.status === 'accepted' ? '<span class="mini-extra">✅</span>' : ''}</button>`;
+}
+
 function renderAustausch(view) {
+  if (!state.me) { view.innerHTML = ''; return; }
   const showBanner = pushSupported && state.me ? Notification.permission === 'default' : false;
   const installHint = isIos && !isStandalone
     ? `<div class="notify-banner install"><p>📲 <b>Auf dem iPhone installieren:</b> Unten in Safari auf <b>Teilen</b> <span class="share-icon" aria-hidden="true">⬆︎</span> tippen → <b>„Zum Home-Bildschirm“</b>. Danach die App über das neue Symbol öffnen – nur so funktionieren Benachrichtigungen.</p></div>`
@@ -1489,39 +1815,81 @@ function renderAustausch(view) {
   const banner = installHint + (showBanner
     ? `<div class="notify-banner"><p>🔔 Benachrichtigungen aktivieren, damit du neue Nachrichten sofort mitbekommst.</p><button class="btn primary small" id="enable-push">Aktivieren</button></div>`
     : '');
-  const visible = state.messages.filter((m) => !m.deleteAt || Date.parse(m.deleteAt) > Date.now());
-  const evItems = startEventItems();
+  const f = startFilter();
+  const now = Date.now();
+  const visible = state.messages.filter((m) => (!m.deleteAt || Date.parse(m.deleteAt) > now) && !(isInfo(m) && infoHidden(m)));
+
+  // Alle Einträge sammeln: kind 'mini' (Balken) oder 'card'
+  const entries = [];
+  for (const m of visible) {
+    const people = messagePeople(m);
+    if (isInfo(m)) {
+      const sec = infoUnread(m) ? 'heute' : sectionOf(m);
+      entries.push({ sec, kind: 'mini', people, t: Date.parse(m.eventAt || m.createdAt), html: infoMiniHtml(m), m });
+    } else entries.push({ sec: sectionOf(m), kind: 'card', people, t: Date.parse(m.eventAt || m.createdAt), m });
+  }
+  for (const x of startEventItems()) {
+    const mini = x.ev.allDay && !isTodo(x.ev) || (isTodo(x.ev) && !x.ev.needsDone);
+    entries.push({ sec: x.sec, kind: mini ? 'mini' : 'card', people: eventPeopleIds(x.ev), t: Date.parse(x.ev.startAt), ev: x.ev, overdue: x.overdue,
+      html: mini ? eventMiniHtml(x.ev) : null });
+  }
+  for (const c of compactStartItems()) entries.push({ ...c, kind: 'mini', general: true, people: [] });
+
+  const shown = entries.filter((x) => (x.general ? filterShows(x.genKey, f) : peopleVisible(x.people, f)));
+  const hiddenCount = entries.length - shown.length;
+  const cardHtml = (x) => (x.ev ? eventCardHtml(x.ev, { overdue: x.overdue }) : messageHtml(x.m));
+  const byTime = (a, b) => (b.ev && b.ev.allDay ? 1 : 0) - (a.ev && a.ev.allDay ? 1 : 0) || a.t - b.t;
+  const block = (items) => {
+    const minis = items.filter((x) => x.kind === 'mini').sort(byTime);
+    const cards = items.filter((x) => x.kind === 'card').sort(byTime);
+    return (minis.length ? `<div class="mini-rows">${minis.map((x) => x.html).join('')}</div>` : '') + cards.map(cardHtml).join('');
+  };
+  const groupKey = (x) => (x.people.length > 1 ? 'both' : x.people[0] || 'both');
+  const order = [state.me.id, ...state.users.filter((u) => u.id !== state.me.id).map((u) => u.id), 'both'];
+  const groupHead = (k) => {
+    if (k === 'both') return `<div class="person-head" style="--c:${GENDER_COLORS.both}">${state.users.map((u) => (u.gender && CAL_HEADS[u.gender] ? `<img src="${CAL_HEADS[u.gender]}" alt="">` : '')).join('')}<span>Gemeinsam</span></div>`;
+    const u = userById(k);
+    return `<div class="person-head" style="--c:${GENDER_COLORS[u && u.gender] || GENDER_COLORS.both}">${u && u.gender && CAL_HEADS[u.gender] ? `<img src="${CAL_HEADS[u.gender]}" alt="">` : ''}<span>${esc(k === state.me.id ? 'Ich' : u ? u.firstName : '?')}</span></div>`;
+  };
+
   let list;
-  if (!visible.length && !evItems.length && !compactStartItems().length) {
-    list = emptyStateHtml('Hier ist gerade nichts los! Tippe unten rechts auf ＋ für eine Info, eine Meldung oder einen Termin.');
+  if (!shown.length) {
+    list = hiddenCount
+      ? emptyStateHtml(`Durch deinen Filter ist gerade alles ausgeblendet (${hiddenCount}). Tippe oben auf „Filter“, um mehr zu sehen.`)
+      : emptyStateHtml('Hier ist gerade nichts los! Tippe unten rechts auf ＋ für eine Info, eine Meldung, einen Termin oder eine Erinnerung.');
   } else {
-    const groups = Object.fromEntries(SECTIONS.map((sec) => [sec.key, []]));
-    for (const m of visible) groups[sectionOf(m)].push({ m });
-    for (const x of evItems) groups[x.sec].push({ ev: x.ev, overdue: x.overdue });
-    const compact = Object.fromEntries(SECTIONS.map((sec) => [sec.key, []]));
-    for (const c of compactStartItems()) compact[c.sec].push(c);
-    if (state.highlight) { const hm = visible.find((m) => m.id === state.highlight); if (hm) prefs.sections[sectionOf(hm)] = true; }
-    // Termine stehen zwischen „dringend“ und „wichtig“, untereinander nach Beginn
-    const rank = (x) => (x.ev ? (isTodo(x.ev) ? (x.overdue ? 0.4 : 0.6) : 0.5) : (URGENCY_RANK[x.m.urgency] ?? 2));
-    const time = (x) => Date.parse(x.ev ? x.ev.startAt : (x.m.eventAt || x.m.createdAt));
-    const cmp = (a, b) => (a.ev || b.ev ? rank(a) - rank(b) || time(a) - time(b) : compareMessages(a.m, b.m));
-    list = SECTIONS.filter((sec) => groups[sec.key].length || compact[sec.key].length).map((sec) => {
-      const minis = compact[sec.key].sort((a, b) => a.t - b.t);
-      const items = groups[sec.key].sort(cmp);
+    if (state.highlight) { const hm = visible.find((m) => m.id === state.highlight); if (hm && !isInfo(hm)) prefs.sections[sectionOf(hm)] = true; }
+    list = SECTIONS.map((sec) => {
+      const items = shown.filter((x) => x.sec === sec.key);
+      if (!items.length) return '';
       const open = sectionOpen(sec);
-      const unread = items.reduce((n, x) => n + (x.m ? unreadComments(x.m) : 0), 0);
+      const count = items.filter((x) => !x.general).length;
+      const unread = items.reduce((n, x) => n + (x.m && x.kind === 'card' ? unreadComments(x.m) : 0), 0);
+      const newInfo = items.some((x) => x.m && isInfo(x.m) && infoUnread(x.m));
+      let body = '';
+      if (open) {
+        const general = items.filter((x) => x.general);
+        const rest = items.filter((x) => !x.general);
+        body = general.length ? `<div class="mini-rows">${general.sort(byTime).map((x) => x.html).join('')}</div>` : '';
+        if (f.sort === 'person') {
+          const groups = order.map((k) => [k, rest.filter((x) => groupKey(x) === k)]).filter(([, g]) => g.length);
+          body += groups.map(([k, g]) => `<div class="person-group">${groupHead(k)}${block(g)}</div>`).join('');
+        } else body += block(rest);
+      }
       return `<section class="msg-section${open ? ' open' : ''}" data-section="${sec.key}">
         <button type="button" class="section-head" aria-expanded="${open}">
           <span class="section-title">${sec.label}</span>
-          ${items.length ? `<span class="section-count">${items.length}</span>` : ''}${unread ? '<span class="section-dot" title="Neue Kommentare"></span>' : ''}
+          ${count ? `<span class="section-count">${count}</span>` : ''}${unread || newInfo ? '<span class="section-dot" title="Neues"></span>' : ''}
           <span class="section-chevron" aria-hidden="true">▾</span>
         </button>
-        <div class="msg-list">${open ? (minis.length ? `<div class="mini-rows">${minis.map((c) => c.html).join('')}</div>` : '') + items.map((x) => (x.ev ? eventCardHtml(x.ev, { overdue: x.overdue }) : messageHtml(x.m))).join('') : ''}</div>
+        <div class="msg-list">${body}</div>
       </section>`;
     }).join('');
   }
-  view.innerHTML = banner + invitationCardsHtml() + list;
+  view.innerHTML = banner + filterButtonHtml() + invitationCardsHtml() + list;
+  $('#start-filter', view).addEventListener('click', openStartFilter);
   bindEventCards(view);
+  view.querySelectorAll('.mini-info[data-info]').forEach((b) => b.addEventListener('click', () => openInfoPopup([b.dataset.info])));
   view.querySelectorAll('.mini-hsv[data-hsv]').forEach((b) => b.addEventListener('click', () => openHsvMatch(b.dataset.hsv)));
   view.querySelectorAll('.mini-hol[data-hol]').forEach((b) => b.addEventListener('click', () => {
     const name = b.dataset.hol;
@@ -1538,13 +1906,17 @@ function renderAustausch(view) {
   const pushBtn = $('#enable-push', view);
   if (pushBtn) pushBtn.addEventListener('click', enablePush);
 
-  view.querySelectorAll('[data-msg]').forEach(bindMessage);
+  view.querySelectorAll('.msg[data-msg]').forEach((el) => bindMessage(el));
+  refreshMessageDetail();
 
   if (state.highlight) {
-    let el = document.getElementById(`msg-${state.highlight}`);
-    if (el && !el.classList.contains('expanded')) { toggleMessage(el); el = document.getElementById(`msg-${state.highlight}`); }
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const id = state.highlight;
     state.highlight = null;
+    const hm = state.messages.find((m) => m.id === id);
+    if (hm && isInfo(hm)) { openInfoPopup([id]); return; }
+    let el = document.getElementById(`msg-${id}`);
+    if (el && !el.classList.contains('expanded')) { toggleMessage(el); el = document.getElementById(`msg-${id}`); }
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 }
 
@@ -1835,6 +2207,7 @@ function upsertMessage(m) {
 
 function removeMessage(id) {
   state.messages = state.messages.filter((m) => m.id !== id);
+  if (state.msgDetail && state.msgDetail.id === id) state.msgDetail.close();
   if (state.tab === 'start') render();
 }
 
@@ -2304,6 +2677,7 @@ function mapEvent(r) {
     reminders: Array.isArray(r.reminders) ? r.reminders : [], createdAt: r.created_at, updatedAt: r.updated_at,
     kind: r.kind || 'event', assignees: r.assignees || [], recurrence: r.recurrence || null,
     exdates: (r.exdates || []).map((x) => Date.parse(x)),
+    needsDone: r.needs_done !== false,
   };
 }
 async function loadEvents() {
@@ -2544,7 +2918,7 @@ function compactStartItems() {
   for (let i = 0; i < 8; i++) {
     const d = addDays(today, i);
     const sec = daySection(d);
-    if (sec) for (const h of holidaysOn(d)) out.push({ sec, t: d.getTime(), html: holidayRowHtml(d, h) });
+    if (sec) for (const h of holidaysOn(d)) out.push({ sec, genKey: 'hol', t: d.getTime(), html: holidayRowHtml(d, h) });
   }
   if (hsvEnabled() && state.hsv) {
     for (const m of state.hsv) {
@@ -2552,7 +2926,7 @@ function compactStartItems() {
       const sec = daySection(startOfDay(k));
       if (!sec) continue;
       if (m.finished && sec !== 'heute') continue;
-      out.push({ sec, t: k.getTime(), html: hsvRowHtml(m) });
+      out.push({ sec, genKey: 'hsv', t: k.getTime(), html: hsvRowHtml(m) });
     }
   }
   return out;
@@ -3036,19 +3410,35 @@ async function editEventFlow(inst, before) {
   openEventForm({ event: inst, scope });
 }
 
-function openEventForm({ day = null, event = null, kind = null, hour = null, scope = 'all' } = {}) {
+function openEventForm({ day = null, event = null, kind = null, hour = null, scope = 'all', fromInfo = null } = {}) {
   const ev = event;
   const todo = (ev ? ev.kind : kind) === 'todo';
-  const base = day || startOfDay(new Date());
   const now = new Date();
+  // Aus einer Info: Titel, Text, Zeitpunkt und Personen übernehmen
+  const info = !ev && fromInfo ? fromInfo : null;
+  let infoAllDay = false, infoStart = null, infoEnd = null;
+  if (info) {
+    const s0 = info.eventAt ? new Date(info.eventAt) : null;
+    const e0 = info.endAt ? new Date(info.endAt) : null;
+    const meaningful = s0 && (e0 || Date.parse(info.eventAt) > Date.parse(info.createdAt) + 5 * 60e3) && (e0 || s0).getTime() > now.getTime() - 3600e3;
+    if (meaningful) {
+      infoStart = s0;
+      infoEnd = e0 && e0 > s0 ? e0 : new Date(s0.getTime() + 3600e3);
+      infoAllDay = s0.getHours() === 0 && s0.getMinutes() === 0 && (!e0 || (e0.getHours() === 23 && e0.getMinutes() >= 59));
+    }
+  }
+  const base = day || (infoStart ? startOfDay(infoStart) : startOfDay(new Date()));
   let start, end;
-  if (ev) { start = new Date(ev.startAt); end = new Date(ev.endAt); } else {
+  if (ev) { start = new Date(ev.startAt); end = new Date(ev.endAt); } else if (infoStart) { start = infoStart; end = infoEnd; } else {
     const h = hour != null ? hour : sameDay(base, startOfDay(now)) ? Math.min(now.getHours() + 1, 23) : 10;
     start = new Date(base.getFullYear(), base.getMonth(), base.getDate(), h, 0);
     end = new Date(start.getTime() + 3600e3);
   }
-  const allDay = ev ? ev.allDay : todo && hour == null;
-  const invited = ev ? invitesOf(ev).map((i) => i.userId) : [];
+  const allDay = ev ? ev.allDay : infoStart ? infoAllDay : todo && hour == null;
+  const infoPeople = info ? [...new Set([info.authorId, ...info.assignees])].filter((id) => id !== state.me.id) : [];
+  const invited = ev ? invitesOf(ev).map((i) => i.userId) : infoPeople;
+  const needsDone = ev ? ev.needsDone !== false : true;
+  const infoDesc = info ? [info.description, `– aus der Info von ${nameOf(info.authorId, '?')} (${formatDateTime(info.createdAt)})`].filter(Boolean).join('\n\n') : '';
   const others = state.users.filter((u) => u.id !== state.me.id);
   const rems = ev && ev.reminders.length ? ev.reminders : [null];
   // „Nur dieser“: aus der Serie lösen → ohne Wiederholung
@@ -3057,12 +3447,15 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
 
   openModal(
     `<div class="modal-head ev-form-head"><h2>${ev ? `${noun} bearbeiten` : todo ? 'Neue Erinnerung' : 'Neuer Termin'}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+     ${info ? `<div class="ds-say static from-info"><span class="ds-say-name">Aus Info</span><p class="ds-say-text">Titel, Text${infoStart ? ', Zeit' : ''} und Personen habe ich aus „${esc(info.title)}“ übernommen. Prüfe kurz alles und tippe auf „Anlegen“.</p></div>` : ''}
      ${ev && ev.recurrence ? `<p class="hint scope-hint">🔁 ${scope === 'one' ? 'Du änderst nur diesen einen Termin – er wird aus der Serie gelöst.' : 'Du änderst diesen und alle folgenden Termine der Serie.'}</p>` : ''}
      <form class="form" id="ev-form" novalidate>
        ${todo ? assigneePickerHtml('Für wen?', ev ? ev.assignees : [state.me.id]) : ''}
-       <label class="field"><span>Titel</span><input name="title" maxlength="120" required placeholder="${todo ? 'z. B. Blumen gießen' : 'z. B. Zahnarzt'}" value="${esc(ev ? ev.title : '')}"></label>
+       <label class="field"><span>Titel</span><input name="title" maxlength="120" required placeholder="${todo ? 'z. B. Blumen gießen' : 'z. B. Zahnarzt'}" value="${esc(ev ? ev.title : info ? info.title : '')}"></label>
        ${todo ? '' : `<label class="field"><span>Ort</span><input name="location" maxlength="200" placeholder="optional" value="${esc(ev ? ev.location : '')}"></label>`}
-       <label class="field"><span>Beschreibung</span><textarea name="description" maxlength="4000" placeholder="optional">${esc(ev ? ev.description : '')}</textarea></label>
+       <label class="field"><span>Beschreibung</span><textarea name="description" maxlength="4000" placeholder="optional">${esc(ev ? ev.description : infoDesc)}</textarea></label>
+       ${todo ? `<div class="toggle-row"><span>✓ Mit Erledigt-Knopf</span>${switchToggle('needsDone', needsDone)}</div>
+       <p class="hint tight">An: erscheint auf Start als Karte und bleibt, bis sie abgehakt ist. Aus: nur ein kleiner Balken an dem Tag.</p>` : ''}
        <div class="toggle-row"><span>${todo ? 'Ganzer Tag (ohne Uhrzeit)' : 'Ganztägig'}</span>${switchToggle('allDay', allDay)}</div>
        <div class="ev-times">
          <label class="field"><span>${todo ? 'Am / ab' : 'Beginn'}</span><input name="start" class="dt" type="${allDay ? 'date' : 'datetime-local'}" value="${allDay ? toDateInput(start) : toLocalInput(start)}"></label>
@@ -3248,6 +3641,10 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
               p_kind: todo ? 'todo' : 'event', p_assignees: todo ? assignees : [], p_recurrence: recurrence,
             }));
             const saved = mapEvent(row);
+            if (todo && form.elements.needsDone && form.elements.needsDone.checked !== saved.needsDone) {
+              await sb.rpc('set_event_needs_done', { p_event: saved.id, p_value: form.elements.needsDone.checked }).then((r) => r.error && toast(r.error.message));
+            }
+            if (info && state.me && !readOf(info)) { await markInfo(info); }
             await loadEvents().catch(() => {});
             const fresh = targetId ? invitees.filter((id) => !invited.includes(id)) : invitees;
             if (todo || fresh.length || ev) invokeQuiet({ action: 'event', eventId: saved.id, invited: fresh, changed: Boolean(ev) });
@@ -3303,7 +3700,7 @@ function eventDetailHtml(ev) {
       ${ev.reminders.length ? `<div class="ev-row"><span>🔔</span><div class="ev-people">${ev.reminders.map((r) => `<div>${esc(reminderLabel(r, ev.allDay))}</div>`).join('')}
         <small class="hint">${todo ? 'Gilt für alle, für die die Erinnerung ist.' : mine || (inv && inv.status === 'accepted') ? 'Gilt auch für dich.' : 'Gilt nur für den Ersteller und alle, die zugesagt haben.'}</small></div></div>` : ''}
     </div>
-    ${todo && todoResponsible(ev) ? `<div class="ev-answer"><span>${done ? 'Schon erledigt.' : 'Noch offen.'}</span>
+    ${todo && ev.needsDone && todoResponsible(ev) ? `<div class="ev-answer"><span>${done ? 'Schon erledigt.' : 'Noch offen.'}</span>
       <div class="ev-answer-btns"><button type="button" class="btn ${done ? '' : 'primary'}" data-todo-toggle="${done ? '0' : '1'}">${done ? '↩️ Wieder öffnen' : '✓ Erledigt'}</button></div></div>` : ''}
     ${inv ? `<div class="ev-answer">
       ${inv.status === 'pending' ? '<span>Du bist eingeladen:</span>' : `<span>${INVITE_STATUS[inv.status]}</span>`}
@@ -3448,7 +3845,7 @@ function startEventItems() {
   const today = startOfDay(new Date());
   const out = [];
   for (const ev of state.events) {
-    if (isTodo(ev)) {
+    if (isTodo(ev) && ev.needsDone) {
       const list = occurrenceStarts(ev, addDays(today, -60).getTime(), addDays(today, 8).getTime()).map((o) => instanceOf(ev, o))
         .filter((i) => !doneInfo(i));
       const overdue = list.filter((i) => evEndDay(i) < today).pop();
@@ -4943,8 +5340,22 @@ function openDossier(userId) {
  *  blau für Trainer, rosa für Trainerinnen
  * ---------------------------------------------------------------------- */
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.1.1';
 const CHANGELOG = [
+  {
+    version: '1.1.1', date: '2026-11-19', title: 'Aufgeräumter Start',
+    intro: 'START ist jetzt viel übersichtlicher: Kleinkram steht als schmaler Balken, Meldungen sind kompakt – und mit dem Filter bestimmst du selbst, was du siehst.',
+    items: [
+      'Filter oben auf Start: Personen, HSV und Feiertage an- und abhaken',
+      'Sortierung nach Uhrzeit oder nach Person, dann Uhrzeit',
+      'Infos erscheinen beim Öffnen der App als Popup – gelesen, ausblenden oder löschen',
+      'Aus einer Info direkt einen Termin oder eine Erinnerung machen – alles wird übernommen',
+      'Infos, ganztägige Termine und Erinnerungen ohne Erledigt-Knopf als kleiner Balken',
+      'Erinnerungen mit Erledigt-Knopf bleiben als Karte, bis sie abgehakt sind',
+      'Meldungen kompakt: aufklappen zum Antworten & Kommentieren, „Details“ zeigt alles',
+      'Termin-Formular: Datumsfelder bleiben im Rahmen und werden nicht mehr leer',
+    ],
+  },
   {
     version: '1.1.0', date: '2026-11-19', title: 'Großes Kalender-Update',
     intro: 'Der Kalender kann jetzt Tag, Woche und Monat – und Termine wiederholen sich auf Wunsch von selbst. Neu auf Start: Erinnerungen zum Abhaken.',
@@ -5380,6 +5791,9 @@ async function loadMessages() {
   for (const r of must(resps)) setResponse(r);
   state.comments = new Map();
   for (const c of must(comments)) addComment(mapComment(c));
+  // Gelesene/ausgeblendete Infos (eigene Zeilen)
+  const reads = await sb.from('message_reads').select('*');
+  state.reads = new Map((reads.error ? [] : reads.data).map((r) => [r.message_id, { readAt: r.read_at, hidden: r.hidden }]));
 }
 
 async function loadBoard() {
@@ -5539,6 +5953,7 @@ async function startApp() {
   if (!state.me.gender) openEditProfile();
   else setTimeout(async () => {
     await showWhatsNew();
+    if (!state.highlight && !document.querySelector('.modal-backdrop')) showUnreadInfos();
     if (lsGet('familie.introSeen', false)) return;
     lsSet('familie.introSeen', true);
     dsSay('', { speaker: 'Prof. Familie', pages: [
