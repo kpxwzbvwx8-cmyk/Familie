@@ -566,6 +566,102 @@ function dsAsk(text, { yes = 'Ja', no = 'Nein', danger = false, speaker = '' } =
   });
 }
 
+/* -------------------------------------------------------------------------
+ * In-App-Banner: Benachrichtigungen oben am Bildschirm, während die App offen ist
+ *  – kommen über den Service Worker (gleiche Nachricht wie die Push-Mitteilung)
+ *  – Aussehen passt zum Bereich: Meldung, Termin, Notiz, Board der Schande …
+ * ---------------------------------------------------------------------- */
+
+const bannerSeen = new Map(); // tag → Zeitpunkt (doppelte innerhalb kurzer Zeit unterdrücken)
+
+function bannerKind(d) {
+  const tag = String(d.tag || '');
+  const title = String(d.title || '');
+  if (tag.startsWith('note-')) return 'note';
+  if (tag.startsWith('event-')) return 'event';
+  if (tag.startsWith('comment-')) return 'comment';
+  if (tag.startsWith('start-')) return 'reminder';
+  if (/^(strike|board|review)-/.test(tag)) {
+    if (/VERURTEILT|rechtskräftig|😈/.test(title)) return 'hell';
+    if (tag.startsWith('review-')) return 'msg';
+    return 'judge';
+  }
+  return 'msg';
+}
+
+function bannerIcon(kind, d) {
+  const ball = urgencyInfo(d.urgency || 'normal').ball;
+  switch (kind) {
+    case 'event': return `<img src="${asset('img/menu/cal.png')}" alt="" class="nb-pix">`;
+    case 'note': return '<span class="nb-emoji">📝</span>';
+    case 'comment': return '<span class="nb-emoji">💬</span>';
+    case 'reminder': return `<span class="nb-stack">${ballSvg(ball, 30)}<i>⏰</i></span>`;
+    case 'hell': return '<span class="nb-emoji">😈</span>';
+    case 'judge': return judgeEmblem(36);
+    default: return ballSvg(ball, 32);
+  }
+}
+
+/** Kommen Push-Nachrichten auf diesem Gerät an? (dann zeigt der Push das Banner) */
+function pushActive() {
+  return pushSupported && Notification.permission === 'granted' && Boolean(navigator.serviceWorker && navigator.serviceWorker.controller);
+}
+
+function openFromPush(d) {
+  let u;
+  try { u = new URL(d.url || '', location.href); } catch { return; }
+  const p = u.searchParams;
+  if (p.get('event')) { openEventById(p.get('event')); return; }
+  if (p.get('note')) { setTab('notizen'); openNoteById(p.get('note')); return; }
+  if (p.get('msg')) { state.highlight = p.get('msg'); setTab('start'); return; }
+  if (p.get('tab')) setTab(p.get('tab'));
+}
+
+/** Banner oben einblenden */
+function showBanner(d) {
+  if (!d || !d.title) return;
+  const key = d.tag || d.title;
+  const last = bannerSeen.get(key);
+  if (last && Date.now() - last < 20000) return;
+  bannerSeen.set(key, Date.now());
+
+  let root = document.getElementById('banner-root');
+  if (!root) { root = document.createElement('div'); root.id = 'banner-root'; document.body.appendChild(root); }
+  const kind = bannerKind(d);
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.className = `nb nb-${kind} u-${esc(d.urgency || 'normal')}`;
+  el.setAttribute('role', 'status');
+  el.innerHTML = `<span class="nb-icon">${bannerIcon(kind, d)}</span>
+    <span class="nb-text"><b>${esc(d.title)}</b>${d.body ? `<small>${esc(d.body)}</small>` : ''}</span>
+    <span class="nb-time">jetzt</span>`;
+  root.prepend(el);
+  while (root.children.length > 3) root.lastElementChild.remove();
+
+  const hide = () => {
+    if (!el.isConnected || el.classList.contains('out')) return;
+    el.classList.add('out');
+    setTimeout(() => el.remove(), 260);
+  };
+  const timer = setTimeout(hide, d.urgency === 'dringend' ? 10000 : 6500);
+  el.addEventListener('click', () => { clearTimeout(timer); hide(); openFromPush(d); });
+  // nach oben wischen = wegwischen
+  let sy = null;
+  el.addEventListener('touchstart', (e) => { sy = e.touches[0].clientY; }, { passive: true });
+  el.addEventListener('touchmove', (e) => {
+    if (sy == null) return;
+    const dy = Math.min(0, e.touches[0].clientY - sy);
+    el.style.transform = `translateY(${dy}px)`;
+  }, { passive: true });
+  el.addEventListener('touchend', (e) => {
+    if (sy == null) return;
+    const dy = e.changedTouches[0].clientY - sy;
+    sy = null;
+    el.style.transform = '';
+    if (dy < -30) { clearTimeout(timer); hide(); }
+  });
+}
+
 /** Pokéball-Ladeanzeige */
 function loaderHtml(text = 'Lädt …') {
   return `<div class="ball-loader"><span class="ball-loader-ball">${ballSvg('poke', 46)}</span><span class="ds-mini">${esc(text)}</span></div>`;
@@ -4403,8 +4499,17 @@ function openDossier(userId) {
  *  blau für Trainer, rosa für Trainerinnen
  * ---------------------------------------------------------------------- */
 
-const APP_VERSION = '1.0.0.3';
+const APP_VERSION = '1.0.0.4';
 const CHANGELOG = [
+  {
+    version: '1.0.0.4', date: '2026-11-19', title: 'Benachrichtigungen in der App',
+    items: [
+      'Benachrichtigungen erscheinen jetzt auch oben in der App, während du sie benutzt',
+      'Jede Art sieht aus wie ihr Bereich: Meldung, Termin, Notiz, Board der Schande',
+      'Antippen bringt dich direkt hin, nach oben wischen blendet sie aus',
+      'Hinweise, Erinnerungen und Fristen kommen genauso an',
+    ],
+  },
   {
     version: '1.0.0.3', date: '2026-11-19', title: 'Hinweise repariert',
     items: [
@@ -4861,10 +4966,7 @@ function startRealtime() {
       upsertMessage(m);
       const author = userById(m.authorId);
       if (!known && state.me && m.authorId !== state.me.id && document.visibilityState === 'visible') {
-        toast(`💬 ${author ? fullName(author) : 'Neu'}: ${m.title}`, () => {
-          state.highlight = m.id;
-          setTab('start');
-        });
+        if (!pushActive()) showBanner({ title: `${urgencyLabel(m.urgency)}: ${m.title}`, body: author ? fullName(author) : '', tag: m.id, urgency: m.urgency, url: `?tab=start&msg=${m.id}` });
       }
     })
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages' }, ({ new: row }) => {
@@ -4873,7 +4975,7 @@ function startRealtime() {
       upsertMessage(m);
       if (before && !before.doneBy && m.doneBy && state.me && m.authorId === state.me.id) {
         const who = userById(m.doneBy);
-        toast(`✓ ${who ? who.firstName : 'Jemand'} hat „${m.title}“ erledigt`);
+        if (!pushActive()) showBanner({ title: `Erledigt: ${m.title}`, body: `${who ? who.firstName : 'Jemand'} hat die Meldung als erledigt markiert.`, tag: `done-${m.id}`, urgency: 'info', url: `?tab=start&msg=${m.id}` });
       }
     })
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, ({ old }) => removeMessage(old.id))
@@ -4888,7 +4990,7 @@ function startRealtime() {
       const m = state.messages.find((x) => x.id === row.message_id);
       if (m && state.me && m.authorId === state.me.id && row.user_id !== state.me.id && document.visibilityState === 'visible') {
         const u = userById(row.user_id);
-        toast(`✉️ ${u ? u.firstName : 'Jemand'}: ${row.option} – „${m.title}“`);
+        if (!pushActive()) showBanner({ title: `Antwort: ${m.title}`, body: `${u ? u.firstName : 'Jemand'}: ${row.option}`, tag: `resp-${m.id}-${row.user_id}`, urgency: 'info', url: `?tab=start&msg=${m.id}` });
       }
     })
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_comments' }, ({ new: row }) => {
@@ -5002,6 +5104,7 @@ async function init() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch((e) => console.warn('SW-Registrierung fehlgeschlagen', e));
     navigator.serviceWorker.addEventListener('message', (e) => {
+      if (e.data && e.data.type === 'push') { showBanner(e.data.data); return; }
       if (e.data && e.data.type === 'open-message') {
         const id = String(e.data.id || '');
         if (id.startsWith('note-')) { setTab('notizen'); openNoteById(id.slice(5)); return; }

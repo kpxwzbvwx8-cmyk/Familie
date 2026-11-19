@@ -1757,3 +1757,60 @@ body.nav-tabs .punish-field { bottom: calc(var(--tabbar-h) + env(safe-area-inset
 .diary-item { display: block; width: 100%; text-align: left; background: none; border: 0; border-bottom: 2px solid var(--line); font: inherit; color: inherit; cursor: pointer; padding-right: 4px; }
 .diary-item:active { background: rgba(255,255,255,.5); }
 .diary-time { color: var(--head); font-variant-numeric: tabular-nums; }
+
+/* =========================================================================
+ * In-App-Banner (oben) – je Bereich passend gestaltet
+ * ======================================================================= */
+#banner-root {
+  position: fixed; left: 0; right: 0; top: 0; z-index: 90; display: grid; gap: 8px; justify-items: center;
+  padding: calc(env(safe-area-inset-top) + 8px) 10px 0; pointer-events: none;
+}
+.nb {
+  pointer-events: auto; width: 100%; max-width: 560px; display: grid; grid-template-columns: 44px 1fr auto; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 16px; text-align: left; font: inherit; color: var(--text); cursor: pointer;
+  background: var(--surface); border: 2px solid var(--border); box-shadow: 0 8px 24px rgba(0,0,0,.22);
+  animation: nb-in .32s cubic-bezier(.2,.9,.3,1.25); transition: transform .15s ease;
+}
+.nb.out { animation: nb-out .25s ease forwards; }
+@keyframes nb-in { from { transform: translateY(-120%); opacity: 0; } }
+@keyframes nb-out { to { transform: translateY(-120%); opacity: 0; } }
+.nb-icon { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 50%; background: #fff; box-shadow: inset 0 0 0 2px rgba(0,0,0,.06); }
+.nb-text { display: grid; gap: 2px; min-width: 0; }
+.nb-text b { font-weight: 400; font-size: 1.05rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nb-text small { font-size: .9rem; color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.nb-time { align-self: start; font-size: .75rem; color: var(--muted); }
+.nb-emoji { font-size: 1.5rem; }
+.nb-pix { width: 32px; height: 32px; image-rendering: pixelated; }
+.nb-stack { position: relative; display: grid; place-items: center; }
+.nb-stack i { position: absolute; right: -8px; bottom: -6px; font-style: normal; font-size: 1rem; }
+
+/* Meldungen & Erinnerungen: wie die Karte – Dringlichkeitsfarbe links */
+.nb-msg, .nb-reminder { border-color: color-mix(in srgb, var(--u) 55%, var(--border)); box-shadow: inset 6px 0 0 var(--u), 0 8px 24px rgba(0,0,0,.22); padding-left: 16px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--u) 10%, var(--surface)), var(--surface) 60%); }
+.nb.u-info { --u: var(--u-info); } .nb.u-normal { --u: var(--u-normal); } .nb.u-wichtig { --u: var(--u-wichtig); } .nb.u-dringend { --u: var(--u-dringend); }
+:root[data-theme="dark"] .nb.u-dringend { --u: var(--hyper-yellow); }
+
+/* Termine: grünes Ticket mit Kalender */
+.nb-event { border-color: #2e9e6a; background: linear-gradient(90deg, #2e9e6a 0 56px, var(--surface) 56px); box-shadow: 0 4px 0 #155a3a, 0 8px 24px rgba(0,0,0,.22); }
+.nb-event .nb-icon { background: #fff; }
+.nb-event .nb-text { border-left: 2px dashed rgba(46,158,106,.5); padding-left: 10px; }
+
+/* Notizen: Briefpapier */
+.nb-note { border-color: #e2c98a; background: repeating-linear-gradient(#fffdf6 0 21px, #d8e3f0 21px 22px) 0 6px, #fffdf6; color: #2a2a2e; }
+.nb-note .nb-text small, .nb-note .nb-time { color: #6b6a72; }
+
+/* Kommentare: Sprechblase */
+.nb-comment { border-radius: 18px 18px 18px 6px; border-color: #4f6fbd; box-shadow: inset 0 0 0 2px #c9d7f5, 0 8px 24px rgba(0,0,0,.22); background: #fff; color: #2b2b33; }
+.nb-comment .nb-text small, .nb-comment .nb-time { color: #6b6a72; }
+
+/* Board der Schande: Strafe (Schattenwelt) */
+.nb-hell { color: #f3e8e8; border-color: #e2b93c; background: linear-gradient(90deg, #3a0d14, #120b10); box-shadow: 0 0 0 1px #000, 0 0 18px rgba(216,50,62,.55), 0 8px 24px rgba(0,0,0,.35); }
+.nb-hell .nb-icon { background: #1c1519; box-shadow: inset 0 0 0 2px #d8323e; }
+.nb-hell .nb-text b { color: #ff6b74; letter-spacing: .03em; }
+.nb-hell .nb-text small, .nb-hell .nb-time { color: #c4aab1; }
+
+/* Board der Schande: Urteil / Gericht (weiß-gold) */
+.nb-judge { color: #2a281f; border-color: #d8ae3a; background: linear-gradient(180deg, #fffefa, #f4efdc); box-shadow: inset 0 3px 0 #d8ae3a, 0 8px 24px rgba(0,0,0,.22); }
+.nb-judge .nb-icon { background: transparent; box-shadow: none; }
+.nb-judge .nb-text small, .nb-judge .nb-time { color: #6f6b5c; }
+@media (prefers-reduced-motion: reduce) { .nb, .nb.out { animation: none; } }

@@ -63,8 +63,14 @@ self.addEventListener('fetch', (e) => {
 self.addEventListener('push', (e) => {
   let data = {};
   try { data = e.data ? e.data.json() : {}; } catch { data = { title: 'Familie', body: e.data && e.data.text() }; }
-  e.waitUntil(Promise.all([bumpBadge().catch(() => {}),
-    self.registration.showNotification(data.title || 'Neues im Austausch', {
+  e.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const visible = wins.filter((w) => w.visibilityState === 'visible');
+    // App ist offen → Banner in der App zeigen
+    visible.forEach((w) => w.postMessage({ type: 'push', data }));
+    await bumpBadge().catch(() => {});
+    // iOS verlangt eine sichtbare Mitteilung pro Push – bei offener App wird sie sofort wieder geschlossen
+    await self.registration.showNotification(data.title || 'Neues in der Familie', {
       body: data.body || '',
       tag: data.tag,
       icon: 'icons/icon-192.png',
@@ -72,8 +78,12 @@ self.addEventListener('push', (e) => {
       data: { url: new URL(data.url || '?tab=austausch', self.registration.scope).href, id: data.tag },
       requireInteraction: data.urgency === 'dringend',
       vibrate: data.urgency === 'dringend' ? [200, 100, 200, 100, 200] : [120],
-    })])
-  );
+    });
+    if (visible.length) {
+      const shown = await self.registration.getNotifications(data.tag ? { tag: data.tag } : undefined);
+      shown.forEach((n) => n.close());
+    }
+  })());
 });
 
 self.addEventListener('notificationclick', (e) => {
