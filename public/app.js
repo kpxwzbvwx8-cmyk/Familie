@@ -1078,81 +1078,60 @@ function formatRange(start, end) {
 }
 
 const isTodayIso = (iso) => Boolean(iso) && startOfDay(new Date(iso)).getTime() === startOfDay(new Date()).getTime();
-/** Kompakte Karte auf Start: zu = Titel + eine Zeile; auf = Rückmeldung, Kommentare, „Details“ */
+/** Kurze Zeitangabe für schmale Karten: heute/morgen nur Uhrzeit, sonst Wochentag bzw. Datum */
+function slimWhen(iso) {
+  const d = new Date(iso);
+  const today = startOfDay(new Date());
+  const diff = Math.round((startOfDay(d) - today) / 86400e3);
+  const t = formatTimeOnly(iso);
+  if (diff === 0 || diff === 1) return t;
+  if (diff > 1 && diff < 7) return `${d.toLocaleDateString('de-DE', { weekday: 'short' })} ${t}`;
+  return `${d.toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' })} ${t}`;
+}
+const headImg = (u) => (u && u.gender && CAL_HEADS[u.gender] ? `<img class="fw-head" src="${CAL_HEADS[u.gender]}" alt="">` : '');
+
+/** Schmale Karte auf Start – nur das Wichtigste; Antippen öffnet das Details-Popup */
 function messageHtml(m) {
   const mine = state.me && m.authorId === state.me.id;
-  const expanded = isExpanded(m);
-  if (expanded) markCommentsSeen(m.id);
-  const unread = expanded ? 0 : unreadComments(m);
-  const responsible = state.me && (m.assignees.length ? m.assignees.includes(state.me.id) : !mine);
-  const canMarkDone = responsible && !m.doneBy && !m.closedAt && !m.needsAck && (m.deleteOnDone || m.deadlineAt || m.openEnded);
+  const unread = unreadComments(m);
+  const responsible = isResponsible(m);
   const forWhom = m.assignees.map(userById).filter(Boolean);
   const awaitingReview = m.threatStrike && !m.closedAt && isFrozen(m);
   const author = userById(m.authorId);
   const exp = expiryOf(m);
   const resps = state.responses.get(m.id) || [];
   const myResp = state.me ? resps.find((r) => r.userId === state.me.id) : null;
-  const comments = state.comments.get(m.id) || [];
-  const options = m.needsAck ? (m.ackOptions || ['Erledigt']) : [];
+  const comments = (state.comments.get(m.id) || []).length;
   const needsMyAnswer = m.needsAck && responsible && !myResp && !m.closedAt;
   const timed = m.eventAt && (m.endAt || Date.parse(m.eventAt) > Date.parse(m.createdAt) + 5 * 60e3);
-  // Heute: die Uhrzeit ist das Wichtigste – groß zeigen, das Datum erst aufgeklappt
-  const tToday = Boolean(timed) && isTodayIso(m.eventAt) && (!m.endAt || isTodayIso(m.endAt));
-  const dToday = isTodayIso(m.deadlineAt);
+  const done = m.doneBy && !awaitingReview;
+  // Zeit-Feld: Countdown > Deadline > Zeitpunkt
+  let pill = '';
+  if (exp) pill = `<span class="sl-time exp">⌛ <span data-left-short="${esc(exp.at)}">${esc(timeLeftShort(exp.at))}</span></span>`;
+  else if (m.deadlineAt && !m.closedAt && !done) pill = `<span class="sl-time dl${Date.parse(m.deadlineAt) < Date.now() ? ' over' : ''}">⏳ ${esc(slimWhen(m.deadlineAt))}</span>`;
+  else if (timed) pill = `<span class="sl-time">${esc(slimWhen(m.eventAt))}${m.endAt && isTodayIso(m.endAt) ? `–${esc(formatTimeOnly(m.endAt))}` : ''}</span>`;
+  else if (m.openEnded && !done && !m.closedAt) pill = '<span class="sl-time open">⚡ offen</span>';
+  const who = `${headImg(author)}${forWhom.length ? `<span class="sl-arrow">➜</span>${forWhom.map(headImg).join('')}<span>${esc(forWhom.map((u) => (u.id === state.me.id ? 'dich' : u.firstName)).join(' & '))}</span>` : `<span>${esc(mine ? 'Du' : author ? author.firstName : '?')}</span>`}`;
   const status = m.closedAt
-    ? (m.reviewStatus === 'accepted' ? '👍 Abgenommen' : m.reviewStatus === 'rejected' || m.reviewStatus === 'missed' ? '😈 Strich vergeben' : '🔒 Geschlossen')
-    : awaitingReview ? (mine ? '⏸️ Bitte abnehmen' : '⏸️ Wartet auf Abnahme')
-    : m.doneBy ? `✓ Erledigt (${esc(nameOf(m.doneBy, '?'))})` : '';
-  const heads = (list) => list.map((u) => (u.gender && CAL_HEADS[u.gender] ? `<img class="fw-head" src="${CAL_HEADS[u.gender]}" alt="">` : '')).join('');
-  const lastComments = comments.slice(-2);
+    ? (m.reviewStatus === 'accepted' ? '👍 abgenommen' : m.reviewStatus === 'rejected' || m.reviewStatus === 'missed' ? '😈 Strich' : '🔒 zu')
+    : awaitingReview ? (mine ? '⏸️ abnehmen!' : '⏸️ wartet') : done ? `✓ ${esc(nameOf(m.doneBy, '?'))}` : '';
   return `
-  <article class="msg compact u-${esc(m.urgency)}${m.closedAt ? ' is-closed' : ''}${expanded ? ' expanded' : ''}${unread ? ' has-unread' : ''}${m.doneBy && !awaitingReview ? ' is-done' : ''}${needsMyAnswer || (mine && awaitingReview) ? ' needs-me' : ''}${exp ? ' expiring' : ''}${state.highlight === m.id ? ' flash' : ''}"
-    id="msg-${esc(m.id)}" data-msg="${esc(m.id)}" tabindex="0" aria-expanded="${expanded}">
-    <div class="msg-side">
-      ${ballSvg(urgencyInfo(m.urgency).ball, 30)}
-      <span class="badge">${esc(urgencyLabel(m.urgency))}</span>
-    </div>
-    <div class="msg-body">
-      ${exp ? `<div class="exp-bar"><span class="exp-glass" aria-hidden="true">⌛</span><b>${exp.kind === 'respond' ? 'Antwort fehlt' : 'Deadline'}</b><span data-left="${esc(exp.at)}">${esc(timeLeft(exp.at))}</span><small>bis ${esc(formatTimeOnly(exp.at))}</small></div>` : ''}
-      <h3>${esc(m.title)}</h3>
-      ${tToday || (dToday && !m.closedAt && !(exp && exp.kind === 'deadline')) ? `<div class="big-times">
-        ${tToday ? `<span class="big-time">🕒 ${esc(formatTimeOnly(m.eventAt))}${m.endAt ? `–${esc(formatTimeOnly(m.endAt))}` : ''}</span>` : ''}
-        ${dToday && !(exp && exp.kind === 'deadline') && !m.closedAt ? `<span class="big-time dl${Date.parse(m.deadlineAt) < Date.now() ? ' over' : ''}">⏳ bis ${esc(formatTimeOnly(m.deadlineAt))}</span>` : ''}
-      </div>` : ''}
-      <div class="msg-chips">
-        ${m.openEnded && !m.closedAt && !m.doneBy ? '<span class="mc-open">⚡ Offen bis erledigt</span>' : ''}
-        <span class="mc-from" title="Von ${esc(author ? author.firstName : '?')}">${author && author.gender && CAL_HEADS[author.gender] ? `<img class="fw-head" src="${CAL_HEADS[author.gender]}" alt="">` : ''}${esc(mine ? 'Du' : author ? author.firstName : '?')}${forWhom.length ? ` ➜ ${heads(forWhom)}${esc(forWhom.map((u) => (u.id === state.me.id ? 'dich' : u.firstName)).join(' & '))}` : ''}</span>
-        ${timed && !tToday ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt || m.deadlineAt))}</span>` : ''}
-        ${m.deadlineAt && !m.closedAt && !dToday && !(exp && exp.kind === 'deadline') ? `<span class="deadline${Date.parse(m.deadlineAt) < Date.now() ? ' over' : ''}">⏳ ${esc(formatDateTime(m.deadlineAt))}</span>` : ''}
+  <article class="slim msg-slim u-${esc(m.urgency)}${m.closedAt ? ' is-closed' : ''}${done ? ' is-done' : ''}${needsMyAnswer || (mine && awaitingReview) ? ' needs-me' : ''}${exp ? ' expiring' : ''}${state.highlight === m.id ? ' flash' : ''}"
+    id="msg-${esc(m.id)}" data-msg="${esc(m.id)}" tabindex="0" role="button" aria-label="${esc(m.title)} – Details öffnen">
+    <span class="sl-ico">${ballSvg(urgencyInfo(m.urgency).ball, 26)}</span>
+    <div class="sl-main">
+      <div class="sl-top">${pill}<b class="sl-title">${esc(m.title)}</b></div>
+      <div class="sl-meta">
+        <span class="sl-who">${who}</span>
+        ${status ? `<span class="sl-status">${status}</span>` : ''}
         ${m.threatStrike && !m.closedAt ? '<span title="Strich bei Nichterfüllung">😈</span>' : ''}
-        ${status ? `<span class="mc-status">${status}</span>` : ''}
-        ${needsMyAnswer ? '<span class="mc-todo">✉️ Deine Antwort fehlt</span>' : m.needsAck ? `<span>✉️ ${resps.length}</span>` : ''}
-        ${comments.length ? `<span class="count${unread ? ' unread' : ''}">💬 ${comments.length}${unread ? ` <b>+${unread}</b>` : ''}</span>` : ''}
+        ${m.needsAck && !needsMyAnswer ? `<span>✉️ ${resps.length}</span>` : ''}
       </div>
-      <div class="msg-quick msg-extra">
-        ${tToday || dToday ? `<div class="mq-dates">${tToday ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt))}</span>` : ''}${dToday ? `<span>⏳ Deadline: ${esc(formatDateTime(m.deadlineAt))}</span>` : ''}</div>` : ''}
-        ${m.description ? `<p class="desc">${esc(m.description)}</p>` : ''}
-        ${m.needsAck && responsible && !m.closedAt ? `<div class="mq-block"><span class="mq-label">${myResp ? `Deine Antwort: <b>${esc(myResp.option)}</b> – ändern?` : 'Deine Rückmeldung:'}</span>
-          <div class="reply-btns">${options.map((o) => `<button class="btn small${myResp && myResp.option === o ? ' primary' : ''}" data-reply="${esc(m.id)}" data-option="${esc(o)}">${esc(o)}</button>`).join('')}</div></div>` : ''}
-        ${m.needsAck && (mine || !responsible) && resps.length ? `<div class="mq-block"><span class="mq-label">Antworten:</span> ${resps.map((r) => `<b>${esc(nameOf(r.userId, '?'))}:</b> ${esc(r.option)}`).join(' · ')}</div>` : ''}
-        ${mine && awaitingReview ? `<div class="mq-block"><span class="mq-label">Rückmeldung ist da – nimm das Ergebnis ab:</span><div class="reply-btns">
-          <button type="button" class="btn small primary" data-review="${esc(m.id)}" data-verdict="accept">👍 Abnehmen</button>
-          <button type="button" class="btn small danger" data-review="${esc(m.id)}" data-verdict="strike">😈 Strich vergeben</button></div></div>` : ''}
-        <div class="msg-comments">
-          ${comments.length > lastComments.length ? `<button type="button" class="mq-more" data-details="${esc(m.id)}">… ${comments.length - lastComments.length} ältere Kommentare</button>` : ''}
-          ${lastComments.map((c) => { const own = state.me && c.authorId === state.me.id; return `<div class="comment${own ? ' own' : ''}"><span class="c-head"><b>${esc(nameOf(c.authorId, '?'))}</b> · <span data-rel="${esc(c.createdAt)}">${esc(relative(c.createdAt))}</span></span><p>${esc(c.body)}</p></div>`; }).join('')}
-          <form class="comment-form" data-comment-form="${esc(m.id)}">
-            <input name="body" maxlength="1000" placeholder="Kommentar schreiben …" autocomplete="off" aria-label="Kommentar">
-            <button class="btn small primary" type="submit">Senden</button>
-          </form>
-        </div>
-        <div class="mq-actions">
-          ${canMarkDone ? `<button class="btn small primary" data-done="${esc(m.id)}">✓ Erledigt</button>` : ''}
-          <button type="button" class="btn small mq-details" data-details="${esc(m.id)}">📋 Details</button>
-        </div>
-      </div>
-      <span class="msg-chevron" aria-hidden="true">▾</span>
     </div>
+    <span class="sl-flags">
+      ${needsMyAnswer ? '<span class="sl-flag me" title="Deine Antwort fehlt">✉️</span>' : ''}
+      ${comments ? `<span class="sl-flag${unread ? ' new' : ''}">💬${unread ? `<b>${unread}</b>` : comments}</span>` : ''}
+    </span>
   </article>`;
 }
 
@@ -1289,12 +1268,13 @@ function messageFullHtml(m) {
 
 function bindMessage(el, { toggle = true } = {}) {
   if (toggle) {
+    // Start: schmale Karte – Antippen öffnet die Details
     el.addEventListener('click', (e) => {
-      if (e.target.closest('a, button, input, textarea, form, .msg-quick')) return;
-      toggleMessage(el);
+      if (e.target.closest('a, button, input, textarea, form')) return;
+      openMessageDetail(el.dataset.msg);
     });
     el.addEventListener('keydown', (e) => {
-      if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); toggleMessage(el); }
+      if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); openMessageDetail(el.dataset.msg); }
     });
   }
   el.querySelectorAll('[data-details]').forEach((b) => b.addEventListener('click', () => openMessageDetail(b.dataset.details)));
@@ -1604,6 +1584,12 @@ function todoExpiry(inst, now = Date.now()) {
   return end > now && end - now <= EXPIRY_WINDOW ? { at: inst.endAt, kind: 'todo' } : null;
 }
 /** „noch 3 Std. 20 Min.“ */
+/** Kurz für schmale Karten: „3h 19m“ */
+function timeLeftShort(iso) {
+  const mins = Math.max(0, Math.round((Date.parse(iso) - Date.now()) / 60000));
+  if (mins < 60) return `${mins}m`;
+  return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m`;
+}
 function timeLeft(iso) {
   const mins = Math.max(0, Math.round((Date.parse(iso) - Date.now()) / 60000));
   if (mins < 1) return 'gleich';
@@ -2007,7 +1993,7 @@ function renderAustausch(view) {
   const pushBtn = $('#enable-push', view);
   if (pushBtn) pushBtn.addEventListener('click', enablePush);
 
-  view.querySelectorAll('.msg[data-msg]').forEach((el) => bindMessage(el));
+  view.querySelectorAll('.msg-slim[data-msg]').forEach((el) => bindMessage(el));
   refreshMessageDetail();
 
   if (state.highlight) {
@@ -2015,9 +2001,9 @@ function renderAustausch(view) {
     state.highlight = null;
     const hm = state.messages.find((m) => m.id === id);
     if (hm && isInfo(hm)) { openInfoPopup([id]); return; }
-    let el = document.getElementById(`msg-${id}`);
-    if (el && !el.classList.contains('expanded')) { toggleMessage(el); el = document.getElementById(`msg-${id}`); }
+    const el = document.getElementById(`msg-${id}`);
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (hm) openMessageDetail(id);
   }
 }
 
@@ -4053,52 +4039,47 @@ function startEventItems() {
   return out;
 }
 
+/** Termin als schmale Karte (Ticket-Kante links in Personenfarbe) – Antippen öffnet die Details */
 function eventCardHtml(ev, { overdue = false } = {}) {
   if (isTodo(ev)) return todoCardHtml(ev, overdue);
   const inv = myInvite(ev);
   const comments = state.eventComments.filter((c) => c.eventId === ev.id).length;
   const pendingOthers = invitesOf(ev).filter((i) => i.status === 'pending').length;
-  const evToday = !ev.allDay && isTodayIso(ev.startAt) && isTodayIso(ev.endAt);
-  return `<article class="ev-card" data-event-card="${esc(ev.id)}" data-occ="${esc(ev.occ || '')}" tabindex="0" style="--c:${eventColor(ev)}">
-    <div class="ev-card-side">${eventHeads(ev, 'ev-card-head')}</div>
-    <div class="ev-card-body">
-      <span class="ev-tag">📅 TERMIN</span>
-      ${evToday ? `<span class="big-time">🕒 ${esc(formatTimeOnly(ev.startAt))}${ev.endAt !== ev.startAt ? `–${esc(formatTimeOnly(ev.endAt))}` : ''}</span>` : ''}
-      <h3>${esc(ev.title)}</h3>
-      <div class="ev-card-meta">
-        ${evToday ? '' : `<span>🕒 ${esc(eventTimeText(ev, true))}</span>`}
-        ${ev.recurrence ? `<span>🔁 ${esc(recurrenceLabel(ev.recurrence))}</span>` : ''}
+  const sameDayEv = sameDay(evStartDay(ev), evEndDay(ev));
+  const time = ev.allDay ? 'ganztags'
+    : sameDayEv ? `${slimWhen(ev.startAt)}${ev.endAt !== ev.startAt ? `–${formatTimeOnly(ev.endAt)}` : ''}`
+    : `${slimWhen(ev.startAt)} → ${slimWhen(ev.endAt)}`;
+  return `<article class="slim ev-slim" data-event-card="${esc(ev.id)}" data-occ="${esc(ev.occ || '')}" tabindex="0" role="button" style="--c:${eventColor(ev)}">
+    <span class="sl-ico sl-heads">${eventHeads(ev, 'sl-head')}</span>
+    <div class="sl-main">
+      <div class="sl-top"><span class="sl-time">${esc(time)}</span><b class="sl-title">${esc(ev.title)}</b></div>
+      ${ev.location || ev.recurrence || (inv && inv.status === 'accepted') || (pendingOthers && ev.ownerId === state.me.id) ? `<div class="sl-meta">
         ${ev.location ? `<span>📍 ${esc(ev.location)}</span>` : ''}
-        ${inv && inv.status === 'accepted' ? '<span>✅ Du hast zugesagt</span>' : ''}
-        ${pendingOthers && ev.ownerId === state.me.id ? `<span>⏳ ${pendingOthers} Antwort${pendingOthers === 1 ? '' : 'en'} offen</span>` : ''}
-        ${comments ? `<span>💬 ${comments}</span>` : ''}
-      </div>
+        ${ev.recurrence ? '<span>🔁</span>' : ''}
+        ${inv && inv.status === 'accepted' ? '<span>✅ zugesagt</span>' : ''}
+        ${pendingOthers && ev.ownerId === state.me.id ? `<span>⏳ ${pendingOthers} offen</span>` : ''}
+      </div>` : ''}
     </div>
+    <span class="sl-flags">${comments ? `<span class="sl-flag">💬${comments}</span>` : ''}</span>
   </article>`;
 }
 
+/** Erinnerung mit Erledigt-Knopf als schmale Karte */
 function todoCardHtml(ev, overdue) {
   const people = eventPeople(ev);
-  const when = ev.allDay
-    ? evStartDay(ev).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' })
-    : eventTimeText(ev, true);
   const exp = todoExpiry(ev);
-  const tToday = !ev.allDay && !overdue && isTodayIso(ev.startAt);
-  return `<article class="todo-card${overdue ? ' overdue' : ''}${exp ? ' expiring' : ''}" data-event-card="${esc(ev.id)}" data-occ="${esc(ev.occ || '')}" tabindex="0" style="--c:${eventColor(ev)}">
-    <span class="todo-icon" aria-hidden="true">🔔</span>
-    <div class="todo-body">
-      ${exp ? `<div class="exp-bar"><span class="exp-glass" aria-hidden="true">⌛</span><b>Fällig</b><span data-left="${esc(exp.at)}">${esc(timeLeft(exp.at))}</span><small>bis ${esc(formatTimeOnly(exp.at))}</small></div>` : ''}
-      <span class="todo-tag">ERINNERUNG${overdue ? ' · ÜBERFÄLLIG' : ''}</span>
-      ${tToday && !exp ? `<span class="big-time">🕒 ${esc(formatTimeOnly(ev.startAt))}${ev.endAt !== ev.startAt ? `–${esc(formatTimeOnly(ev.endAt))}` : ''}</span>` : ''}
-      <h3>${esc(ev.title)}</h3>
-      ${ev.description ? `<p class="desc">${esc(ev.description)}</p>` : ''}
-      <div class="todo-meta">
-        ${tToday || (ev.allDay && isTodayIso(ev.startAt)) ? '' : `<span>🗓️ ${esc(when)}</span>`}
-        ${ev.recurrence ? `<span>🔁 ${esc(recurrenceLabel(ev.recurrence))}</span>` : ''}
-        <span class="todo-for">${people.map((u) => `${u.gender && CAL_HEADS[u.gender] ? `<img class="fw-head" src="${CAL_HEADS[u.gender]}" alt="">` : ''}${esc(u.id === state.me.id ? 'Du' : u.firstName)}`).join(' & ')}</span>
-      </div>
+  let pill;
+  if (exp) pill = `<span class="sl-time exp">⌛ <span data-left-short="${esc(exp.at)}">${esc(timeLeftShort(exp.at))}</span></span>`;
+  else if (overdue) pill = `<span class="sl-time over">überfällig · ${esc(evStartDay(ev).toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' }))}</span>`;
+  else if (ev.allDay) pill = `<span class="sl-time">${isTodayIso(ev.startAt) ? 'heute' : esc(evStartDay(ev).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' }))}</span>`;
+  else pill = `<span class="sl-time">${esc(slimWhen(ev.startAt))}</span>`;
+  return `<article class="slim todo-slim${overdue ? ' overdue' : ''}${exp ? ' expiring' : ''}" data-event-card="${esc(ev.id)}" data-occ="${esc(ev.occ || '')}" tabindex="0" role="button" style="--c:${eventColor(ev)}">
+    <span class="sl-ico sl-bell" aria-hidden="true">🔔</span>
+    <div class="sl-main">
+      <div class="sl-top">${pill}<b class="sl-title">${esc(ev.title)}</b></div>
+      <div class="sl-meta"><span class="sl-who">${people.map((u) => `${headImg(u)}${esc(u.id === state.me.id ? 'Du' : u.firstName)}`).join(' & ')}</span>${ev.recurrence ? '<span>🔁</span>' : ''}</div>
     </div>
-    ${todoResponsible(ev) ? `<button type="button" class="todo-check" data-todo-done="${esc(ev.id)}" data-occ="${esc(ev.occ || ev.startAt)}" aria-label="Erledigt">✓</button>` : ''}
+    ${todoResponsible(ev) ? `<button type="button" class="todo-check" data-todo-done="${esc(ev.id)}" data-occ="${esc(ev.occ || ev.startAt)}" aria-label="Erledigt">✓</button>` : '<span class="sl-flags"></span>'}
   </article>`;
 }
 
@@ -6123,6 +6104,10 @@ setInterval(() => {
   if (expired && !$('.modal-backdrop')) { render(); return; }
   document.querySelectorAll('#view [data-rel]').forEach((el) => {
     const t = relative(el.dataset.rel);
+    if (el.textContent !== t) el.textContent = t;
+  });
+  document.querySelectorAll('#view [data-left-short]').forEach((el) => {
+    const t = timeLeftShort(el.dataset.leftShort);
     if (el.textContent !== t) el.textContent = t;
   });
   document.querySelectorAll('#view [data-left]').forEach((el) => {

@@ -2207,3 +2207,61 @@ button.person-head { padding: 2px 2px 4px; }
 .ev-card-body .big-time { background: var(--c); box-shadow: 0 2px 0 color-mix(in srgb, var(--c) 60%, #000); }
 .todo-card .big-time { background: var(--c); box-shadow: 0 2px 0 color-mix(in srgb, var(--c) 60%, #000); margin: 2px 0; }
 .mq-dates { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--muted); font-size: .92rem; }
+
+/* ===================== Schmale Karten auf Start (Antippen → Popup) ===================== */
+.msg-list { gap: 6px; }
+.msg-list .mini-rows { gap: 3px; }
+.kind-group, .person-group { gap: 6px; }
+.kind-group + .kind-group { margin-top: 4px; }
+.slim {
+  --c: var(--u-normal);
+  position: relative; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 8px;
+  min-height: 50px; padding: 5px 8px 5px 6px; border-radius: 12px; cursor: pointer; color: var(--text);
+  background: color-mix(in srgb, var(--c) 10%, var(--surface));
+  border: 2px solid color-mix(in srgb, var(--c) 45%, transparent); border-left: 6px solid var(--c);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--c) 30%, transparent);
+  -webkit-tap-highlight-color: transparent; transition: transform .08s;
+}
+.slim:active { transform: scale(.985); }
+.slim:focus-visible { outline: 3px solid var(--c); outline-offset: 2px; }
+.msg-slim.u-info { --c: var(--u-info); } .msg-slim.u-normal { --c: var(--u-normal); }
+.msg-slim.u-wichtig { --c: var(--u-wichtig); } .msg-slim.u-dringend { --c: var(--u-dringend); }
+.sl-ico { display: grid; place-items: center; width: 34px; }
+.sl-heads { position: relative; height: 34px; }
+.sl-head { width: 30px; height: 30px; object-fit: cover; object-position: top; image-rendering: pixelated; border-radius: 50%; background: #fff; border: 2px solid var(--c); }
+.sl-heads .sl-head + .sl-head { position: absolute; left: 10px; top: 8px; width: 24px; height: 24px; }
+.sl-bell { font-size: 1.3rem; }
+.sl-main { min-width: 0; display: grid; gap: 1px; }
+.sl-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.sl-title { font-weight: 400; font-size: 1.02rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sl-time {
+  flex: none; padding: 0 7px; border-radius: 6px; font-size: .9rem; line-height: 1.45; font-variant-numeric: tabular-nums; letter-spacing: .02em;
+  color: #fff; background: var(--c); box-shadow: 0 1px 0 color-mix(in srgb, var(--c) 55%, #000);
+}
+.msg-slim .sl-time { background: #2b2b33; box-shadow: 0 1px 0 #000; }
+.sl-time.dl { background: #8a1f2c !important; }
+.sl-time.over { background: var(--danger) !important; }
+.sl-time.exp { background: linear-gradient(90deg, #e0485a, #f08a2c) !important; }
+.sl-time.open { background: #7a3fa0 !important; }
+.sl-meta { display: flex; align-items: center; gap: 2px 10px; flex-wrap: nowrap; overflow: hidden; color: var(--muted); font-size: .82rem; white-space: nowrap; }
+.sl-meta > span { flex: none; }
+.sl-meta > span:first-child { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.sl-who { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
+.sl-who .fw-head { width: 15px; height: 15px; }
+.sl-arrow { opacity: .7; margin: 0 1px; }
+.sl-status { color: var(--text); }
+.sl-flags { display: flex; align-items: center; gap: 4px; }
+.sl-flag { font-size: .82rem; color: var(--muted); display: inline-flex; align-items: center; gap: 1px; }
+.sl-flag b { color: #fff; background: var(--danger); border-radius: 999px; padding: 0 5px; font-weight: 400; font-size: .72rem; }
+.sl-flag.me { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: #e0485a; color: #fff; font-size: .8rem; animation: cm-blink 1.4s steps(2) infinite; }
+.slim.needs-me { box-shadow: 0 0 0 2px color-mix(in srgb, #e0485a 35%, transparent); }
+.slim.expiring { border-color: #e0485a; animation: exp-card 1.6s ease-in-out infinite; }
+.slim.is-done .sl-title, .slim.is-closed .sl-title { text-decoration: line-through; opacity: .7; }
+.slim.flash { animation: flash 1.6s ease 2; }
+.todo-slim { border-style: dashed; border-left-style: solid; }
+.todo-slim.overdue { border-color: var(--danger); border-style: solid; }
+.todo-slim .todo-check { width: 34px; height: 34px; font-size: 1.05rem; border-width: 2px; box-shadow: 0 2px 0 color-mix(in srgb, var(--c) 60%, #000); }
+.ev-slim .sl-time { background: var(--c); }
+@media (prefers-reduced-motion: reduce) { .sl-flag.me, .slim.expiring { animation: none; } }
+.sl-flag.me { animation: me-pulse 1.4s ease-in-out infinite; }
+@keyframes me-pulse { 50% { transform: scale(1.15); box-shadow: 0 0 0 4px rgba(224,72,90,.25); } }
