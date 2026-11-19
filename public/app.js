@@ -2759,12 +2759,13 @@ function setupMenu() {
  * Einstellungen
  * ---------------------------------------------------------------------- */
 
+/** Schriftarten wie in den Pokémon-Spielen der jeweiligen Konsole – Überschriften bleiben immer gleich */
 const APP_FONTS = [
-  ['ds', 'Nintendo DS'],
-  ['switch', 'Switch'],
-  ['gameboy', 'Game Boy'],
-  ['3ds', 'Nintendo 3DS'],
-  ['icognito', 'Icognito'],
+  ['gameboy', 'Game Boy', 'Rot, Blau, Gold & Silber', 'Familie GB'],
+  ['ds', 'Nintendo DS', 'Diamant, Perl & Platin', 'Pokemon DS'],
+  ['3ds', 'Nintendo 3DS', 'X & Y, Sonne & Mond', 'M PLUS Rounded 1c'],
+  ['switch', 'Nintendo Switch', 'Schwert & Schild, Karmesin & Purpur', 'M PLUS 1p'],
+  ['icognito', 'Icognito', 'Die geheimnisvolle Zeichenschrift', 'Familie Icognito'],
 ];
 
 function renderSettings(view) {
@@ -2782,12 +2783,13 @@ function renderSettings(view) {
         </button>
       </div>
       <div class="setting-row font-setting">
-        <div>
-          <label for="set-font">Schriftart</label>
+        <div><b>Schriftart</b><p class="hint">Wie in den Pokémon-Spielen – Überschriften bleiben gleich</p></div>
+        <div class="font-picks" role="radiogroup" aria-label="Schriftart">
+          ${APP_FONTS.map(([id, name, games, family]) => `<button type="button" class="font-pick${id === currentFont ? ' on' : ''}" data-font="${id}" role="radio" aria-checked="${id === currentFont}">
+            <span class="fp-name">${esc(name)}</span><small>${esc(games)}</small>
+            <span class="fp-sample" style="font-family:'${family}', 'Pokemon DS', sans-serif">Pikachu ist bereit! 123</span>
+          </button>`).join('')}
         </div>
-        <select id="set-font">
-          ${APP_FONTS.map(([id, name]) => `<option value="${id}"${id === currentFont ? ' selected' : ''}>${name}</option>`).join('')}
-        </select>
       </div>
       <div class="setting-row">
         <div><b>Navigation</b><p class="hint">${getNavMode() === 'tabs' ? 'Reiter unten' : 'X-Menü'}</p></div>
@@ -2819,10 +2821,11 @@ function renderSettings(view) {
       </div>
     </div>`;
   $('#theme-toggle', view).addEventListener('click', () => { toggleTheme(); render(); });
-  $('#set-font', view).addEventListener('change', ({ target }) => {
-    document.documentElement.dataset.font = target.value;
-    try { localStorage.setItem('familie.font', target.value); } catch { /* privat */ }
-  });
+  view.querySelectorAll('[data-font]').forEach((b) => b.addEventListener('click', () => {
+    document.documentElement.dataset.font = b.dataset.font;
+    try { localStorage.setItem('familie.font', b.dataset.font); } catch { /* privat */ }
+    render();
+  }));
   const push = $('#set-push', view); if (push) push.addEventListener('click', enablePush);
   const prof = $('#set-profile', view); if (prof) prof.addEventListener('click', openEditProfile);
   const card = $('#set-card', view); if (card) card.addEventListener('click', () => openTrainerCard(state.me));
@@ -5657,8 +5660,11 @@ const CHANGELOG = [
     version: '1.2.2', date: '2026-11-19', title: 'Fünf Schriftstile für dein Abenteuer!',
     intro: 'Was für ein Sprung durch die Generationen! Heute knackige Game-Boy-Pixel, morgen der moderne Switch-Look? Dazu kommen die schlanke 3DS-Schrift und der vertraute Nintendo-DS-Stil. Und jetzt wird’s geheimnisvoll: Mit Icognito verwandeln sich deine Buchstaben in Augensymbole!',
     items: [
-      'Öffne Menü → Einstellungen → Schriftart und wechsle sofort zwischen Nintendo DS, Switch, Game Boy, Nintendo 3DS und Icognito.',
-      'Dein Gerät merkt sich deinen Favoriten. Auch offline erwarten dich die ganze Buchstabenreihe, Umlaute und Zahlen!',
+      'Öffne Menü → Einstellungen → Schriftart und wechsle zwischen Game Boy, Nintendo DS, 3DS, Switch und Icognito – jede mit Vorschau.',
+      'Game Boy: die echte Pixelschrift aus Rot/Blau und Gold/Silber – inklusive Umlaute',
+      'Icognito: alle Buchstaben aus der Icognito-Tabelle nachgezeichnet',
+      'Die gelb-blauen Pokémon-Überschriften bleiben in jeder Schrift gleich',
+      'Dein Gerät merkt sich deinen Favoriten.',
     ],
   },
   {

@@ -27,7 +27,7 @@ async function bumpBadge() {
 const SHELL = [
   './', 'index.html', 'app.css', 'app.js', 'config.js', 'vendor/supabase.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'img/trainer-m.png', 'img/trainer-w.png', 'img/egg.png', 'img/speedy.png', 'img/idefix.png', 'img/portrait-m.png', 'img/portrait-w.png', 'img/pokeball.png', 'img/cal-m.png', 'img/cal-w.png', 'img/cal-m-head.png', 'img/cal-w-head.png', 'img/pokeball-wobble.png', 'img/menu/dex.png', 'img/menu/card.png', 'img/menu/ball.png', 'img/menu/save.png', 'img/menu/cal.png', 'img/menu/opt.png', 'img/menu/gear.png', 'img/menu/bike.png', 'img/menu/item.png', 'fonts/pokemon-ds.woff2', 'fonts/pokemon-solid.woff2',
-  'fonts/asap-condensed.woff2', 'fonts/pixelify-sans.woff2', 'fonts/fira-sans-condensed.woff2', 'fonts/icognito.woff2',
+  'fonts/familie-gb.woff2', 'fonts/m-plus-rounded-1c.woff2', 'fonts/m-plus-1p.woff2', 'fonts/icognito.woff2',
 ];
 
 self.addEventListener('install', (e) => {

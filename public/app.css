@@ -9,25 +9,26 @@
   font-display: swap;
 }
 
+/* Schriften zur Auswahl (Einstellungen → Schriftart) */
 @font-face {
-  font-family: "Asap Condensed";
-  src: url("fonts/asap-condensed.woff2") format("woff2");
+  font-family: "Familie GB";                      /* Game Boy – aus dem Original-Pixelraster gebaut */
+  src: url("fonts/familie-gb.woff2") format("woff2");
   font-display: swap;
 }
 @font-face {
-  font-family: "Pixelify Sans";
-  src: url("fonts/pixelify-sans.woff2") format("woff2");
-  font-weight: 400 700;
+  font-family: "M PLUS Rounded 1c";               /* 3DS – runde Gothic wie die 3DS-Spiele (OFL) */
+  src: url("fonts/m-plus-rounded-1c.woff2") format("woff2");
+  font-weight: 500;
   font-display: swap;
 }
 @font-face {
-  font-family: "Fira Sans Condensed";
-  src: url("fonts/fira-sans-condensed.woff2") format("woff2");
+  font-family: "M PLUS 1p";                       /* Switch – klare Gothic wie Schwert/Schild & Karmesin/Purpur (OFL) */
+  src: url("fonts/m-plus-1p.woff2") format("woff2");
+  font-weight: 500;
   font-display: swap;
 }
-
 @font-face {
-  font-family: "Familie Icognito";
+  font-family: "Familie Icognito";                /* Icognito – aus der Icognito-Tabelle nachgezeichnet */
   src: url("fonts/icognito.woff2") format("woff2");
   font-display: swap;
 }
@@ -54,20 +55,15 @@
   color-scheme: light;
 }
 
-/* Schriftwahl */
-:root[data-font="switch"] {
-  --app-font: "Asap Condensed", system-ui, sans-serif;
-  --app-font-smoothing: auto;
-}
-:root[data-font="gameboy"] { --app-font: "Pixelify Sans", system-ui, sans-serif; }
-:root[data-font="3ds"] {
-  --app-font: "Fira Sans Condensed", system-ui, sans-serif;
-  --app-font-smoothing: auto;
-}
-
-:root[data-font="icognito"] {
-  --app-font: "Familie Icognito", "Pokemon DS", system-ui, sans-serif;
-}
+/* Schriftwahl – Überschriften („Pokemon Solid“ in Gelb/Blau) bleiben immer gleich */
+:root[data-font="gameboy"] { --app-font: "Familie GB", "Pokemon DS", system-ui, sans-serif; --app-font-smoothing: none; }
+:root[data-font="gameboy"] body { font-size: 15px; letter-spacing: .02em; }
+:root[data-font="3ds"] { --app-font: "M PLUS Rounded 1c", system-ui, sans-serif; --app-font-smoothing: antialiased; }
+:root[data-font="3ds"] body { font-size: 15px; }
+:root[data-font="switch"] { --app-font: "M PLUS 1p", system-ui, sans-serif; --app-font-smoothing: antialiased; }
+:root[data-font="switch"] body { font-size: 15px; }
+:root[data-font="icognito"] { --app-font: "Familie Icognito", "Pokemon DS", system-ui, sans-serif; }
+/* Damit man aus Icognito wieder herausfindet: Menü und Schriftwahl bleiben lesbar */
 :root[data-font="icognito"] :is(.font-setting, .ds-item[data-go="einstellungen"], .ds-panel-head, button[data-tab="einstellungen"]) {
   font-family: "Pokemon DS", system-ui, sans-serif;
 }
@@ -752,11 +748,18 @@ body.menu-open .x-btn { transform: translateX(-50%) rotate(90deg); }
 }
 .setting-row b { font-weight: normal; }
 .setting-row .hint { margin-top: 2px; }
-.font-setting { flex-wrap: wrap; }
-.font-setting select {
-  min-height: 44px; max-width: 100%; padding: 6px 10px;
-  border: 1px solid var(--border); border-radius: 10px; background: var(--bg);
+.font-setting { flex-direction: column; align-items: stretch; gap: 8px; }
+.font-picks { display: grid; gap: 6px; }
+.font-pick {
+  display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center; width: 100%; padding: 8px 12px;
+  text-align: left; cursor: pointer; color: var(--text); background: var(--surface);
+  border: 2px solid var(--border); border-radius: 12px; font-family: "Pokemon DS", system-ui, sans-serif; font-size: 1rem;
 }
+.font-pick small { grid-column: 1; color: var(--muted); font-size: .8rem; }
+.fp-name { grid-column: 1; }
+.fp-sample { grid-column: 2; grid-row: 1 / span 2; font-size: 1.05rem; white-space: nowrap; }
+.font-pick.on { border-color: #e3350d; background: color-mix(in srgb, #e3350d 8%, var(--surface)); box-shadow: inset 0 0 0 2px #ffd0c4; }
+@media (max-width: 400px) { .font-pick { grid-template-columns: 1fr; } .fp-sample { grid-column: 1; grid-row: auto; } }
 body.menu-open .fab { opacity: 0; pointer-events: none; transition: opacity .15s; }
 
 /* ---------- Meldungs-Karte: links Dringlichkeit + Porträt (Sperrzone), rechts Inhalt ---------- */
