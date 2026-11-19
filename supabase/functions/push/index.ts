@@ -1,10 +1,10 @@
 // Web-Push für den Austausch:
 //  key    – öffentlicher VAPID-Schlüssel (und Einrichtung des Minuten-Takts)
-//  notify – neue Meldung an alle anderen
-//  done    – Meldung erledigen (bei „Löschen, wenn erledigt“) und den Urheber benachrichtigen
-//  respond – auf eine Meldung mit Rückmeldung antworten (eine der Optionen), Urheber wird benachrichtigt
+//  notify – neue Aufgabe an alle anderen
+//  done    – Aufgabe erledigen (bei „Löschen, wenn erledigt“) und den Urheber benachrichtigen
+//  respond – auf eine Aufgabe mit Rückmeldung antworten (eine der Optionen), Urheber wird benachrichtigt
 //  comment – nach einem neuen Kommentar die anderen Beteiligten benachrichtigen
-//  review  – Urheber nimmt eine Meldung mit Strich-Androhung ab (accept) oder vergibt den Strich (strike + Grund)
+//  review  – Urheber nimmt eine Aufgabe mit Strich-Androhung ab (accept) oder vergibt den Strich (strike + Grund)
 //  strike  – Board der Schande: Urteil, Einspruch, Entscheidung, Anerkennung
 //  board   – Board der Schande: neuer Grund zur Beglaubigung, Bezahlung bestätigt
 //  note    – Notizen: Beteiligte über eine Änderung benachrichtigen
@@ -47,12 +47,12 @@ Deno.serve(async (req) => {
 
     if (body.action === 'done') {
       const { data: msg } = await admin.from('messages').select('*').eq('id', body.messageId).maybeSingle();
-      if (!msg) return json({ error: 'Meldung nicht gefunden' }, 404);
+      if (!msg) return json({ error: 'Aufgabe nicht gefunden' }, 404);
       const responsible = msg.assignees?.length ? msg.assignees.includes(me.id) : msg.author_id !== me.id;
-      if (!responsible) return json({ error: 'Nur die zuständige Person kann die Meldung erledigen' }, 400);
-      if (!msg.delete_on_done && !msg.needs_ack && !msg.deadline_at && !msg.open_ended) return json({ error: 'Für diese Meldung ist keine Rückmeldung vorgesehen' }, 400);
+      if (!responsible) return json({ error: 'Nur die zuständige Person kann die Aufgabe erledigen' }, 400);
+      if (!msg.delete_on_done && !msg.needs_ack && !msg.deadline_at && !msg.open_ended) return json({ error: 'Für diese Aufgabe ist keine Rückmeldung vorgesehen' }, 400);
       if (msg.done_by) return json({ error: 'Schon erledigt' }, 409);
-      if (msg.closed_at) return json({ error: 'Die Meldung ist bereits geschlossen' }, 409);
+      if (msg.closed_at) return json({ error: 'Die Aufgabe ist bereits geschlossen' }, 409);
 
       if (msg.threat_strike) {
         // Strich angedroht: Erledigt friert nur den Timer ein – der Urheber nimmt ab
@@ -75,8 +75,8 @@ Deno.serve(async (req) => {
       await sendPush({
         title: msg.delete_on_done ? `Geschlossen: ${msg.title}` : `Erledigt: ${msg.title}`,
         body: msg.delete_on_done
-          ? `${meName} hat die Meldung erledigt – sie wurde gelöscht.`
-          : `${meName} hat die Meldung als erledigt markiert.`,
+          ? `${meName} hat die Aufgabe erledigt – sie wurde gelöscht.`
+          : `${meName} hat die Aufgabe als erledigt markiert.`,
         tag: `done-${msg.id}`,
         url: `?tab=start&msg=${msg.id}`,
         urgency: 'info',
@@ -86,11 +86,11 @@ Deno.serve(async (req) => {
 
     if (body.action === 'respond') {
       const { data: msg } = await admin.from('messages').select('*').eq('id', body.messageId).maybeSingle();
-      if (!msg) return json({ error: 'Meldung nicht gefunden' }, 404);
-      if (!msg.needs_ack) return json({ error: 'Für diese Meldung ist keine Rückmeldung vorgesehen' }, 400);
+      if (!msg) return json({ error: 'Aufgabe nicht gefunden' }, 404);
+      if (!msg.needs_ack) return json({ error: 'Für diese Aufgabe ist keine Rückmeldung vorgesehen' }, 400);
       const mayRespond = msg.assignees?.length ? msg.assignees.includes(me.id) : msg.author_id !== me.id;
       if (!mayRespond) return json({ error: 'Nur die zuständige Person kann antworten' }, 400);
-      if (msg.closed_at) return json({ error: 'Die Meldung ist bereits geschlossen' }, 409);
+      if (msg.closed_at) return json({ error: 'Die Aufgabe ist bereits geschlossen' }, 409);
       const options: string[] = msg.ack_options?.length ? msg.ack_options : ['Erledigt'];
       const option = String(body.option ?? '');
       if (!options.includes(option)) return json({ error: 'Diese Antwort gibt es nicht' }, 400);
@@ -112,7 +112,7 @@ Deno.serve(async (req) => {
         .eq('id', body.commentId).eq('author_id', me.id).maybeSingle();
       if (!c) return json({ error: 'Kommentar nicht gefunden' }, 404);
       const { data: msg } = await admin.from('messages').select('id, title, author_id').eq('id', c.message_id).maybeSingle();
-      if (!msg) return json({ error: 'Meldung nicht gefunden' }, 404);
+      if (!msg) return json({ error: 'Aufgabe nicht gefunden' }, 404);
       const { data: others } = await admin.from('message_comments').select('author_id').eq('message_id', msg.id);
       const recipients = [...new Set([msg.author_id, ...(others ?? []).map((o) => o.author_id)])].filter((id) => id !== me.id);
       if (!recipients.length) return json({ sent: 0 });
@@ -128,10 +128,10 @@ Deno.serve(async (req) => {
 
     if (body.action === 'review') {
       const { data: msg } = await admin.from('messages').select('*').eq('id', body.messageId).maybeSingle();
-      if (!msg) return json({ error: 'Meldung nicht gefunden' }, 404);
+      if (!msg) return json({ error: 'Aufgabe nicht gefunden' }, 404);
       if (msg.author_id !== me.id) return json({ error: 'Nur der Urheber kann abnehmen' }, 403);
-      if (!msg.threat_strike) return json({ error: 'Für diese Meldung wurde kein Strich angedroht' }, 400);
-      if (msg.closed_at) return json({ error: 'Die Meldung ist bereits geschlossen' }, 409);
+      if (!msg.threat_strike) return json({ error: 'Für diese Aufgabe wurde kein Strich angedroht' }, 400);
+      if (msg.closed_at) return json({ error: 'Die Aufgabe ist bereits geschlossen' }, 409);
       const { data: resps } = await admin.from('message_responses').select('user_id').eq('message_id', msg.id);
       const reacted = [...new Set([msg.done_by, ...(resps ?? []).map((r) => r.user_id)].filter(Boolean))] as string[];
       if (!reacted.length) return json({ error: 'Es gibt noch keine Rückmeldung zum Abnehmen' }, 400);

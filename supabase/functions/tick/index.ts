@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
     const time = new Date(msg.respond_by).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' });
     const r = await sendPush({
       title: `⏳ Rückmeldung bis ${time}: ${msg.title}`,
-      body: 'Noch eine Stunde – bitte antworte in der Meldung.',
+      body: 'Noch eine Stunde – bitte antworte in der Aufgabe.',
       tag: `frist-${msg.id}`,
       url: `?tab=start&msg=${msg.id}`,
       urgency: 'wichtig',
@@ -66,7 +66,7 @@ Deno.serve(async (req) => {
     const mins = Math.max(1, Math.round((Date.parse(iso) - Date.now()) / 60000));
     return mins < 60 ? `${mins} Minuten` : `${Math.round(mins / 60)} Stunde${Math.round(mins / 60) === 1 ? '' : 'n'}`;
   };
-  // gerade erst angelegt → die Meldung selbst kam eben schon als Benachrichtigung
+  // gerade erst angelegt → die Aufgabe selbst kam eben schon als Benachrichtigung
   const fresh = (msg: { created_at: string }) => Date.parse(msg.created_at) > Date.now() - 15 * 60e3;
   let auslaufend = 0;
   const { data: dl } = await admin.from('messages')

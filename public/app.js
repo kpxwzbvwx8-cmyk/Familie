@@ -25,7 +25,7 @@ const state = {
   highlight: null,
   expanded: new Set(),
   reads: new Map(),     // Infos: messageId -> { readAt, hidden } (nur eigene)
-  msgDetail: null,      // offenes Details-Popup einer Meldung
+  msgDetail: null,      // offenes Details-Popup einer Aufgabe
   responses: new Map(), // messageId -> [{ userId, option, createdAt }]
   comments: new Map(),  // messageId -> [{ id, authorId, body, createdAt }]
   notes: [],            // Notizen (eigene + gemeinsame)
@@ -353,7 +353,7 @@ const TRAINER_SVG = `
 </svg>`;
 
 const SPRITES = { m: asset('img/trainer-m.png'), w: asset('img/trainer-w.png') };
-// Porträts des Urhebers an Meldungen im Austausch
+// Porträts des Urhebers an Aufgaben im Austausch
 const PORTRAITS = { m: asset('img/portrait-m.png'), w: asset('img/portrait-w.png') };
 
 function avatarHtml(u) {
@@ -580,7 +580,7 @@ const confirmStep = (text, yes = 'Ja, senden') => dsAsk(text, { yes, no: 'Abbrec
 /* -------------------------------------------------------------------------
  * In-App-Banner: Benachrichtigungen oben am Bildschirm, während die App offen ist
  *  – kommen über den Service Worker (gleiche Nachricht wie die Push-Mitteilung)
- *  – Aussehen passt zum Bereich: Meldung, Termin, Notiz, Board der Schande …
+ *  – Aussehen passt zum Bereich: Aufgabe, Termin, Notiz, Board der Schande …
  * ---------------------------------------------------------------------- */
 
 const bannerSeen = new Map(); // tag → Zeitpunkt (doppelte innerhalb kurzer Zeit unterdrücken)
@@ -697,17 +697,17 @@ function catchAnimation(text = 'Gespeichert!') {
   setTimeout(() => el.remove(), 1700);
 }
 
-function toast(text, onClick) {
+function toast(text, onClick, { instant = false, ms = 5000 } = {}) {
   const el = document.createElement('div');
   el.className = 'toast';
   el.innerHTML = '<span class="toast-text"></span><span class="ds-say-arrow" aria-hidden="true">▼</span>';
-  typeText(el.firstChild, text, 12);
+  if (instant) el.firstChild.textContent = text; else typeText(el.firstChild, text, 12);
   el.addEventListener('click', () => {
     el.remove();
     onClick && onClick();
   });
   $('#toast-root').appendChild(el);
-  setTimeout(() => el.remove(), 5000);
+  setTimeout(() => el.remove(), ms);
 }
 
 /* -------------------------------------------------------------------------
@@ -1015,19 +1015,19 @@ function icsUrl(m) {
 }
 
 const HELP = {
-  openEnded: 'Die Meldung gilt ab sofort – ohne Uhrzeit, ohne Deadline. Sie steht unter „Fortlaufend“, bis sie erledigt ist. Mit „Rückmeldung“ bleibt sie, bis alle geantwortet haben; sonst hakt die zuständige Person sie mit „Erledigt“ ab.',
-  strike: 'Wird die Meldung bis zur Deadline nicht erfüllt, gibt es einen Strich auf dem Board der Schande. Reagiert jemand vorher, friert der Timer ein und du nimmst das Ergebnis ab. Eine Meldung mit Androhung ist automatisch dringend.',
-  autoDelete: 'Die Meldung verschwindet zum eingestellten Zeitpunkt automatisch für alle – praktisch für Dinge, die sich danach erledigt haben.',
+  openEnded: 'Die Aufgabe gilt ab sofort – ohne Uhrzeit, ohne Deadline. Sie steht unter „Fortlaufend“, bis sie erledigt ist. Mit „Rückmeldung“ bleibt sie, bis alle geantwortet haben; sonst hakt die zuständige Person sie mit „Erledigt“ ab.',
+  strike: 'Wird die Aufgabe bis zur Deadline nicht erfüllt, gibt es einen Strich auf dem Board der Schande. Reagiert jemand vorher, friert der Timer ein und du nimmst das Ergebnis ab. Eine Aufgabe mit Androhung ist automatisch dringend.',
+  autoDelete: 'Die Aufgabe verschwindet zum eingestellten Zeitpunkt automatisch für alle – praktisch für Dinge, die sich danach erledigt haben.',
   event: 'Für Termine mit Dauer: Zusätzlich zum Start gibst du das Ende des Zeitraums an (von Minuten bis Jahren). Der Zeitraum wird auch so in den Kalender übernommen.',
-  deadline: 'Bis wann etwas erledigt sein muss. Die Meldung wird damit zu einem Ereignis vom Zeitpunkt bis zur Deadline – genau so landet sie auch im Kalender.',
+  deadline: 'Bis wann etwas erledigt sein muss. Die Aufgabe wird damit zu einem Ereignis vom Zeitpunkt bis zur Deadline – genau so landet sie auch im Kalender.',
   respondBy: 'Bis wann geantwortet werden soll. Wer bis eine Stunde vor Ablauf noch nicht geantwortet hat, bekommt eine Erinnerung.',
   notify: 'Wenn die Glocke an ist, bekommen alle anderen beim Absenden sofort eine Benachrichtigung. '
     + 'Ist sie aus, wird beim Absenden niemand benachrichtigt – spätere Benachrichtigungen (Erinnerung zum Beginn, Rückmeldungen) kommen trotzdem.',
   remind: 'Wenn die Glocke an ist, bekommen alle zum Beginn des Ereignisses eine Benachrichtigung – das Handy vibriert bzw. klingelt (je nach Einstellungen des Handys). '
     + 'Das funktioniert auch, wenn die App geschlossen ist.',
-  ack: 'Die anderen sehen in der aufgeklappten Meldung Antwort-Knöpfe – standardmäßig „Erledigt“, oder was du vorgibst (z. B. „Ja“ und „Nein“). '
-    + 'Antwortet jemand, bekommst du eine Benachrichtigung. Die Meldung bleibt stehen – löschen kannst sie nur du.',
-  doneDelete: 'Die anderen können die Meldung in der aufgeklappten Ansicht als erledigt markieren. '
+  ack: 'Die anderen sehen in der aufgeklappten Aufgabe Antwort-Knöpfe – standardmäßig „Erledigt“, oder was du vorgibst (z. B. „Ja“ und „Nein“). '
+    + 'Antwortet jemand, bekommst du eine Benachrichtigung. Die Aufgabe bleibt stehen – löschen kannst sie nur du.',
+  doneDelete: 'Die anderen können die Aufgabe in der aufgeklappten Ansicht als erledigt markieren. '
     + 'Sie wird dann für alle gelöscht und du bekommst eine Benachrichtigung, dass sie geschlossen wurde.',
 };
 
@@ -1152,7 +1152,7 @@ function openMessageDetail(id) {
   const m = state.messages.find((x) => x.id === id);
   if (!m) { toast('Diese Nachricht gibt es nicht mehr.'); return; }
   if (state.msgDetail) state.msgDetail.close();
-  openModal(`<div class="modal-head msg-detail-head"><h2>${m.urgency === 'info' ? 'ℹ️ Info' : '📋 Meldung'}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+  openModal(`<div class="modal-head msg-detail-head"><h2>${m.urgency === 'info' ? 'ℹ️ Info' : '📋 Aufgabe'}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
     <div class="msg-detail-body">${messageFullHtml(m)}</div>`, {
     cls: 'msg-detail-modal',
     onMount: (modal, close) => {
@@ -1194,7 +1194,7 @@ function messageFullHtml(m) {
   markCommentsSeen(m.id);
   const unread = 0;
   const pin = prefs.pins[m.id] && Date.parse(prefs.pins[m.id]) > Date.now() ? prefs.pins[m.id] : null;
-  // zuständig: die ausgewählten Personen (ältere Meldungen ohne Auswahl: alle außer dem Urheber)
+  // zuständig: die ausgewählten Personen (ältere Aufgaben ohne Auswahl: alle außer dem Urheber)
   const responsible = state.me && (m.assignees.length ? m.assignees.includes(state.me.id) : !mine);
   const canMarkDone = responsible && !m.doneBy && !m.closedAt && !m.needsAck && (m.deleteOnDone || m.deadlineAt || m.openEnded);
   const forWhom = m.assignees.map(userById).filter(Boolean);
@@ -1480,14 +1480,14 @@ async function reviewMessage(id, verdict, btn) {
         m.strikeNote = verdict === 'accept' ? null : reason;
         render();
       }
-      toast(verdict === 'accept' ? '👍 Abgenommen – die Meldung ist geschlossen.' : '⚖️ Strich vergeben – wartet auf Anerkennung.');
+      toast(verdict === 'accept' ? '👍 Abgenommen – die Aufgabe ist geschlossen.' : '⚖️ Strich vergeben – wartet auf Anerkennung.');
     } catch (e) {
       toast(e.message);
       btn.disabled = false;
     }
   };
   if (verdict === 'accept') {
-    if (await confirmStep('Ergebnis abnehmen und die Meldung ohne Strich schließen?', 'Ja, abnehmen')) send();
+    if (await confirmStep('Ergebnis abnehmen und die Aufgabe ohne Strich schließen?', 'Ja, abnehmen')) send();
     return;
   }
   openModal(
@@ -1520,7 +1520,7 @@ async function reviewMessage(id, verdict, btn) {
 
 async function markDone(id, btn) {
   const m = state.messages.find((x) => x.id === id);
-  if (!(await confirmStep(`„${m ? m.title : 'Meldung'}“ als erledigt melden?`, 'Ja, erledigt'))) return;
+  if (!(await confirmStep(`„${m ? m.title : 'Aufgabe'}“ als erledigt melden?`, 'Ja, erledigt'))) return;
   btn.disabled = true;
   try {
     const r = await sb.functions.invoke('push', { body: { action: 'done', messageId: id } });
@@ -1535,7 +1535,7 @@ async function markDone(id, btn) {
       toast('⏸️ Gemeldet – der Timer ist eingefroren, der Urheber nimmt ab.');
       return;
     }
-    if (r.data && r.data.deleted) { removeMessage(id); toast('Erledigt – die Meldung wurde geschlossen ✓'); }
+    if (r.data && r.data.deleted) { removeMessage(id); toast('Erledigt – die Aufgabe wurde geschlossen ✓'); }
     else {
       const m = state.messages.find((x) => x.id === id);
       if (m) { m.doneBy = state.me.id; m.doneAt = new Date().toISOString(); render(); }
@@ -1600,7 +1600,7 @@ function timeLeft(iso) {
   const h = Math.floor(mins / 60), mm = mins % 60;
   return `noch ${h} Std.${mm ? ` ${mm} Min.` : ''}`;
 }
-/** Offene Meldung (sofort, ohne Termin): erledigt, wenn abgehakt bzw. alle Zuständigen geantwortet haben */
+/** Offene Aufgabe (sofort, ohne Termin): erledigt, wenn abgehakt bzw. alle Zuständigen geantwortet haben */
 function openEndedDone(m) {
   if (m.doneBy || m.closedAt) return true;
   if (!m.needsAck) return false;
@@ -1647,7 +1647,7 @@ const filterShows = (key, f = startFilter()) => !f.hide.includes(key);
 /** Sichtbar, wenn mindestens eine beteiligte Person angehakt ist (Gemeinsames erscheint also bei jedem) */
 const peopleVisible = (ids, f = startFilter()) => !ids.length || ids.some((id) => filterShows(id, f));
 
-/** Für wen ist eine Meldung/Info? (Zuständige – ältere ohne Auswahl: alle außer dem Urheber; wartet sie auf Abnahme, auch der Urheber) */
+/** Für wen ist eine Aufgabe/Info? (Zuständige – ältere ohne Auswahl: alle außer dem Urheber; wartet sie auf Abnahme, auch der Urheber) */
 function messagePeople(m) {
   let ids = m.assignees.length ? [...m.assignees] : state.users.filter((u) => u.id !== m.authorId).map((u) => u.id);
   if (!ids.length) ids = [m.authorId];
@@ -1894,7 +1894,7 @@ function renderAustausch(view) {
   if (!shown.length) {
     list = hiddenCount
       ? emptyStateHtml(`Durch deinen Filter ist gerade alles ausgeblendet (${hiddenCount}). Tippe oben auf „Filter“, um mehr zu sehen.`)
-      : emptyStateHtml('Hier ist gerade nichts los! Tippe unten rechts auf ＋ für eine Info, eine Meldung, einen Termin oder eine Erinnerung.');
+      : emptyStateHtml('Hier ist gerade nichts los! Tippe unten rechts auf ＋ für eine Info, eine Aufgabe, einen Termin oder eine Erinnerung.');
   } else {
     if (state.highlight) { const hm = visible.find((m) => m.id === state.highlight); if (hm && !isInfo(hm)) prefs.sections[sectionOf(hm)] = true; }
     list = SECTIONS.map((sec) => {
@@ -1970,12 +1970,12 @@ function assigneePickerHtml(label, preset) {
   </div>`;
 }
 
-/** ＋ auf Start: Auswahl im Stil des Kampfmenüs – Info, Meldung oder Termin */
+/** ＋ auf Start: Auswahl im Stil des Kampfmenüs – Info, Aufgabe oder Termin */
 function openCreateMenu() {
   const calIcon = `<img src="${asset('img/menu/cal.png')}" alt="" class="cm-cal">`;
   const items = [
     { key: 'info', label: 'Info', sub: 'Zum Wissen – ohne Handlungsbedarf', icon: ballSvg('master', 44), cls: 'cm-info' },
-    { key: 'meldung', label: 'Meldung', sub: 'Etwas, das passieren muss', icon: ballSvg('poke', 44), cls: 'cm-msg' },
+    { key: 'meldung', label: 'Aufgabe', sub: 'Etwas, das passieren muss', icon: ballSvg('poke', 44), cls: 'cm-msg' },
     { key: 'termin', label: 'Termin', sub: 'Eintrag in den Kalender', icon: calIcon, cls: 'cm-event' },
     { key: 'erinnerung', label: 'Erinnerung', sub: 'Abhaken nicht vergessen – auch wiederkehrend', icon: '<span class="cm-bell">🔔</span>', cls: 'cm-todo' },
   ];
@@ -2033,7 +2033,7 @@ function openNewMessage(preset = 'normal') {
   };
 
   openModal(
-    `<div class="modal-head"><h2>${preset === 'info' ? 'Neue Info' : 'Neue Meldung'}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+    `<div class="modal-head"><h2>${preset === 'info' ? 'Neue Info' : 'Neue Aufgabe'}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
      <form class="form" id="msg-form" novalidate>
        ${assigneePickerHtml('Für wen?', state.users.filter((u) => u.id !== state.me.id).map((u) => u.id))}
        <fieldset class="field">
@@ -2132,11 +2132,11 @@ function openNewMessage(preset = 'normal') {
               form.elements[field].value = toLocalInput(new Date(base.getTime() + 3600e3));
             }
           }));
-        // Strich androhen macht die Meldung automatisch dringend
+        // Strich androhen macht die Aufgabe automatisch dringend
         const forceUrgent = () => {
           if (form.elements.hasDeadline.checked && form.elements.threatStrike.checked) {
             const r = form.querySelector('input[name=urgency][value=dringend]');
-            if (!r.checked) { r.checked = true; toast('😈 Mit Strich-Androhung ist die Meldung automatisch dringend.'); }
+            if (!r.checked) { r.checked = true; toast('😈 Mit Strich-Androhung ist die Aufgabe automatisch dringend.'); }
           }
         };
         form.elements.threatStrike.addEventListener('change', forceUrgent);
@@ -2216,7 +2216,7 @@ function openNewMessage(preset = 'normal') {
           btn.disabled = true;
           try {
             const assignees = [...form.querySelectorAll('[name=assignee]:checked')].map((i) => i.value);
-            if (!assignees.length) { err.textContent = 'Bitte auswählen, für wen die Meldung ist.'; btn.disabled = false; return; }
+            if (!assignees.length) { err.textContent = 'Bitte auswählen, für wen die Aufgabe ist.'; btn.disabled = false; return; }
             const row = must(await sb.from('messages').insert({
               assignees,
               urgency: form.elements.hasDeadline.checked && form.elements.threatStrike.checked ? 'dringend' : f.get('urgency'),
@@ -2236,7 +2236,7 @@ function openNewMessage(preset = 'normal') {
             }).select().single());
             upsertMessage(mapMessage(row));
             close();
-            catchAnimation(f.get('urgency') === 'info' ? 'Info verschickt!' : 'Meldung verschickt!');
+            catchAnimation(f.get('urgency') === 'info' ? 'Info verschickt!' : 'Aufgabe verteilt!');
             if (form.elements.notify.checked) {
               sb.functions.invoke('push', { body: { action: 'notify', messageId: row.id } })
                 .then((r) => r.error && console.warn('Benachrichtigung fehlgeschlagen', r.error));
@@ -2672,7 +2672,10 @@ async function checkForUpdate() {
   try {
     const remote = await fetchRemoteVersion();
     if (remote && remote !== CFG.version) {
-      toast('Neue Version gefunden – wird installiert …');
+      // Text sofort ganz zeigen und kurz stehen lassen – sonst lädt die App neu, bevor er fertig getippt ist
+      toast('✨ Neue Version gefunden! Wird installiert …', null, { instant: true, ms: 8000 });
+      lsSet('familie.justUpdated', Date.now());
+      await new Promise((r) => setTimeout(r, 1600));
       await hardRefresh(remote);
       return;
     }
@@ -5135,7 +5138,7 @@ function mountEvidence(root) {
   root.querySelectorAll('[data-photo]').forEach((img) => loadStrikePhoto(img.dataset.photo, img));
 }
 
-/* ---- Meldung für den Bestraften -------------------------------------- */
+/* ---- Aufgabe für den Bestraften -------------------------------------- */
 
 let verdictOpen = false;
 const snoozedAppeals = new Set();
@@ -5346,7 +5349,7 @@ function openStrikeDetail(id) {
          <div><span>Status</span><b>${esc(strikeStatusLabel(s))}</b></div>
        </div>
        ${s.description ? `<div class="case-row"><span>Verstoß</span><p>${esc(s.description)}</p></div>` : ''}
-       ${msg ? `<div class="case-row"><span>Zur Meldung</span><p>${esc(msg.title)}</p></div>` : ''}
+       ${msg ? `<div class="case-row"><span>Zur Aufgabe</span><p>${esc(msg.title)}</p></div>` : ''}
        <div class="case-row"><span>Verlauf</span>${timelineHtml(s)}</div>
        ${evidenceHtml(s)}
      </div>`,
@@ -5668,7 +5671,7 @@ function awayFeed() {
   const items = [];
   const push = (iso, icon, text, go) => { if (iso && inWin(iso)) items.push({ t: Date.parse(iso), icon, text, go }); };
   for (const m of state.messages) {
-    if (m.authorId !== me) push(m.createdAt, m.urgency === 'info' ? '🟣' : '📨', `${who(m.authorId)}: ${m.urgency === 'info' ? 'neue Info' : 'neue Meldung'} „${m.title}“`, { msg: m.id });
+    if (m.authorId !== me) push(m.createdAt, m.urgency === 'info' ? '🟣' : '📨', `${who(m.authorId)}: ${m.urgency === 'info' ? 'neue Info' : 'neue Aufgabe'} „${m.title}“`, { msg: m.id });
     if (m.doneBy && m.doneBy !== me) push(m.doneAt, '✅', `${who(m.doneBy)} hat „${m.title}“ erledigt`, { msg: m.id });
     for (const r of state.responses.get(m.id) || []) if (r.userId !== me) push(r.createdAt, '✉️', `${who(r.userId)} antwortet „${r.option}“ – ${m.title}`, { msg: m.id });
     for (const c of state.comments.get(m.id) || []) if (c.authorId !== me) push(c.createdAt, '💬', `${who(c.authorId)} kommentiert „${m.title}“`, { msg: m.id });
@@ -5925,7 +5928,7 @@ function startRealtime() {
       upsertMessage(m);
       if (before && !before.doneBy && m.doneBy && state.me && m.authorId === state.me.id) {
         const who = userById(m.doneBy);
-        if (!pushActive()) showBanner({ title: `Erledigt: ${m.title}`, body: `${who ? who.firstName : 'Jemand'} hat die Meldung als erledigt markiert.`, tag: `done-${m.id}`, urgency: 'info', url: `?tab=start&msg=${m.id}` });
+        if (!pushActive()) showBanner({ title: `Erledigt: ${m.title}`, body: `${who ? who.firstName : 'Jemand'} hat die Aufgabe als erledigt markiert.`, tag: `done-${m.id}`, urgency: 'info', url: `?tab=start&msg=${m.id}` });
       }
     })
     .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, ({ old }) => removeMessage(old.id))
@@ -5985,7 +5988,7 @@ function startRealtime() {
 }
 
 // Countdown-Anzeigen aktualisieren & abgelaufene Nachrichten lokal ausblenden
-// Nur Zeitangaben aktualisieren statt alles neu zu zeichnen – sonst springen die Meldungen
+// Nur Zeitangaben aktualisieren statt alles neu zu zeichnen – sonst springen die Aufgaben
 setInterval(() => {
   if (!state.me || (state.tab !== 'start' && state.tab !== 'notizen')) return;
   const expired = state.messages.some((m) => m.deleteAt && Date.parse(m.deleteAt) <= Date.now() && document.getElementById(`msg-${m.id}`));
@@ -6024,6 +6027,11 @@ document.addEventListener('visibilitychange', () => {
 
 async function startApp() {
   markReturn();
+  const upd = lsGet('familie.justUpdated', 0);
+  if (upd) {
+    lsSet('familie.justUpdated', 0);
+    if (Date.now() - upd < 120000) setTimeout(() => toast('✅ Update installiert – du hast jetzt die neueste Version!', null, { ms: 6000 }), 900);
+  }
   renderProfileButton();
   await Promise.all([loadUsers(), loadMessages(), loadFamilyCode(), loadBoard(), loadNotes(), loadEvents()]).catch((e) => toast(e.message));
   if (state.openNote) { const id = state.openNote; state.openNote = null; openNoteById(id); }
@@ -6043,8 +6051,8 @@ async function startApp() {
     lsSet('familie.introSeen', true);
     dsSay('', { speaker: 'Prof. Familie', pages: [
       `Hallo ${state.me.firstName}! Willkommen in der Welt der Familie!`,
-      'Auf START siehst du alles, was heute, morgen und in den nächsten 7 Tagen ansteht – Meldungen, Infos und Termine.',
-      'Mit dem ＋ unten rechts legst du eine Info, eine Meldung oder einen Termin an.',
+      'Auf START siehst du alles, was heute, morgen und in den nächsten 7 Tagen ansteht – Aufgaben, Infos und Termine.',
+      'Mit dem ＋ unten rechts legst du eine Info, eine Aufgabe oder einen Termin an.',
       'Über den X-Knopf erreichst du Team, Notizen, Kalender und das gefürchtete Board der Schande.',
       'Siehst du ein ?, tippe darauf – dann erkläre ich dir, was es damit auf sich hat. Viel Spaß!',
     ] });
