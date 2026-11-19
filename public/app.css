@@ -26,6 +26,12 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: "Familie Icognito";
+  src: url("fonts/icognito.woff2") format("woff2");
+  font-display: swap;
+}
+
 :root {
   --app-font: "Pokemon DS", system-ui, sans-serif;
   --app-font-smoothing: none;
@@ -57,6 +63,13 @@
 :root[data-font="3ds"] {
   --app-font: "Fira Sans Condensed", system-ui, sans-serif;
   --app-font-smoothing: auto;
+}
+
+:root[data-font="icognito"] {
+  --app-font: "Familie Icognito", "Pokemon DS", system-ui, sans-serif;
+}
+:root[data-font="icognito"] :is(.font-setting, .ds-item[data-go="einstellungen"], .ds-panel-head, button[data-tab="einstellungen"]) {
+  font-family: "Pokemon DS", system-ui, sans-serif;
 }
 
 /* Dunkelmodus: per Regler (data-theme) oder – ohne Auswahl – nach Systemeinstellung */

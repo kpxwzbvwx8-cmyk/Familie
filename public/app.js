@@ -2764,6 +2764,7 @@ const APP_FONTS = [
   ['switch', 'Switch'],
   ['gameboy', 'Game Boy'],
   ['3ds', 'Nintendo 3DS'],
+  ['icognito', 'Icognito'],
 ];
 
 function renderSettings(view) {
@@ -5653,10 +5654,10 @@ function openDossier(userId) {
 const APP_VERSION = '1.2.2';
 const CHANGELOG = [
   {
-    version: '1.2.2', date: '2026-11-19', title: 'Vier Schriften, vier Generationen!',
-    intro: 'Was für ein Sprung durch die Generationen! Heute knackige Game-Boy-Pixel, morgen der moderne Switch-Look? Dazu kommen die schlanke 3DS-Schrift und der vertraute Nintendo-DS-Stil. Jede Generation steht dir jetzt in der ganzen App zur Verfügung!',
+    version: '1.2.2', date: '2026-11-19', title: 'Fünf Schriftstile für dein Abenteuer!',
+    intro: 'Was für ein Sprung durch die Generationen! Heute knackige Game-Boy-Pixel, morgen der moderne Switch-Look? Dazu kommen die schlanke 3DS-Schrift und der vertraute Nintendo-DS-Stil. Und jetzt wird’s geheimnisvoll: Mit Icognito verwandeln sich deine Buchstaben in Augensymbole!',
     items: [
-      'Öffne Menü → Einstellungen → Schriftart und wechsle sofort zwischen Nintendo DS, Switch, Game Boy und Nintendo 3DS.',
+      'Öffne Menü → Einstellungen → Schriftart und wechsle sofort zwischen Nintendo DS, Switch, Game Boy, Nintendo 3DS und Icognito.',
       'Dein Gerät merkt sich deinen Favoriten. Auch offline erwarten dich die ganze Buchstabenreihe, Umlaute und Zahlen!',
     ],
   },
