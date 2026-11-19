@@ -1416,7 +1416,7 @@ async function markDone(id, btn) {
 const SECTIONS = [
   { key: 'heute', label: 'Heute', open: true },
   { key: 'morgen', label: 'Morgen', open: true },
-  { key: 'woche', label: 'Diese Woche', open: true },
+  { key: 'woche', label: 'Nächste 7 Tage', open: true },
   { key: 'laufend', label: 'Laufend', open: true },
   { key: 'spaeter', label: 'Später', open: false },
   { key: 'vergangen', label: 'Vergangen', open: false },
@@ -1444,7 +1444,7 @@ function sectionOf(m, now = new Date()) {
   const today = startOfDay(now);
   const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
   const dayAfter = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 2);
-  const weekEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + (7 - ((today.getDay() + 6) % 7))); // nach Sonntag
+  const weekEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 8); // nächste 7 Tage (bis einschließlich heute + 7)
   const start = Date.parse(m.eventAt || m.createdAt);
   const end = m.endAt ? Date.parse(m.endAt) : null;
   const deadline = m.deadlineAt ? Date.parse(m.deadlineAt) : null;
@@ -2416,11 +2416,11 @@ const HOLIDAY_KIND = { legal: 'Gesetzlicher Feiertag', regional: 'Feiertag in an
 
 /* ---- Feiertage & HSV kompakt auf Start ------------------------------ */
 
-/** Bereich auf Start für einen Tag (nur Heute / Morgen / Diese Woche) */
+/** Bereich auf Start für einen Tag (nur Heute / Morgen / Nächste 7 Tage) */
 function daySection(day) {
   const today = startOfDay(new Date());
   const diff = Math.round((day - today) / 86400e3);
-  const weekEnd = addDays(today, 7 - ((today.getDay() + 6) % 7));
+  const weekEnd = addDays(today, 8); // nächste 7 Tage
   if (diff === 0) return 'heute';
   if (diff === 1) return 'morgen';
   if (diff > 1 && day < weekEnd) return 'woche';
@@ -3046,7 +3046,7 @@ function eventSection(ev, now = new Date()) {
   const t = now.getTime();
   const today = startOfDay(now);
   const tomorrow = addDays(today, 1), dayAfter = addDays(today, 2);
-  const weekEnd = addDays(today, 7 - ((today.getDay() + 6) % 7));
+  const weekEnd = addDays(today, 8); // nächste 7 Tage
   const s = Date.parse(ev.startAt), e = Date.parse(ev.endAt);
   const sd = evStartDay(ev).getTime(), ed = evEndDay(ev).getTime();
   if (e < t && !(ev.allDay && ed >= today.getTime())) return null;      // vorbei
@@ -4499,8 +4499,15 @@ function openDossier(userId) {
  *  blau für Trainer, rosa für Trainerinnen
  * ---------------------------------------------------------------------- */
 
-const APP_VERSION = '1.0.0.4';
+const APP_VERSION = '1.0.0.5';
 const CHANGELOG = [
+  {
+    version: '1.0.0.5', date: '2026-11-19', title: 'Nächste 7 Tage',
+    items: [
+      'Aus „Diese Woche“ wird „Nächste 7 Tage“',
+      'Der Bereich reicht immer eine Woche voraus – nicht mehr nur bis Sonntag',
+    ],
+  },
   {
     version: '1.0.0.4', date: '2026-11-19', title: 'Benachrichtigungen in der App',
     items: [
@@ -5076,7 +5083,7 @@ async function startApp() {
     lsSet('familie.introSeen', true);
     dsSay('', { speaker: 'Prof. Familie', pages: [
       `Hallo ${state.me.firstName}! Willkommen in der Welt der Familie!`,
-      'Auf START siehst du alles, was heute, morgen und diese Woche ansteht – Meldungen, Infos und Termine.',
+      'Auf START siehst du alles, was heute, morgen und in den nächsten 7 Tagen ansteht – Meldungen, Infos und Termine.',
       'Mit dem ＋ unten rechts legst du eine Info, eine Meldung oder einen Termin an.',
       'Über den X-Knopf erreichst du Team, Notizen, Kalender und das gefürchtete Board der Schande.',
       'Siehst du ein ?, tippe darauf – dann erkläre ich dir, was es damit auf sich hat. Viel Spaß!',
