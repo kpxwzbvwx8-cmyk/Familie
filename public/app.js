@@ -1430,6 +1430,7 @@ const prefs = {
   infoClosed: new Set(lsGet('familie.infoClosed', [])), // Infos, die man zugeklappt hat
   pins: lsGet('familie.pins', {}),                   // messageId -> „in Laufend behalten bis“
   sections: lsGet('familie.sections', {}),           // Bereich -> offen?
+  folds: lsGet('familie.folds', {}),                 // Gruppen in Bereichen / Filter-Menü -> offen?
 };
 
 function isExpanded(m) {
@@ -1564,6 +1565,7 @@ function isFrozen(m) {
   return Boolean(m.doneBy) || (state.responses.get(m.id) || []).length > 0;
 }
 
+const foldOpen = (k) => prefs.folds[k] !== false;
 function sectionOpen(sec) {
   return sec.key in prefs.sections ? Boolean(prefs.sections[sec.key]) : sec.open;
 }
@@ -1679,6 +1681,10 @@ function openStartFilter() {
     { key: 'hsv', icon: '<i class="hsv-diamond"></i>', label: 'HSV', sub: hsvEnabled() ? 'Spiele des HSV' : 'In den Einstellungen ausgeschaltet', c: '#0a3d91' },
     { key: 'hol', icon: '🎉', label: 'Feiertage', sub: 'Feiertage & besondere Tage', c: '#d98a1c' },
   ];
+  const sfGroup = (key, title, summary, inner) => {
+    const open = foldOpen(`sf|${key}`);
+    return `<div class="sf-group${open ? ' open' : ''}"><button type="button" class="sf-group-head" data-sfold="${key}" aria-expanded="${open}"><span>${title}</span><small>${esc(summary)}</small><span class="kh-chev" aria-hidden="true">▾</span></button>${open ? `<div class="sf-group-body">${inner}</div>` : ''}</div>`;
+  };
   const rowHtml = (r, f) => `<button type="button" class="sf-row${filterShows(r.key, f) ? ' on' : ''}" data-sf="${esc(r.key)}" style="--c:${r.c}" aria-pressed="${filterShows(r.key, f)}">
         <span class="sf-icon">${r.icon}</span><span class="sf-text"><b>${esc(r.label)}</b><small>${esc(r.sub)}</small></span>
         <span class="sf-check">${ballSvg('poke', 26)}</span></button>`;
@@ -1686,16 +1692,13 @@ function openStartFilter() {
     const f = startFilter();
     return `<div class="sf">
       <div class="cm-box sf-box"><p>Was möchtest du auf START sehen?</p><span class="cm-arrow" aria-hidden="true">▼</span></div>
-      <div class="sf-sort-title">Wer?</div>
-      <div class="sf-list">${rows.map((r) => rowHtml(r, f)).join('')}</div>
-      <p class="hint sf-hint">Gemeinsames erscheint, sobald eine der beteiligten Personen angehakt ist.</p>
-      <div class="sf-sort-title">Was?</div>
-      <div class="sf-list sf-grid">${kinds.map((r) => rowHtml(r, f)).join('')}</div>
-      <div class="sf-sort-title">Reihenfolge</div>
-      <div class="sf-sort">
+      ${sfGroup('who', 'Wer?', `${rows.filter((r) => filterShows(r.key, f)).length}/${rows.length}`, `<div class="sf-list">${rows.map((r) => rowHtml(r, f)).join('')}</div>
+      <p class="hint sf-hint">Gemeinsames erscheint, sobald eine der beteiligten Personen angehakt ist.</p>`)}
+      ${sfGroup('what', 'Was?', `${kinds.filter((r) => filterShows(r.key, f)).length}/${kinds.length}`, `<div class="sf-list sf-grid">${kinds.map((r) => rowHtml(r, f)).join('')}</div>`)}
+      ${sfGroup('order', 'Reihenfolge', f.sort === 'person' ? '👥 Person' : '⚡ Dringlichkeit', `<div class="sf-sort">
         <button type="button" class="sf-opt${f.sort === 'time' ? ' on' : ''}" data-sort="time"><b>⚡ Dringlichkeit</b><small>Aufgaben: dringend zuerst · Kalender: nach Uhrzeit</small></button>
         <button type="button" class="sf-opt${f.sort === 'person' ? ' on' : ''}" data-sort="person"><b>👥 Person</b><small>Erst nach Person, darin genauso</small></button>
-      </div>
+      </div>`)}
       <p class="hint sf-hint">„Läuft aus“ wird nie weggefiltert – da musst du handeln.</p>
       <button type="button" class="cm-cancel" data-close><span class="ds-key ds-key-a">A</span> Fertig</button>
     </div>`;
@@ -1706,6 +1709,14 @@ function openStartFilter() {
       typeText($('.sf-box p', modal), 'Was möchtest du auf START sehen?');
       modal.addEventListener('click', (e) => {
         const f = startFilter();
+        const fold = e.target.closest('[data-sfold]');
+        if (fold) {
+          const k = `sf|${fold.dataset.sfold}`;
+          prefs.folds[k] = !foldOpen(k);
+          lsSet('familie.folds', prefs.folds);
+          modal.innerHTML = html();
+          return;
+        }
         const row = e.target.closest('[data-sf]');
         const opt = e.target.closest('[data-sort]');
         if (!row && !opt) return;
@@ -1895,22 +1906,32 @@ function renderAustausch(view) {
   // Aufgaben: dringend zuerst, dann nach Zeit · Kalender: nach Uhrzeit (ganztägig oben)
   const byUrgency = (a, b) => (URGENCY_RANK[a.m.urgency] ?? 2) - (URGENCY_RANK[b.m.urgency] ?? 2) || a.t - b.t;
   const minisHtml = (list) => (list.length ? `<div class="mini-rows">${list.map((x) => x.html).join('')}</div>` : '');
-  const subHead = (icon, label, n, cls) => `<div class="kind-head ${cls}"><span class="kh-ico">${icon}</span><span>${label}</span><span class="kh-n">${n}</span></div>`;
-  const block = (items) => {
+  // Auf-/zuklappbare Gruppen innerhalb eines Bereichs (pro Gerät gemerkt)
+  const subHead = (key, icon, label, n, cls, open) => `<button type="button" class="kind-head ${cls}" data-fold="${esc(key)}" aria-expanded="${open}"><span class="kh-ico">${icon}</span><span>${label}</span><span class="kh-n">${n}</span><span class="kh-chev" aria-hidden="true">▾</span></button>`;
+  const block = (items, key) => {
     const tasks = items.filter((x) => x.m);
     const cal = items.filter((x) => x.ev);
-    const tasksHtml = minisHtml(tasks.filter((x) => x.kind === 'mini').sort(byTime)) + tasks.filter((x) => x.kind === 'card').sort(byUrgency).map(cardHtml).join('');
-    const calHtml = minisHtml(cal.filter((x) => x.kind === 'mini').sort(byTime)) + cal.filter((x) => x.kind === 'card').sort(byTime).map(cardHtml).join('');
-    if (!tasks.length || !cal.length) return tasksHtml + calHtml;
-    return `<div class="kind-group">${subHead(ballSvg('poke', 18), 'Aufgaben &amp; Infos', tasks.length, 'kh-task')}${tasksHtml}</div>`
-      + `<div class="kind-group">${subHead(`<img src="${asset('img/menu/cal.png')}" alt="">`, 'Kalender', cal.length, 'kh-cal')}${calHtml}</div>`;
+    const parts = [];
+    // Kalender zuerst, dann Aufgaben & Infos
+    if (cal.length) {
+      const k = `${key}|cal`, open = foldOpen(k);
+      parts.push(`<div class="kind-group${open ? '' : ' folded'}">${subHead(k, `<img src="${asset('img/menu/cal.png')}" alt="">`, 'Kalender', cal.length, 'kh-cal', open)}${open
+        ? minisHtml(cal.filter((x) => x.kind === 'mini').sort(byTime)) + cal.filter((x) => x.kind === 'card').sort(byTime).map(cardHtml).join('') : ''}</div>`);
+    }
+    if (tasks.length) {
+      const k = `${key}|task`, open = foldOpen(k);
+      parts.push(`<div class="kind-group${open ? '' : ' folded'}">${subHead(k, ballSvg('poke', 18), 'Aufgaben &amp; Infos', tasks.length, 'kh-task', open)}${open
+        ? minisHtml(tasks.filter((x) => x.kind === 'mini').sort(byTime)) + tasks.filter((x) => x.kind === 'card').sort(byUrgency).map(cardHtml).join('') : ''}</div>`);
+    }
+    return parts.join('');
   };
   const groupKey = (x) => (x.people.length > 1 ? 'both' : x.people[0] || 'both');
   const order = [state.me.id, ...state.users.filter((u) => u.id !== state.me.id).map((u) => u.id), 'both'];
-  const groupHead = (k) => {
-    if (k === 'both') return `<div class="person-head" style="--c:${GENDER_COLORS.both}">${state.users.map((u) => (u.gender && CAL_HEADS[u.gender] ? `<img src="${CAL_HEADS[u.gender]}" alt="">` : '')).join('')}<span>Gemeinsam</span></div>`;
+  const groupHead = (k, fold, open, n) => {
+    const tail = `<span class="kh-n">${n}</span><span class="kh-chev" aria-hidden="true">▾</span>`;
+    if (k === 'both') return `<button type="button" class="person-head" data-fold="${esc(fold)}" aria-expanded="${open}" style="--c:${GENDER_COLORS.both}">${state.users.map((u) => (u.gender && CAL_HEADS[u.gender] ? `<img src="${CAL_HEADS[u.gender]}" alt="">` : '')).join('')}<span>Gemeinsam</span>${tail}</button>`;
     const u = userById(k);
-    return `<div class="person-head" style="--c:${GENDER_COLORS[u && u.gender] || GENDER_COLORS.both}">${u && u.gender && CAL_HEADS[u.gender] ? `<img src="${CAL_HEADS[u.gender]}" alt="">` : ''}<span>${esc(k === state.me.id ? 'Ich' : u ? u.firstName : '?')}</span></div>`;
+    return `<button type="button" class="person-head" data-fold="${esc(fold)}" aria-expanded="${open}" style="--c:${GENDER_COLORS[u && u.gender] || GENDER_COLORS.both}">${u && u.gender && CAL_HEADS[u.gender] ? `<img src="${CAL_HEADS[u.gender]}" alt="">` : ''}<span>${esc(k === state.me.id ? 'Ich' : u ? u.firstName : '?')}</span>${tail}</button>`;
   };
 
   let list;
@@ -1934,8 +1955,11 @@ function renderAustausch(view) {
         body = general.length ? `<div class="mini-rows">${general.sort(byTime).map((x) => x.html).join('')}</div>` : '';
         if (f.sort === 'person' && sec.key !== 'auslaufend') {
           const groups = order.map((k) => [k, rest.filter((x) => groupKey(x) === k)]).filter(([, g]) => g.length);
-          body += groups.map(([k, g]) => `<div class="person-group">${groupHead(k)}${block(g)}</div>`).join('');
-        } else body += block(rest);
+          body += groups.map(([k, g]) => {
+            const fk = `${sec.key}|p:${k}`, po = foldOpen(fk);
+            return `<div class="person-group${po ? '' : ' folded'}">${groupHead(k, fk, po, g.length)}${po ? block(g, fk) : ''}</div>`;
+          }).join('');
+        } else body += block(rest, sec.key);
       }
       const urgent = sec.key === 'auslaufend';
       return `<section class="msg-section${open ? ' open' : ''}${urgent ? ' sec-expiry' : ''}" data-section="${sec.key}">
@@ -1956,6 +1980,12 @@ function renderAustausch(view) {
   view.querySelectorAll('.mini-hol[data-hol]').forEach((b) => b.addEventListener('click', () => {
     const name = b.dataset.hol;
     dsSay(HOLIDAY_INFO[name] || name, { speaker: name });
+  }));
+  view.querySelectorAll('[data-fold]').forEach((h) => h.addEventListener('click', () => {
+    const k = h.dataset.fold;
+    prefs.folds[k] = !foldOpen(k);
+    lsSet('familie.folds', prefs.folds);
+    render();
   }));
   view.querySelectorAll('.section-head').forEach((h) => h.addEventListener('click', () => {
     const key = h.closest('[data-section]').dataset.section;
