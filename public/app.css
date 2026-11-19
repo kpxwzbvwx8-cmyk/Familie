@@ -2337,3 +2337,13 @@ button.person-head { padding: 2px 2px 4px; }
 .msg-detail .reply-list { margin: 0; padding-left: 1.1em; }
 .msg-detail .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .msg-detail-body { display: block; }
+
+/* Ruhiges Schild „Rückmeldung“ (kein Pulsieren) */
+.fb-tag {
+  flex: none; display: inline-flex; align-items: center; gap: 3px; padding: 0 8px; border-radius: 999px;
+  font-size: .78rem; line-height: 1.6; white-space: nowrap;
+  color: #3c5aa6; background: color-mix(in srgb, #3c5aa6 12%, var(--surface)); border: 1px solid color-mix(in srgb, #3c5aa6 35%, transparent);
+}
+.fb-tag.strike { color: #f3e8e8; background: linear-gradient(90deg, #3a0d14, #5b1530); border-color: #8a1f2c; }
+.bc-top .fb-tag { margin-left: auto; }
+.sl-flags .fb-tag { font-size: .72rem; padding: 0 6px; }

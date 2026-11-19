@@ -1078,6 +1078,14 @@ function formatRange(start, end) {
 }
 
 const isTodayIso = (iso) => Boolean(iso) && startOfDay(new Date(iso)).getTime() === startOfDay(new Date()).getTime();
+/** Ruhiges Schild „Rückmeldung“, wenn von mir eine Rückmeldung gebraucht wird (Antwort verlangt oder Strich angedroht) */
+function feedbackTag(m, needsMyAnswer) {
+  if (m.closedAt || !isResponsible(m)) return '';
+  const strike = m.threatStrike && !m.doneBy && !isFrozen(m);
+  if (strike) return '<span class="fb-tag strike" title="Rückmeldung nötig – sonst droht ein Strich">😈 Rückmeldung</span>';
+  if (needsMyAnswer) return '<span class="fb-tag" title="Rückmeldung von dir nötig">✉️ Rückmeldung</span>';
+  return '';
+}
 /** Zeitpunkt/Zeitraum einer Aufgabe: ganze Tage (0:00–23:59) als „ganztags“, sonst Uhrzeiten */
 function msgWhenText(m, fmt) {
   const s = new Date(m.eventAt), e = m.endAt ? new Date(m.endAt) : null;
@@ -1093,7 +1101,8 @@ function slimWhen(iso) {
   const today = startOfDay(new Date());
   const diff = Math.round((startOfDay(d) - today) / 86400e3);
   const t = formatTimeOnly(iso);
-  if (diff === 0 || diff === 1) return t;
+  if (diff === 0) return t;
+  if (diff === 1) return `morgen ${t}`;
   if (diff > 1 && diff < 7) return `${d.toLocaleDateString('de-DE', { weekday: 'short' })} ${t}`;
   return `${d.toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' })} ${t}`;
 }
@@ -1122,6 +1131,7 @@ function messageCardHtml(m) {
   const myResp = state.me ? resps.find((r) => r.userId === state.me.id) : null;
   const comments = (state.comments.get(m.id) || []).length;
   const needsMyAnswer = m.needsAck && responsible && !myResp && !m.closedAt;
+  const fb = feedbackTag(m, needsMyAnswer);
   const timed = m.eventAt && (m.endAt || Date.parse(m.eventAt) > Date.parse(m.createdAt) + 5 * 60e3);
   const done = m.doneBy && !awaitingReview;
   let time = '';
@@ -1133,16 +1143,16 @@ function messageCardHtml(m) {
     ? (m.reviewStatus === 'accepted' ? '👍 Abgenommen' : m.reviewStatus === 'rejected' || m.reviewStatus === 'missed' ? '😈 Strich vergeben' : '🔒 Geschlossen')
     : awaitingReview ? (mine ? '⏸️ Bitte abnehmen' : '⏸️ Wartet auf Abnahme') : done ? `✓ Erledigt von ${esc(nameOf(m.doneBy, '?'))}` : '';
   return `
-  <article class="bcard bc-task u-${esc(m.urgency)}${m.closedAt ? ' is-closed' : ''}${done ? ' is-done' : ''}${needsMyAnswer || (mine && awaitingReview) ? ' needs-me' : ''}${exp ? ' expiring' : ''}${state.highlight === m.id ? ' flash' : ''}"
+  <article class="bcard bc-task u-${esc(m.urgency)}${m.closedAt ? ' is-closed' : ''}${done ? ' is-done' : ''}${exp ? ' expiring' : ''}${state.highlight === m.id ? ' flash' : ''}"
     id="msg-${esc(m.id)}" data-msg="${esc(m.id)}" tabindex="0" role="button" aria-label="${esc(m.title)} – Details öffnen">
     <div class="bc-side">${ballSvg(urgencyInfo(m.urgency).ball, 38)}<span class="bc-badge">${esc(urgencyLabel(m.urgency))}</span></div>
     <div class="bc-body">
-      ${time || needsMyAnswer ? `<div class="bc-top">${time}${needsMyAnswer ? '<span class="bc-flag me">✉️ Rückmeldung von dir fehlt</span>' : ''}</div>` : ''}
+      ${time || fb ? `<div class="bc-top">${time}${fb}</div>` : ''}
       <h3 class="bc-title">${esc(m.title)}</h3>
       <div class="bc-meta">
         <span class="sl-who">${headImg(author)}${esc(mine ? 'Du' : author ? author.firstName : '?')}${forWhom.length ? `<span class="sl-arrow">➜</span>${forWhom.map(headImg).join('')}${esc(forWhom.map((u) => (u.id === state.me.id ? 'dich' : u.firstName)).join(' & '))}` : ''}</span>
         ${status ? `<span class="bc-status">${status}</span>` : ''}
-        ${m.threatStrike && !m.closedAt ? '<span>😈 Strich droht</span>' : ''}
+        ${m.threatStrike && !m.closedAt && !fb ? '<span>😈 Strich droht</span>' : ''}
         ${m.needsAck && !needsMyAnswer ? `<span>✉️ ${resps.length} Antwort${resps.length === 1 ? '' : 'en'}</span>` : ''}
         ${unread ? `<span class="bc-new">💬 ${unread} neu</span>` : ''}
       </div>
@@ -1191,6 +1201,7 @@ function messageSlimHtml(m) {
   const myResp = state.me ? resps.find((r) => r.userId === state.me.id) : null;
   const comments = (state.comments.get(m.id) || []).length;
   const needsMyAnswer = m.needsAck && responsible && !myResp && !m.closedAt;
+  const fb = feedbackTag(m, needsMyAnswer);
   const timed = m.eventAt && (m.endAt || Date.parse(m.eventAt) > Date.parse(m.createdAt) + 5 * 60e3);
   const done = m.doneBy && !awaitingReview;
   // Zeit-Feld: Countdown > Deadline > Zeitpunkt
@@ -1204,7 +1215,7 @@ function messageSlimHtml(m) {
     ? (m.reviewStatus === 'accepted' ? '👍 abgenommen' : m.reviewStatus === 'rejected' || m.reviewStatus === 'missed' ? '😈 Strich' : '🔒 zu')
     : awaitingReview ? (mine ? '⏸️ abnehmen!' : '⏸️ wartet') : done ? `✓ ${esc(nameOf(m.doneBy, '?'))}` : '';
   return `
-  <article class="slim msg-slim u-${esc(m.urgency)}${m.closedAt ? ' is-closed' : ''}${done ? ' is-done' : ''}${needsMyAnswer || (mine && awaitingReview) ? ' needs-me' : ''}${exp ? ' expiring' : ''}${state.highlight === m.id ? ' flash' : ''}"
+  <article class="slim msg-slim u-${esc(m.urgency)}${m.closedAt ? ' is-closed' : ''}${done ? ' is-done' : ''}${exp ? ' expiring' : ''}${state.highlight === m.id ? ' flash' : ''}"
     id="msg-${esc(m.id)}" data-msg="${esc(m.id)}" tabindex="0" role="button" aria-label="${esc(m.title)} – Details öffnen">
     <span class="sl-ico">${ballSvg(urgencyInfo(m.urgency).ball, 26)}</span>
     <div class="sl-main">
@@ -1212,12 +1223,12 @@ function messageSlimHtml(m) {
       <div class="sl-meta">
         <span class="sl-who">${who}</span>
         ${status ? `<span class="sl-status">${status}</span>` : ''}
-        ${m.threatStrike && !m.closedAt ? '<span title="Strich bei Nichterfüllung">😈</span>' : ''}
+        ${m.threatStrike && !m.closedAt && !fb ? '<span title="Strich bei Nichterfüllung">😈</span>' : ''}
         ${m.needsAck && !needsMyAnswer ? `<span>✉️ ${resps.length}</span>` : ''}
       </div>
     </div>
     <span class="sl-flags">
-      ${needsMyAnswer ? '<span class="sl-flag me" title="Rückmeldung von dir fehlt">✉️</span>' : ''}
+      ${fb}
       ${unread ? `<span class="sl-flag new" title="Neue Kommentare">💬<b>${unread}</b></span>` : ''}
     </span>
   </article>`;
