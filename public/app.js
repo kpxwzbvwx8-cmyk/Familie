@@ -4403,8 +4403,15 @@ function openDossier(userId) {
  *  blau für Trainer, rosa für Trainerinnen
  * ---------------------------------------------------------------------- */
 
-const APP_VERSION = '1.0.0.2';
+const APP_VERSION = '1.0.0.3';
 const CHANGELOG = [
+  {
+    version: '1.0.0.3', date: '2026-11-19', title: 'Hinweise repariert',
+    items: [
+      'Kalender-Hinweise kommen jetzt zuverlässig als Benachrichtigung',
+      'Gilt für dich und alle, die zu einem Termin zugesagt haben',
+    ],
+  },
   {
     version: '1.0.0.2', date: '2026-11-18', title: 'Rote Zahl am Symbol',
     items: [
