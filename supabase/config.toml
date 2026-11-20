@@ -367,6 +367,10 @@ verify_jwt = false
 # Wird von pg_cron ohne Anmeldung aufgerufen; geschützt durch ein Geheimnis in app_secrets.
 verify_jwt = false
 
+[functions.pair]
+# Einmal-Code einlösen geschieht noch ohne Anmeldung; „create“ prüft den Token in der Funktion.
+verify_jwt = false
+
 [functions.hsv]
 # HSV-Spielplan (öffentliche Daten von OpenLigaDB, zwischengespeichert); nur für angemeldete Mitglieder.
 verify_jwt = true

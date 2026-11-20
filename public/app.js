@@ -879,10 +879,108 @@ async function openSetup() {
   const code = new URLSearchParams(location.search).get('code') || '';
   openModal(
     `<div class="modal-head"><h2>Willkommen! 👋</h2></div>
+     ${familyExists ? `<button type="button" class="pair-entry" id="pair-login">
+        <span class="pair-entry-ico">📲</span><span><b>Ich habe schon ein Konto</b><small>Mit dem Code von deinem Handy anmelden</small></span><span aria-hidden="true">›</span>
+      </button>` : ''}
      <p class="setup-intro">Richte dein Konto ein. Daraus entsteht dein persönlicher Trainerpass – die Lieblingsfarbe wird zur Farbe deines Passes.</p>
      ${profileFormHtml({}, { familyExists, code })}`,
-    { dismissible: false, onMount: (m, c) => mountProfileForm(m, c, {}) }
+    { dismissible: false, onMount: (m, c) => {
+      mountProfileForm(m, c, {});
+      const pl = $('#pair-login', m);
+      if (pl) pl.addEventListener('click', () => openPairRedeem());
+    } }
   );
+}
+
+/* ---- Am PC anmelden: Einmal-Code vom Handy ------------------------------- */
+
+/** Handy: Code erzeugen und groß anzeigen (10 Minuten gültig) */
+async function openPairCreate() {
+  let res;
+  try { res = await invokeFn('pair', { action: 'create' }); } catch (e) { toast(e.message); return; }
+  const code = `${res.code.slice(0, 4)}-${res.code.slice(4)}`;
+  const url = location.origin + location.pathname;
+  openModal(
+    `<div class="modal-head"><h2>Am PC anmelden</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+     <div class="pair">
+       <ol class="steps">
+         <li>Öffne am PC <b class="pair-url">${esc(url)}</b></li>
+         <li>Tippe auf <b>„Ich habe schon ein Konto“</b>.</li>
+         <li>Gib diesen Code ein:</li>
+       </ol>
+       <div class="pair-code" aria-label="Code ${esc(res.code.split('').join(' '))}">${esc(code)}</div>
+       <p class="hint pair-left">Gültig noch <span id="pair-left">10:00</span> Minuten · nur einmal nutzbar</p>
+       <div class="ds-say static"><p class="ds-say-text">Gib den Code nur auf deinen eigenen Geräten ein – wer ihn hat, ist als du angemeldet.</p></div>
+       <div class="modal-actions"><button type="button" class="btn" id="pair-copy">Link kopieren</button><button type="button" class="btn primary" data-close>Fertig</button></div>
+     </div>`,
+    {
+      onMount: (modal, close) => {
+        const end = Date.parse(res.expiresAt);
+        const tick = () => {
+          const left = Math.max(0, end - Date.now());
+          const el = $('#pair-left', modal);
+          if (!el || !modal.isConnected) { clearInterval(t); return; }
+          el.textContent = `${Math.floor(left / 60000)}:${String(Math.floor(left / 1000) % 60).padStart(2, '0')}`;
+          if (!left) { clearInterval(t); $('.pair-code', modal).classList.add('expired'); }
+        };
+        const t = setInterval(tick, 1000); tick();
+        $('#pair-copy', modal).addEventListener('click', async () => {
+          try { await navigator.clipboard.writeText(url); toast('Link kopiert ✓'); } catch { toast(url); }
+        });
+      },
+    }
+  );
+}
+
+/** PC: Code eingeben → mit dem Konto vom Handy anmelden */
+function openPairRedeem() {
+  openModal(
+    `<div class="modal-head"><h2>Mit Handy-Code anmelden</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+     <form class="form pair" id="pair-form" novalidate>
+       <p class="hint">Am Handy: <b>Menü → Einstellungen → Am PC anmelden</b>. Dort steht ein Code mit 8 Zeichen.</p>
+       <input class="pair-input" name="code" maxlength="9" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX" aria-label="Code vom Handy">
+       <p class="error" id="pair-error"></p>
+       <div class="modal-actions"><button type="button" class="btn" data-close>Abbrechen</button><button type="submit" class="btn primary">Anmelden</button></div>
+     </form>`,
+    {
+      onMount: (modal) => {
+        const form = $('#pair-form', modal);
+        const input = form.elements.code;
+        input.focus();
+        input.addEventListener('input', () => {
+          const raw = input.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+          input.value = raw.length > 4 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : raw;
+        });
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const err = $('#pair-error', modal);
+          err.textContent = '';
+          const btn = form.querySelector('[type=submit]');
+          btn.disabled = true;
+          try {
+            const r = await invokeFn('pair', { action: 'redeem', code: input.value });
+            must(await sb.auth.verifyOtp({ token_hash: r.tokenHash, type: 'magiclink' }));
+            catchAnimation('Angemeldet!');
+            setTimeout(() => location.reload(), 900);
+          } catch (ex) {
+            err.textContent = ex.message;
+            btn.disabled = false;
+          }
+        });
+      },
+    }
+  );
+}
+
+/** Edge Function aufrufen und Fehlertext der Funktion durchreichen */
+async function invokeFn(name, body) {
+  const r = await sb.functions.invoke(name, { body });
+  if (r.error) {
+    let msg = 'Das hat nicht geklappt.';
+    try { msg = (await r.error.context.json()).error || msg; } catch { /* egal */ }
+    throw new Error(msg);
+  }
+  return r.data;
 }
 
 function openInstallGuide() {
@@ -894,11 +992,12 @@ function openInstallGuide() {
        <li>Die App über das neue Symbol auf dem Home-Bildschirm öffnen und dort das Konto einrichten.</li>
      </ol>
      <p class="hint">Nur die installierte App kann Benachrichtigungen empfangen (ab iOS 16.4). Ein Konto, das hier im Browser eingerichtet wird, ist in der installierten App nicht vorhanden.</p>
-     <div class="modal-actions"><button class="btn" id="continue-browser">Trotzdem im Browser nutzen</button></div>`,
+     <div class="modal-actions"><button class="btn" id="pair-browser">📲 Mit Handy-Code anmelden</button><button class="btn" id="continue-browser">Trotzdem im Browser nutzen</button></div>`,
     {
       dismissible: false,
       onMount: (modal, close) => {
         $('#continue-browser', modal).addEventListener('click', () => { close(); openSetup(); });
+        $('#pair-browser', modal).addEventListener('click', () => openPairRedeem());
       },
     }
   );
@@ -2800,6 +2899,10 @@ function renderSettings(view) {
         ${pushSupported && Notification.permission === 'default' ? '<button class="btn small primary" id="set-push">Aktivieren</button>' : ''}
       </div>
       ${state.me ? `<div class="setting-row">
+        <div><b>Am PC anmelden</b><p class="hint">Mit deinem Konto auch am Computer oder einem anderen Gerät</p></div>
+        <button class="btn small" id="set-pair">📲 Code erzeugen</button>
+      </div>` : ''}
+      ${state.me ? `<div class="setting-row">
         <div><b>Profil</b><p class="hint">${esc(fullName(state.me))}</p></div>
         <span class="row-btns"><button class="btn small" id="set-card">Ansehen</button><button class="btn small" id="set-profile">Bearbeiten</button></span>
       </div>` : ''}
@@ -2829,6 +2932,7 @@ function renderSettings(view) {
   const push = $('#set-push', view); if (push) push.addEventListener('click', enablePush);
   const prof = $('#set-profile', view); if (prof) prof.addEventListener('click', openEditProfile);
   const card = $('#set-card', view); if (card) card.addEventListener('click', () => openTrainerCard(state.me));
+  const pairBtn = $('#set-pair', view); if (pairBtn) pairBtn.addEventListener('click', openPairCreate);
   $('#set-update', view).addEventListener('click', checkForUpdate);
   $('#set-log', view).addEventListener('click', () => openDiary(0));
   $('#set-hsv', view).addEventListener('click', () => { lsSet('familie.hsvOn', !hsvEnabled()); render(); });
