@@ -142,6 +142,8 @@ function mapProfile(r) {
 function mapMessage(r) {
   return {
     id: r.id,
+    attachedNote: r.attached_note || null,
+    checks: r.note_checks || [],
     authorId: r.author_id,
     urgency: r.urgency,
     title: r.title,
@@ -1377,7 +1379,7 @@ function messageFullHtml(m) {
   markCommentsSeen(m.id);
   const pin = prefs.pins[m.id] && Date.parse(prefs.pins[m.id]) > Date.now() ? prefs.pins[m.id] : null;
   const responsible = isResponsible(m);
-  const canMarkDone = responsible && !m.doneBy && !m.closedAt && !m.needsAck && (m.deleteOnDone || m.deadlineAt || m.openEnded);
+  const canMarkDone = responsible && !m.doneBy && !m.closedAt && (m.checks.length || (!m.needsAck && (m.deleteOnDone || m.deadlineAt || m.openEnded)));
   const forWhom = m.assignees.map(userById).filter(Boolean);
   const awaitingReview = m.threatStrike && !m.closedAt && isFrozen(m);
   const options = m.needsAck ? (m.ackOptions || ['Erledigt']) : [];
@@ -1422,12 +1424,13 @@ function messageFullHtml(m) {
       ${m.deleteAt ? `<div class="ev-row"><span>🗑️</span><small class="hint">Löscht sich ${esc(relative(m.deleteAt))} (${esc(formatDateTime(m.deleteAt))})</small></div>` : ''}
       ${pin ? `<div class="ev-row"><span>📌</span><small class="hint">In „Fortlaufend“ bis ${esc(formatDateTime(pin))}</small></div>` : ''}
     </div>
+    ${m.attachedNote ? attachedNoteHtml(m) : ''}
     ${m.needsAck ? `<div class="ev-answer">
       <span>${responsible && !m.closedAt ? (myResp ? `Deine Antwort: <b>${esc(myResp.option)}</b> – ändern?` : 'Deine Rückmeldung:') : 'Antworten:'}</span>
       ${responsible && !m.closedAt ? `<div class="reply-btns">${options.map((o) => `<button class="btn${myResp && myResp.option === o ? ' primary' : ''}" data-reply="${esc(m.id)}" data-option="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
       ${resps.length ? `<ul class="reply-list">${resps.map((r) => `<li><b>${esc(nameOf(r.userId, '?'))}:</b> ${esc(r.option)}</li>`).join('')}</ul>` : `<small class="hint">${mine ? 'Noch keine Antwort.' : ''}</small>`}
     </div>` : ''}
-    ${canMarkDone ? `<div class="ev-answer"><span>Noch offen.</span><div class="ev-answer-btns"><button type="button" class="btn primary" data-done="${esc(m.id)}">✓ Erledigt</button></div></div>` : ''}
+    ${canMarkDone ? `<div class="ev-answer"><span>${m.checks.includes(false) ? 'Erst alle Listenpunkte abhaken.' : 'Noch offen.'}</span><div class="ev-answer-btns"><button type="button" class="btn primary" data-done="${esc(m.id)}" ${m.checks.includes(false) ? 'disabled' : ''}>✓ Erledigt</button></div></div>` : ''}
     ${mine && awaitingReview ? `<div class="ev-answer"><span>Rückmeldung ist da – nimm das Ergebnis ab:</span><div class="ev-answer-btns">
       <button type="button" class="btn primary" data-review="${esc(m.id)}" data-verdict="accept">👍 Abnehmen</button>
       <button type="button" class="btn danger" data-review="${esc(m.id)}" data-verdict="strike">😈 Strich vergeben</button></div></div>` : ''}
@@ -1449,6 +1452,8 @@ function messageFullHtml(m) {
 }
 
 function bindMessage(el, { toggle = true } = {}) {
+  const attachment = el.querySelector('.task-note');
+  if (attachment) bindAttachedNote(attachment, state.messages.find((m) => m.id === el.dataset.msg));
   if (toggle) {
     // Start: schmale Karte – Antippen öffnet die Details
     el.addEventListener('click', (e) => {
@@ -2342,6 +2347,10 @@ function openNewMessage(preset = 'normal') {
          <p class="hint">Die Nachricht verschwindet zu diesem Zeitpunkt für alle.</p>
        </div>
        </div>
+       <label class="field" id="attach-note-box"${preset === 'info' ? ' hidden' : ''}><span>Notiz einbetten</span>
+         <select name="attachedNote"><option value="">Keine Notiz</option>${state.notes.map((n) => `<option value="${esc(n.id)}">${esc(n.title || 'Ohne Überschrift')}</option>`).join('')}</select>
+         <small class="hint">Eine Kopie der gespeicherten Notiz wird für die Familie in der Aufgabe sichtbar.</small>
+       </label>
        <div id="task-box"${preset === 'info' ? ' hidden' : ''}>
        <div class="toggle-row"><span>Rückmeldung?</span>${helpBtn('ack')}${switchToggle('needsAck')}</div>
        <div class="field" id="ack-box" hidden>
@@ -2438,6 +2447,7 @@ function openNewMessage(preset = 'normal') {
         // Info: sofort – keine Zeiten, Fristen oder Rückmeldungen
         const isInfoSel = () => (form.querySelector('input[name=urgency]:checked') || {}).value === 'info';
         const syncInfo = () => {
+          $('#attach-note-box', modal).hidden = form.elements.urgency.value === 'info';
           const info = isInfoSel();
           $('#info-hint', modal).hidden = !info;
           $('#open-box', modal).hidden = info;
@@ -2501,7 +2511,9 @@ function openNewMessage(preset = 'normal') {
           try {
             const assignees = [...form.querySelectorAll('[name=assignee]:checked')].map((i) => i.value);
             if (!assignees.length) { err.textContent = 'Bitte auswählen, für wen die Aufgabe ist.'; btn.disabled = false; return; }
+            const note = !isInfoMsg && state.notes.find((n) => n.id === f.get('attachedNote'));
             const row = must(await sb.from('messages').insert({
+              ...(note ? snapshotNote(note) : {}),
               assignees,
               urgency: form.elements.hasDeadline.checked && form.elements.threatStrike.checked ? 'dringend' : f.get('urgency'),
               title,
@@ -2541,7 +2553,7 @@ function upsertMessage(m) {
   if (i >= 0) state.messages[i] = m;
   else state.messages.unshift(m);
   state.messages.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-  if (state.tab !== 'start') return;
+  if (state.tab !== 'start') { refreshMessageDetail(m.id); return; }
   if (i >= 0 && document.getElementById(`msg-${m.id}`)) rerenderMessage(m.id);
   else render();
 }
@@ -4495,7 +4507,11 @@ function sanitizeNoteHtml(html) {
         continue;
       }
       const color = child.tagName === 'FONT' ? child.getAttribute('color') : child.style && child.style.color;
+      const checklist = child.tagName === 'UL' && child.hasAttribute('data-checklist');
+      const checked = child.tagName === 'LI' && child.dataset.checked === 'true';
       for (const a of [...child.attributes]) child.removeAttribute(a.name);
+      if (checklist) child.setAttribute('data-checklist', '');
+      if (checked && child.parentElement?.matches('ul[data-checklist]')) child.dataset.checked = 'true';
       if (color && COLOR.test(color.trim())) {
         if (child.tagName === 'FONT') child.setAttribute('color', color.trim());
         else child.style.color = color.trim();
@@ -4506,6 +4522,80 @@ function sanitizeNoteHtml(html) {
   walk(tpl.content);
   return tpl.innerHTML;
 }
+function drawNoteStroke(ctx, s, w) {
+  if (!s.p.length) return;
+  ctx.save();
+  ctx.globalCompositeOperation = s.e ? 'destination-out' : 'source-over';
+  ctx.strokeStyle = s.c || '#000';
+  ctx.lineWidth = s.w * w;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(s.p[0][0] * w, s.p[0][1] * w);
+  if (s.p.length === 1) ctx.lineTo(s.p[0][0] * w + 0.1, s.p[0][1] * w);
+  for (let i = 1; i < s.p.length; i++) ctx.lineTo(s.p[i][0] * w, s.p[i][1] * w);
+  ctx.stroke();
+  ctx.restore();
+}
+
+const CHECK_ITEM = 'ul[data-checklist] > li';
+
+function snapshotNote(note) {
+  const template = document.createElement('template');
+  template.innerHTML = sanitizeNoteHtml(note.content);
+  return {
+    attached_note: { title: note.title, content: template.innerHTML, paper: note.paper, drawing: note.drawing },
+    note_checks: [...template.content.querySelectorAll(CHECK_ITEM)].map((li) => li.dataset.checked === 'true'),
+  };
+}
+
+function attachedNoteHtml(m) {
+  const note = m.attachedNote;
+  return `<section class="note-paper task-note" style="${esc(paperStyle(note.paper))}">
+    <strong>${esc(note.title || 'Notiz')}</strong><div class="note-sheet">
+      <div class="note-text">${sanitizeNoteHtml(note.content)}</div>
+      <canvas class="note-canvas" aria-hidden="true"></canvas>
+    </div></section>`;
+}
+
+function bindAttachedNote(el, m) {
+  const note = m.attachedNote;
+  const canvas = el.querySelector('canvas');
+  if (Array.isArray(note.drawing) && note.drawing.length) {
+    const strokes = note.drawing.filter((s) => Array.isArray(s?.p) && s.p.every((pt) => Array.isArray(pt) && pt.every(Number.isFinite)));
+    const width = 800;
+    const maxY = strokes.reduce((y, s) => s.p.reduce((a, pt) => Math.max(a, pt[1]), y), 0);
+    canvas.width = width;
+    canvas.height = Math.min(16000, Math.ceil(width * maxY) + 32);
+    strokes.forEach((s) => drawNoteStroke(canvas.getContext('2d'), s, width));
+  } else canvas.hidden = true;
+  el.querySelectorAll(CHECK_ITEM).forEach((li, index) => {
+    const check = document.createElement('button');
+    check.type = 'button';
+    check.className = 'task-check';
+    check.setAttribute('role', 'checkbox');
+    const checked = m.checks[index] === true;
+    li.dataset.checked = String(checked);
+    check.setAttribute('aria-checked', String(checked));
+    check.setAttribute('aria-label', li.textContent.trim() || 'Listenpunkt');
+    check.disabled = !isResponsible(m) || Boolean(m.closedAt || m.doneBy);
+    li.prepend(check);
+    li.addEventListener('click', async (event) => {
+      if (event.target.closest(CHECK_ITEM) !== li || check.disabled) return;
+      check.disabled = true;
+      try {
+        must(await sb.rpc('set_task_note_check', { p_message: m.id, p_index: index, p_checked: !checked }));
+        const row = must(await sb.from('messages').select('*').eq('id', m.id).single());
+        upsertMessage(mapMessage(row));
+        if (el.isConnected) refreshMessageDetail(m.id);
+      } catch (error) {
+        check.disabled = false;
+        toast(error.message);
+      }
+    });
+  });
+}
+
 function noteText(n) {
   const d = document.createElement('div');
   d.innerHTML = sanitizeNoteHtml(n.content.replace(/<\/?(div|p|li|ul|ol)\b[^>]*>|<br\s*\/?>/gi, ' $&'));
@@ -4625,6 +4715,7 @@ function openNoteEditor(id = null) {
          <div class="tool-group text-tools">
            <button type="button" class="tool" data-cmd="bold" title="Fett"><b>B</b></button>
            <button type="button" class="tool" data-cmd="underline" title="Unterstreichen"><u>U</u></button>
+           <button type="button" class="tool" data-check-tool aria-label="Checkliste" title="Checkliste · Alt+Enter zum Abhaken" aria-pressed="false">☑</button>
            <button type="button" class="tool" data-cmd="insertUnorderedList" title="Aufzählung">•≡</button>
          </div>
          <div class="tool-group draw-tools" hidden>
@@ -4687,26 +4778,11 @@ function openNoteEditor(id = null) {
           canvas.style.height = `${h}px`;
           redraw();
         };
-        const drawStroke = (s, w) => {
-          if (!s.p.length) return;
-          ctx.save();
-          ctx.globalCompositeOperation = s.e ? 'destination-out' : 'source-over';
-          ctx.strokeStyle = s.c || '#000';
-          ctx.lineWidth = s.w * w;
-          ctx.lineCap = 'round';
-          ctx.lineJoin = 'round';
-          ctx.beginPath();
-          ctx.moveTo(s.p[0][0] * w, s.p[0][1] * w);
-          if (s.p.length === 1) ctx.lineTo(s.p[0][0] * w + 0.1, s.p[0][1] * w);
-          for (let i = 1; i < s.p.length; i++) ctx.lineTo(s.p[i][0] * w, s.p[i][1] * w);
-          ctx.stroke();
-          ctx.restore();
-        };
         function redraw() {
           const w = sheet.clientWidth;
           ctx.setTransform(ratio(), 0, 0, ratio(), 0, 0);
           ctx.clearRect(0, 0, canvas.width, canvas.height);
-          work.drawing.forEach((s) => drawStroke(s, w));
+          work.drawing.forEach((s) => drawNoteStroke(ctx, s, w));
         }
         let current = null;
         const pos = (e) => {
@@ -4722,7 +4798,7 @@ function openNoteEditor(id = null) {
           current = { c: color, w: Math.round(((eraser ? 22 : penWidth) / w) * 10000) / 10000, p: [pos(e)] };
           if (eraser) current.e = 1;
           work.drawing.push(current);
-          drawStroke(current, w);
+          drawNoteStroke(ctx, current, w);
         });
         canvas.addEventListener('pointermove', (e) => {
           if (!current) return;
@@ -4733,7 +4809,7 @@ function openNoteEditor(id = null) {
           if (Math.hypot((p[0] - last[0]) * w, (p[1] - last[1]) * w) < 1.5) return;
           current.p.push(p);
           // inkrementell zeichnen
-          drawStroke({ ...current, p: [last, p] }, w);
+          drawNoteStroke(ctx, { ...current, p: [last, p] }, w);
           if (p[1] * w > sheet.clientHeight - 80) sizeCanvas();
         });
         const endStroke = () => {
@@ -4757,18 +4833,51 @@ function openNoteEditor(id = null) {
         /* Text */
         try { document.execCommand('styleWithCSS', false, false); } catch { /* egal */ }
         // Knöpfe zeigen an, ob fett/unterstrichen/Aufzählung gerade aktiv ist
+        const selectionElement = () => {
+          const node = document.getSelection().focusNode;
+          return node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+        };
         const syncFormatState = () => {
           if (mode !== 'text' || !textEl.contains(document.getSelection().anchorNode)) return;
+          const inChecklist = Boolean(selectionElement()?.closest('ul[data-checklist]'));
+          $m('[data-check-tool]').setAttribute('aria-pressed', String(inChecklist));
+          $m('[data-check-tool]').classList.toggle('active', inChecklist);
           modal.querySelectorAll('[data-cmd]').forEach((b) => {
             let on = false;
-            try { on = document.queryCommandState(b.dataset.cmd); } catch { /* egal */ }
+            try { on = document.queryCommandState(b.dataset.cmd) && !(inChecklist && b.dataset.cmd === 'insertUnorderedList'); } catch { /* egal */ }
             b.classList.toggle('active', on);
           });
         };
         document.addEventListener('selectionchange', syncFormatState);
         new MutationObserver(() => { if (!modal.isConnected) document.removeEventListener('selectionchange', syncFormatState); })
           .observe($('#modal-root'), { childList: true });
-        textEl.addEventListener('input', () => {
+        const selectedList = () => {
+          const selection = document.getSelection();
+          const node = selection.anchorNode;
+          const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+          return element?.closest('ul') || element?.children[selection.anchorOffset]?.closest('ul');
+        };
+        const toggleNoteItem = (item) => {
+          item.dataset.checked = String(item.dataset.checked !== 'true');
+          work.content = textEl.innerHTML;
+          markDirty();
+        };
+        textEl.addEventListener('click', (event) => {
+          const item = event.target.closest(CHECK_ITEM);
+          if (mode === 'text' && item && event.clientX < item.getBoundingClientRect().left) toggleNoteItem(item);
+        });
+        textEl.addEventListener('keydown', (event) => {
+          const item = selectionElement()?.closest(CHECK_ITEM);
+          if (mode === 'text' && item && event.altKey && event.key === 'Enter') {
+            event.preventDefault();
+            toggleNoteItem(item);
+          }
+        });
+        textEl.addEventListener('input', (event) => {
+          if (event.inputType === 'insertParagraph') {
+            const item = selectionElement()?.closest(CHECK_ITEM);
+            if (item) delete item.dataset.checked;
+          }
           work.content = textEl.innerHTML;
           markDirty();
           if (sheet.scrollHeight > canvas.clientHeight + 4) sizeCanvas();
@@ -4783,7 +4892,7 @@ function openNoteEditor(id = null) {
         /* Werkzeugleiste */
         const tools = $m('.note-tools');
         // Fokus im Text behalten, wenn Knöpfe getippt werden
-        tools.addEventListener('pointerdown', (e) => { if (mode === 'text' && e.target.closest('[data-cmd],[data-color]')) e.preventDefault(); });
+        tools.addEventListener('pointerdown', (e) => { if (mode === 'text' && e.target.closest('[data-cmd],[data-color],[data-check-tool]')) e.preventDefault(); });
         tools.addEventListener('click', (e) => {
           const b = e.target.closest('button');
           if (!b) return;
@@ -4794,6 +4903,23 @@ function openNoteEditor(id = null) {
             modal.querySelectorAll('[data-color]').forEach((x) => x.classList.toggle('active', x === b));
             modal.querySelectorAll('[data-eraser]').forEach((x) => x.classList.remove('active'));
             if (mode === 'text') { document.execCommand('foreColor', false, color); work.content = textEl.innerHTML; markDirty(); }
+            return;
+          }
+          if (b.hasAttribute('data-check-tool')) {
+            if (!textEl.contains(document.getSelection().anchorNode)) textEl.focus();
+            let list = selectedList();
+            if (!list || !textEl.contains(list)) {
+              const previous = new Set(textEl.querySelectorAll('ul'));
+              document.execCommand('insertUnorderedList');
+              list = selectedList() || [...textEl.querySelectorAll('ul')].find((ul) => !previous.has(ul));
+            }
+            if (list && textEl.contains(list)) {
+              list.toggleAttribute('data-checklist');
+              syncFormatState();
+              list.querySelectorAll(':scope > li').forEach((li) => delete li.dataset.checked);
+              work.content = textEl.innerHTML;
+              markDirty();
+            }
             return;
           }
           if (b.dataset.cmd) {

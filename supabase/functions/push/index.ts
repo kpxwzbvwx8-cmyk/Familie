@@ -50,13 +50,21 @@ Deno.serve(async (req) => {
       if (!msg) return json({ error: 'Aufgabe nicht gefunden' }, 404);
       const responsible = msg.assignees?.length ? msg.assignees.includes(me.id) : msg.author_id !== me.id;
       if (!responsible) return json({ error: 'Nur die zuständige Person kann die Aufgabe erledigen' }, 400);
-      if (!msg.delete_on_done && !msg.needs_ack && !msg.deadline_at && !msg.open_ended) return json({ error: 'Für diese Aufgabe ist keine Rückmeldung vorgesehen' }, 400);
+      if (msg.note_checks?.includes(false)) return json({ error: 'Erst alle Listenpunkte abhaken.' }, 409);
+      if (!msg.note_checks?.length && !msg.delete_on_done && !msg.needs_ack && !msg.deadline_at && !msg.open_ended) return json({ error: 'Für diese Aufgabe ist keine Rückmeldung vorgesehen' }, 400);
       if (msg.done_by) return json({ error: 'Schon erledigt' }, 409);
       if (msg.closed_at) return json({ error: 'Die Aufgabe ist bereits geschlossen' }, 409);
 
+      // Zustand beim Schreiben erneut prüfen, auch bei gleichzeitigem Abhaken oder Löschen.
+      const write = msg.delete_on_done && !msg.threat_strike
+        ? admin.from('messages').delete()
+        : admin.from('messages').update({ done_by: me.id, done_at: new Date().toISOString() });
+      const { data: changed, error } = await write.eq('id', msg.id).is('closed_at', null)
+        .is('done_by', null).not('note_checks', 'cs', '{false}').select('id').maybeSingle();
+      if (error) throw error;
+      if (!changed) return json({ error: 'Die Aufgabe wurde geändert. Bitte prüfe die Liste erneut.' }, 409);
+
       if (msg.threat_strike) {
-        // Strich angedroht: Erledigt friert nur den Timer ein – der Urheber nimmt ab
-        await admin.from('messages').update({ done_by: me.id, done_at: new Date().toISOString() }).eq('id', msg.id);
         await sendPush({
           title: `Bitte abnehmen: ${msg.title}`,
           body: `${meName} meldet „erledigt“. Nimm das Ergebnis ab oder vergib den Strich.`,
@@ -67,11 +75,6 @@ Deno.serve(async (req) => {
         return json({ ok: true, deleted: false, review: true });
       }
 
-      if (msg.delete_on_done) {
-        await admin.from('messages').delete().eq('id', msg.id);
-      } else {
-        await admin.from('messages').update({ done_by: me.id, done_at: new Date().toISOString() }).eq('id', msg.id);
-      }
       await sendPush({
         title: msg.delete_on_done ? `Geschlossen: ${msg.title}` : `Erledigt: ${msg.title}`,
         body: msg.delete_on_done

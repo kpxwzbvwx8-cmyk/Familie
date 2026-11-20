@@ -2429,3 +2429,22 @@ button.person-head { padding: 2px 2px 4px; }
 }
 .pair-entry small { display: block; color: var(--muted); }
 .pair-entry-ico { font-size: 1.6rem; }
+
+.note-text ul[data-checklist] { list-style: none; padding-left: 32px; }
+.note-text ul[data-checklist] > li { position: relative; }
+.note-text ul[data-checklist] > li::before, .task-check {
+  position: absolute; left: -30px; top: 4px; width: 24px; height: 24px;
+  border-radius: 50%; border: 2px solid #576171; background: white;
+  color: white; text-align: center; line-height: 20px; cursor: pointer;
+}
+.note-text ul[data-checklist] > li::before { content: ''; }
+.note-text ul[data-checklist] > li[data-checked=true]::before,
+.task-check[aria-checked=true] { background: #215862; content: '✓'; }
+.task-note .note-text ul[data-checklist] > li::before { display: none; }
+.task-check { padding: 0; }
+.task-check[aria-checked=true]::after { content: '✓'; }
+.task-note > strong { display: block; padding: 6px 14px; background: var(--sheet); color: #26262b; }
+.task-note .note-sheet { display: grid; overflow: hidden; }
+.task-note .note-text, .task-note .note-canvas { grid-area: 1 / 1; min-width: 0; }
+.task-note .note-canvas { position: relative; height: auto; align-self: start; }
+.note-text ul[data-checklist] > li[data-checked=true] { text-decoration: line-through; }
