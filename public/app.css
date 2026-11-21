@@ -2504,3 +2504,10 @@ card-photos.photo-thumbs { min-height: 1px; margin: 6px 0; }
 .photo-remove { position: absolute; right: 0; top: 0; width: 25px; height: 25px; color: white; background: #342e39; border: 1px solid white; border-radius: 50%; line-height: 1; cursor: pointer; }
 .photo-full { display: block; width: 100%; max-height: 75vh; object-fit: contain; }
 .note-editor .card-photo-picker { margin-bottom: 8px; }
+
+.guide-slides { display: grid; gap: 6px; min-width: 0; min-height: 1px; }
+.guide-slides > img { display: block; width: 100%; max-height: 68vh; object-fit: contain; border-radius: 8px; }
+.guide-slides:has(.guide-slide-nav) > img { height: min(62vh, 560px); touch-action: pan-y pinch-zoom; }
+.guide-slide-nav { display: flex; align-items: center; justify-content: center; gap: 12px; }
+.guide-slide-nav .btn { margin: 0; min-width: 44px; min-height: 44px; }
+.task-attachment .guide-slides { margin: 4px 9px 10px; }

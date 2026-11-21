@@ -151,7 +151,7 @@ function mapMessage(r) {
     authorId: r.author_id,
     urgency: r.urgency,
     title: r.title,
-    description: r.description || '',
+    description: r.in_handbook ? (r.description || '').trim() : r.description || '',
     eventAt: r.event_at,
     endAt: r.end_at || null,
     deleteAt: r.delete_at,
@@ -1371,6 +1371,8 @@ function refreshMessageDetail(id) {
   const tpl = document.createElement('template');
   tpl.innerHTML = messageFullHtml(m).trim();
   const fresh = tpl.content.firstElementChild;
+  const slides = new Map([...d.modal.querySelectorAll('card-photos[data-slideshow]')].map((gallery) => [gallery.dataset.id, gallery.dataset.slide || '0']));
+  fresh.querySelectorAll('card-photos[data-slideshow]').forEach((gallery) => { gallery.dataset.slide = slides.get(gallery.dataset.id) || '0'; });
   if (el) el.replaceWith(fresh); else $('.msg-detail-body', d.modal).appendChild(fresh);
   fresh.querySelectorAll('[data-attachment]').forEach((entry) => { entry.open = opened.has(entry.dataset.attachment); });
   bindMessage(fresh, { toggle: false });
@@ -1413,7 +1415,7 @@ function messageFullHtml(m) {
       <button class="icon-btn" data-close aria-label="Schließen">✕</button>
     </div>
     <div class="ev-rows">
-      ${m.inHandbook ? cardPhotosHtml('message', m) : ''}
+      ${m.inHandbook ? guidePhotosHtml(m) : ''}
       ${exp ? `<div class="ev-row exp-row"><span>⌛</span><b>${exp.kind === 'respond' ? 'Deine Rückmeldung fehlt' : 'Läuft aus'} – <span data-left="${esc(exp.at)}">${esc(timeLeft(exp.at))}</span> (bis ${esc(formatTimeOnly(exp.at))})</b></div>` : ''}
       ${m.openEnded ? `<div class="ev-row"><span>⚡</span><b>Sofort &amp; offen – bleibt, bis ${m.needsAck ? 'alle geantwortet haben' : 'sie erledigt ist'}</b></div>` : ''}
       ${timed ? `<div class="ev-row"><span>🕒</span><b>${esc(formatRange(m.eventAt, m.endAt))}${m.remindAtStart ? ' 🔔' : ''}</b></div>` : ''}
@@ -2015,7 +2017,8 @@ function linkedInfoHtml(id) {
   const info = state.messages.find((m) => m.id === id && isInfo(m));
   if (!info) return '';
   return `<details class="linked-info guide-entry task-attachment" data-attachment="info-${esc(id)}"><summary>${ballSvg('master', 16)}<span>${esc(info.title)}</span></summary>
-    <p>${esc(info.description || 'Keine weiteren Details.')}</p>${cardPhotosHtml('message', info)}${editCardButton(info)}</details>`;
+    ${info.description || !info.inHandbook ? `<p>${esc(info.description || 'Keine weiteren Details.')}</p>` : ''}
+    ${guidePhotosHtml(info)}${editCardButton(info)}</details>`;
 }
 
 function filterHandbook(book) {
@@ -2091,8 +2094,8 @@ function openInfoPopup(ids, start = 0) {
         <button class="icon-btn" data-close aria-label="Schließen">✕</button>
       </div>
       <h2 class="ip-title">${esc(m.title)}</h2>
-      <div class="ds-say static ip-text"><p class="ds-say-text">${esc(m.description || 'Keine weiteren Details.')}</p></div>
-      ${cardPhotosHtml('message', m)}
+      ${m.description || !m.inHandbook ? `<div class="ds-say static ip-text"><p class="ds-say-text">${esc(m.description || 'Keine weiteren Details.')}</p></div>` : ''}
+      ${guidePhotosHtml(m)}
       <div class="ip-meta">
         ${timed ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt))}</span>` : ''}
         ${forWhom.length ? `<span>👉 Für ${esc(forWhom.map((u) => (u.id === state.me.id ? 'dich' : u.firstName)).join(' & '))}</span>` : ''}
@@ -2601,8 +2604,7 @@ function openNewMessage(preset = 'normal', saveInHandbook = false, edit = null) 
           form.querySelector('[data-help="notify"]').hidden = Boolean(edit || guide);
           modal.querySelector('.modal-head h2').textContent = edit ? (guide ? 'Anleitung bearbeiten' : 'Aufgabe bearbeiten') : guide ? 'Neue Anleitung' : isInfoSel() ? 'Neue Info' : 'Neue Aufgabe';
           form.elements.title.placeholder = guide ? 'z. B. Waschmaschine starten' : "Worum geht's?";
-          form.elements.description.required = guide;
-          form.elements.description.placeholder = guide ? 'Welche Schritte sind wichtig?' : 'Details …';
+          form.elements.description.placeholder = guide ? 'Optional bei einer Anleitung mit Bildern' : 'Details …';
           form.querySelector('[type=submit]').textContent = edit ? 'Änderungen speichern' : guide ? 'Anleitung speichern' : 'Senden';
           $('#info-hint', modal).textContent = guide
             ? 'Diese Anleitung bleibt für die Familie im Handbuch. Ihr könnt sie in Aufgaben verlinken.'
@@ -2670,7 +2672,6 @@ function openNewMessage(preset = 'normal', saveInHandbook = false, edit = null) 
           const remind = Boolean(!openEnded && form.elements.remind.checked && eventAt && (keepReminder || Date.parse(eventAt) > Date.now() + 2 * 60e3));
           err.textContent = '';
           if (!title) { err.textContent = 'Bitte einen Titel angeben.'; return; }
-          if (guide && !f.get('description').trim()) { err.textContent = 'Bitte beschreibe die Anleitung.'; return; }
           if (!eventAt && !openEnded && !isInfoMsg && !(edit && !edit.openEnded && !edit.eventAt)) { err.textContent = 'Bitte einen Startzeitpunkt angeben.'; return; }
           if (form.elements.hasEnd.checked && !endAt) { err.textContent = 'Bitte das Ende des Zeitraums angeben.'; return; }
           if (form.elements.hasDeadline.checked && !deadlineAt) { err.textContent = 'Bitte eine Deadline angeben.'; return; }
@@ -2699,6 +2700,9 @@ function openNewMessage(preset = 'normal', saveInHandbook = false, edit = null) 
               return snapshotNote(note);
             });
             const selectedPhotos = await photos.read();
+            if (guide && !f.get('description').trim() && !selectedPhotos.length) {
+              throw new Error('Füge mindestens ein Bild oder eine Beschreibung hinzu.');
+            }
             const card = {
               ...(guide ? { in_handbook: true } : {}),
               linked_info_id: infos[0] || null,
@@ -5818,13 +5822,66 @@ function photoThumbs(root, photos, remove) {
   });
 }
 
-function cardPhotosHtml(kind, card, slot = 0) {
-  return card.hasPhotos ? `<card-photos data-kind="${kind}" data-id="${esc(card.id)}" data-slot="${slot}"></card-photos>` : '';
+function guidePhotosHtml(card) {
+  return cardPhotosHtml('message', card, 0, card.inHandbook && !card.description.trim());
+}
+
+function cardPhotosHtml(kind, card, slot = 0, slideshow = false) {
+  return card.hasPhotos ? `<card-photos data-kind="${kind}" data-id="${esc(card.id)}" data-slot="${slot}"${slideshow ? ' data-slideshow' : ''}></card-photos>` : '';
+}
+
+function showGuideSlides(root, photos) {
+  root.replaceChildren();
+  if (!photos.length) return;
+  const image = new Image();
+  image.draggable = false;
+  root.append(image);
+  if (photos.length === 1) {
+    image.src = photos[0];
+    image.alt = 'Bild zur Anleitung';
+    return;
+  }
+
+  root.insertAdjacentHTML('beforeend', `<div class="guide-slide-nav">
+    <button type="button" class="btn small" aria-label="Vorheriges Bild">◀</button>
+    <span aria-live="polite" aria-atomic="true"></span>
+    <button type="button" class="btn small" aria-label="Nächstes Bild">▶</button></div>`);
+  const count = root.querySelector('[aria-live]');
+  const [prev, next] = root.querySelectorAll('button');
+  let index = Math.min(Number(root.dataset.slide) || 0, photos.length - 1);
+  function display(step) {
+    index = (index + step + photos.length) % photos.length;
+    root.dataset.slide = String(index);
+    image.src = photos[index];
+    image.alt = `Bild ${index + 1} von ${photos.length}`;
+    count.textContent = image.alt;
+  }
+  prev.onclick = () => display(-1);
+  next.onclick = () => display(1);
+  root.onkeydown = (event) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    display(event.key === 'ArrowLeft' ? -1 : 1);
+  };
+  let startX;
+  image.onpointerdown = (event) => {
+    if (!event.isPrimary || event.button !== 0) return;
+    startX = event.clientX;
+    image.setPointerCapture(event.pointerId);
+  };
+  image.onpointercancel = () => { startX = undefined; };
+  image.onpointerup = (event) => {
+    if (startX === undefined || !event.isPrimary) return;
+    const distance = event.clientX - startX;
+    startX = undefined;
+    if (Math.abs(distance) >= 40) display(distance < 0 ? 1 : -1);
+  };
+  display(0);
 }
 
 customElements.define('card-photos', class extends HTMLElement {
   connectedCallback() {
-    this.className = 'photo-thumbs';
+    this.className = this.hasAttribute('data-slideshow') ? 'guide-slides' : 'photo-thumbs';
     this.observer = new IntersectionObserver((entries) => {
       if (entries.some((entry) => entry.isIntersecting)) {
         this.observer.disconnect();
@@ -5837,7 +5894,9 @@ customElements.define('card-photos', class extends HTMLElement {
   async load() {
     try {
       const photos = await readCardPhotos(this.dataset.kind, this.dataset.id, Number(this.dataset.slot));
-      if (this.isConnected) photoThumbs(this, photos);
+      if (!this.isConnected) return;
+      if (this.hasAttribute('data-slideshow')) showGuideSlides(this, photos);
+      else photoThumbs(this, photos);
     } catch {
       this.innerHTML = '<button type="button" class="btn small">Bilder erneut laden</button>';
       this.firstElementChild.onclick = () => this.load();
