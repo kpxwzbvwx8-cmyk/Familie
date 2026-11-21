@@ -143,8 +143,9 @@ function mapMessage(r) {
   return {
     id: r.id,
     inHandbook: Boolean(r.in_handbook),
-    linkedInfoId: r.linked_info_id || null,
-    attachedNote: r.attached_note || null,
+    linkedInfoIds: [r.linked_info_id, ...(r.additional_info_ids || [])].filter(Boolean),
+    attachedNotes: [r.attached_note, ...(r.additional_notes || [])].filter(Boolean),
+    hasPhotos: Boolean(r.has_photos),
     checks: r.note_checks || [],
     authorId: r.author_id,
     urgency: r.urgency,
@@ -1365,12 +1366,12 @@ function refreshMessageDetail(id) {
   const el = $('[data-msg-full]', d.modal);
   const input = el && el.querySelector('.comment-form input');
   const draft = input ? input.value : '';
-  const infoOpen = el?.querySelector('.linked-info')?.open;
+  const opened = new Set([...d.modal.querySelectorAll('[data-attachment][open]')].map((entry) => entry.dataset.attachment));
   const tpl = document.createElement('template');
   tpl.innerHTML = messageFullHtml(m).trim();
   const fresh = tpl.content.firstElementChild;
   if (el) el.replaceWith(fresh); else $('.msg-detail-body', d.modal).appendChild(fresh);
-  if (infoOpen && fresh.querySelector('.linked-info')) fresh.querySelector('.linked-info').open = true;
+  fresh.querySelectorAll('[data-attachment]').forEach((entry) => { entry.open = opened.has(entry.dataset.attachment); });
   bindMessage(fresh, { toggle: false });
   const ni = fresh.querySelector('.comment-form input');
   if (ni) ni.value = draft;
@@ -1428,8 +1429,9 @@ function messageFullHtml(m) {
       ${m.deleteAt ? `<div class="ev-row"><span>🗑️</span><small class="hint">Löscht sich ${esc(relative(m.deleteAt))} (${esc(formatDateTime(m.deleteAt))})</small></div>` : ''}
       ${pin ? `<div class="ev-row"><span>📌</span><small class="hint">In „Fortlaufend“ bis ${esc(formatDateTime(pin))}</small></div>` : ''}
     </div>
-    ${m.linkedInfoId ? linkedInfoHtml(m.linkedInfoId) : ''}
-    ${m.attachedNote ? attachedNoteHtml(m) : ''}
+    ${cardPhotosHtml('message', m)}
+    ${m.linkedInfoIds.map(linkedInfoHtml).join('')}
+    ${m.attachedNotes.map((note, i) => attachedNoteHtml(m, note, i)).join('')}
     ${m.needsAck ? `<div class="ev-answer">
       <span>${responsible && !m.closedAt ? (myResp ? `Deine Antwort: <b>${esc(myResp.option)}</b> – ändern?` : 'Deine Rückmeldung:') : 'Antworten:'}</span>
       ${responsible && !m.closedAt ? `<div class="reply-btns">${options.map((o) => `<button class="btn${myResp && myResp.option === o ? ' primary' : ''}" data-reply="${esc(m.id)}" data-option="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
@@ -1457,8 +1459,12 @@ function messageFullHtml(m) {
 }
 
 function bindMessage(el, { toggle = true } = {}) {
-  const attachment = el.querySelector('.task-note');
-  if (attachment) bindAttachedNote(attachment, state.messages.find((m) => m.id === el.dataset.msg));
+  let checkOffset = 0;
+  const message = state.messages.find((m) => m.id === el.dataset.msg);
+  el.querySelectorAll('.task-note').forEach((attachment, i) => {
+    bindAttachedNote(attachment, message, message.attachedNotes[i], checkOffset);
+    checkOffset += attachment.querySelectorAll(CHECK_ITEM).length;
+  });
   if (toggle) {
     // Start: schmale Karte – Antippen öffnet die Details
     el.addEventListener('click', (e) => {
@@ -1972,21 +1978,25 @@ async function markInfo(m, { hidden = false } = {}) {
   try { must(await sb.from('message_reads').upsert(row, { onConflict: 'message_id,user_id' })); } catch (e) { toast(e.message); }
 }
 
+function attachmentChoice(name, id, title) {
+  return `<label class="attachment-choice"><input type="checkbox" name="${name}" value="${esc(id)}"><span>${esc(title)}</span></label>`;
+}
+
 function infoOptionsHtml() {
   const infos = state.messages.filter((m) => isInfo(m) && !infoHidden(m) && (!m.deleteAt || Date.parse(m.deleteAt) > Date.now()))
     .sort((a, b) => a.title.localeCompare(b.title, 'de'));
   return [[true, 'Trainer-Handbuch'], [false, 'Infos im Verlauf']].map(([handbook, label]) => {
     const options = infos.filter((m) => m.inHandbook === handbook)
-      .map((m) => `<option value="${esc(m.id)}">${esc(m.title)}</option>`).join('');
-    return options ? `<optgroup label="${label}">${options}</optgroup>` : '';
-  }).join('');
+      .map((m) => attachmentChoice('linkedInfo', m.id, m.title)).join('');
+    return options ? `<fieldset><legend>${label}</legend>${options}</fieldset>` : '';
+  }).join('') || '<p class="hint">Noch keine Info-Karten vorhanden.</p>';
 }
 
 function linkedInfoHtml(id) {
   const info = state.messages.find((m) => m.id === id && isInfo(m));
   if (!info) return '';
-  return `<details class="linked-info guide-entry"><summary>${ballSvg('master', 20)}<span>${esc(info.title)}</span></summary>
-    <p>${esc(info.description || 'Keine weiteren Details.')}</p></details>`;
+  return `<details class="linked-info guide-entry task-attachment" data-attachment="info-${esc(id)}"><summary>${ballSvg('master', 16)}<span>${esc(info.title)}</span></summary>
+    <p>${esc(info.description || 'Keine weiteren Details.')}</p>${cardPhotosHtml('message', info)}</details>`;
 }
 
 function refreshHandbook() {
@@ -2000,7 +2010,7 @@ function refreshHandbook() {
   list.innerHTML = guides.filter((m) => (m.title + ' ' + m.description).toLocaleLowerCase('de').includes(query))
     .map((m) => `<details class="guide-entry" data-guide="${esc(m.id)}"${opened.has(m.id) ? ' open' : ''}>
       <summary>${ballSvg('master', 20)}<span>${esc(m.title)}</span></summary>
-      <p>${esc(m.description)}</p>
+      <p>${esc(m.description)}</p>${cardPhotosHtml('message', m)}
       ${m.authorId === state.me.id ? '<button type="button" class="btn small danger" data-remove-guide>Anleitung löschen</button>' : ''}
     </details>`).join('') || `<p class="hint">${guides.length ? 'Keine passende Anleitung gefunden.' : 'Dein Handbuch ist noch leer.'}</p>`;
 }
@@ -2060,6 +2070,7 @@ function openInfoPopup(ids, start = 0) {
       </div>
       <h2 class="ip-title">${esc(m.title)}</h2>
       <div class="ds-say static ip-text"><p class="ds-say-text">${esc(m.description || 'Keine weiteren Details.')}</p></div>
+      ${cardPhotosHtml('message', m)}
       <div class="ip-meta">
         ${timed ? `<span>🕒 ${esc(formatRange(m.eventAt, m.endAt))}</span>` : ''}
         ${forWhom.length ? `<span>👉 Für ${esc(forWhom.map((u) => (u.id === state.me.id ? 'dich' : u.firstName)).join(' & '))}</span>` : ''}
@@ -2379,6 +2390,7 @@ function openNewMessage(preset = 'normal', saveInHandbook = false) {
        </label>
        <label class="field"><span>Titel</span><input name="title" required maxlength="120" placeholder="Worum geht's?"></label>
        <label class="field"><span>Beschreibung</span><textarea name="description" maxlength="4000" placeholder="Details …"></textarea></label>
+       ${photoPickerHtml()}
        <label class="field"><span>Urheber</span><input value="${esc(fullName(state.me))}" readonly></label>
        <p class="hint info-only" id="info-hint"${preset === 'info' ? '' : ' hidden'}>ℹ️ Eine Info gilt sofort – ohne Zeitpunkt, Deadline oder Rückmeldung. Sie erscheint beim Öffnen der App als Popup.</p>
        <div id="open-box"${preset === 'info' ? ' hidden' : ''}>
@@ -2413,13 +2425,14 @@ function openNewMessage(preset = 'normal', saveInHandbook = false) {
          <p class="hint">Die Nachricht verschwindet zu diesem Zeitpunkt für alle.</p>
        </div>
        </div>
-       <label class="field" id="link-info-box"${preset === 'info' ? ' hidden' : ''}><span>Info-Karte verlinken</span>
-         <select name="linkedInfo"><option value="">Keine Info-Karte</option>${infoOptionsHtml()}</select>
-       </label>
-       <label class="field" id="attach-note-box"${preset === 'info' ? ' hidden' : ''}><span>Notiz einbetten</span>
-         <select name="attachedNote"><option value="">Keine Notiz</option>${state.notes.map((n) => `<option value="${esc(n.id)}">${esc(n.title || 'Ohne Überschrift')}</option>`).join('')}</select>
-         <small class="hint">Eine Kopie der gespeicherten Notiz wird für die Familie in der Aufgabe sichtbar.</small>
-       </label>
+       <details class="attachment-picker" id="link-info-box"${preset === 'info' ? ' hidden' : ''}>
+         <summary>Info-Karten und Anleitungen verlinken <output></output></summary>${infoOptionsHtml()}
+       </details>
+       <details class="attachment-picker" id="attach-note-box"${preset === 'info' ? ' hidden' : ''}>
+         <summary>Notizen einbetten <output></output></summary>
+         <small class="hint">Die ausgewählten Notizen werden mit ihren Bildern in die Aufgabe kopiert und für die Familie sichtbar.</small>
+         ${state.notes.map((n) => attachmentChoice('attachedNote', n.id, n.title || 'Ohne Überschrift')).join('') || '<p class="hint">Noch keine Notizen vorhanden.</p>'}
+       </details>
        <div id="task-box"${preset === 'info' ? ' hidden' : ''}>
        <div class="toggle-row"><span>Rückmeldung?</span>${helpBtn('ack')}${switchToggle('needsAck')}</div>
        <div class="field" id="ack-box" hidden>
@@ -2439,6 +2452,11 @@ function openNewMessage(preset = 'normal', saveInHandbook = false) {
     {
       onMount: (modal, close) => {
         const form = $('#msg-form', modal);
+        const photos = mountPhotoPicker(form);
+        form.querySelectorAll('.attachment-picker').forEach((picker) => picker.addEventListener('change', () => {
+          const count = picker.querySelectorAll(':checked').length;
+          picker.querySelector('output').value = count ? `(${count})` : '';
+        }));
         form.addEventListener('click', (e) => {
           const qbtn = e.target.closest('[data-q]');
           if (qbtn) {
@@ -2601,11 +2619,20 @@ function openNewMessage(preset = 'normal', saveInHandbook = false) {
           try {
             const assignees = guide ? [] : [...form.querySelectorAll('[name=assignee]:checked')].map((i) => i.value);
             if (!guide && !assignees.length) { err.textContent = 'Bitte auswählen, für wen die Aufgabe ist.'; btn.disabled = false; return; }
-            const note = !isInfoMsg && state.notes.find((n) => n.id === f.get('attachedNote'));
+            const infos = isInfoMsg ? [] : f.getAll('linkedInfo');
+            const notes = isInfoMsg ? [] : f.getAll('attachedNote').map((id) => {
+              const note = state.notes.find((n) => n.id === id);
+              if (!note) throw Error('Eine gewählte Notiz ist nicht mehr verfügbar.');
+              return snapshotNote(note);
+            });
             const row = must(await sb.from('messages').insert({
               ...(guide ? { in_handbook: true } : {}),
-              ...(!isInfoMsg && f.get('linkedInfo') ? { linked_info_id: f.get('linkedInfo') } : {}),
-              ...(note ? snapshotNote(note) : {}),
+              linked_info_id: infos[0] || null,
+              additional_info_ids: infos.slice(1),
+              attached_note: notes[0]?.attached_note || null,
+              additional_notes: notes.slice(1).map((n) => n.attached_note),
+              note_checks: notes.flatMap((n) => n.note_checks),
+              photos_input: await photos.read(),
               assignees,
               urgency: form.elements.hasDeadline.checked && form.elements.threatStrike.checked ? 'dringend' : f.get('urgency'),
               title,
@@ -3152,6 +3179,7 @@ function reminderLabel(r, allDay) {
 
 function mapEvent(r) {
   return {
+    hasPhotos: Boolean(r.has_photos),
     id: r.id, ownerId: r.owner_id, title: r.title, location: r.location || '', description: r.description || '',
     allDay: Boolean(r.all_day), startAt: r.start_at, endAt: r.end_at,
     reminders: Array.isArray(r.reminders) ? r.reminders : [], createdAt: r.created_at, updatedAt: r.updated_at,
@@ -4019,6 +4047,7 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
        <label class="field"><span>Titel</span><input name="title" maxlength="120" required placeholder="${todo ? 'z. B. Blumen gießen' : 'z. B. Zahnarzt'}" value="${esc(ev ? ev.title : info ? info.title : '')}"></label>
        ${todo ? '' : `<label class="field"><span>Ort</span><input name="location" maxlength="200" placeholder="optional" value="${esc(ev ? ev.location : '')}"></label>`}
        <label class="field"><span>Beschreibung</span><textarea name="description" maxlength="4000" placeholder="optional">${esc(ev ? ev.description : infoDesc)}</textarea></label>
+       ${photoPickerHtml()}
        <div class="toggle-row"${todo ? ' hidden' : ''}><span>Ganztägig</span>${switchToggle('allDay', allDay)}</div>
        ${todo ? '<p class="hint tight">🔔 Erinnerungen gelten für den ganzen Tag. Wann du erinnert wirst, stellst du unten beim Hinweis ein – eine Uhrzeit kannst du auch in Titel oder Beschreibung schreiben.</p>' : ''}
        <div class="ev-times">
@@ -4047,6 +4076,8 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
     {
       onMount: (modal, close) => {
         const form = $('#ev-form', modal);
+        const photos = mountPhotoPicker(form, ev?.hasPhotos ? readCardPhotos('event', ev.id) :
+          info?.hasPhotos ? readCardPhotos('message', info.id) : []);
         const remList = $('#rem-list', modal);
         const isAllDay = () => form.elements.allDay.checked;
         const readStart = () => {
@@ -4191,15 +4222,10 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
           btn.disabled = true;
           try {
             // Serie: „nur dieser“ → Vorkommen ausnehmen + Einzeltermin; „dieser und folgende“ (nicht der erste) → Serie teilen + neue Serie
-            let targetId = ev ? ev.id : null;
-            if (ev && ev.recurrence && scope === 'one') {
-              must(await sb.rpc('event_exclude', { p_event: ev.id, p_occ: ev.occ }));
-              targetId = null;
-            } else if (ev && ev.recurrence && scope === 'following' && Date.parse(ev.occ) > Date.parse(ev.seriesStart)) {
-              must(await sb.rpc('event_split', { p_event: ev.id, p_occ: ev.occ }));
-              targetId = null;
-            }
-            const row = must(await sb.rpc('save_event', {
+            const split = ev?.recurrence && (scope === 'one' || (scope === 'following' && Date.parse(ev.occ) > Date.parse(ev.seriesStart)));
+            const targetId = split ? null : ev?.id || null;
+            const row = must(await sb.rpc('save_event_with_photos', {
+              p_photos: await photos.read(), p_split_id: split ? ev.id : null, p_split_occ: split ? ev.occ : null, p_single: scope === 'one',
               p_id: targetId, p_title: title, p_location: todo ? '' : form.elements.location.value,
               p_description: form.elements.description.value.trim(), p_all_day: ad,
               p_start: s.toISOString(), p_end: en.toISOString(), p_reminders: unique, p_invitees: todo ? [] : invitees,
@@ -4253,6 +4279,7 @@ function eventDetailHtml(ev) {
       ${ev.recurrence ? `<div class="ev-row"><span>🔁</span><b>${esc(recurrenceLabel(ev.recurrence))}</b></div>` : ''}
       ${ev.location ? `<div class="ev-row"><span>📍</span><b>${esc(ev.location)}</b></div>` : ''}
       ${ev.description ? `<div class="ev-row"><span>📝</span><p>${esc(ev.description)}</p></div>` : ''}
+      ${cardPhotosHtml('event', ev)}
       <div class="ev-row"><span>👤</span><div class="ev-people">
         ${todo ? `<div>Für ${people.map((u) => esc(u.id === state.me.id ? 'dich' : u.firstName)).join(' & ')} <small>· von ${esc(owner ? owner.firstName : '?')}</small></div>`
           : `<div>${owner ? esc(fullName(owner)) : 'Unbekannt'} <small>· Ersteller</small></div>
@@ -4572,6 +4599,7 @@ function paperStyle(key) {
 
 function mapNote(r) {
   return {
+    hasPhotos: Boolean(r.has_photos),
     id: r.id, ownerId: r.owner_id, title: r.title || '', content: r.content || '',
     drawing: Array.isArray(r.drawing) ? r.drawing : [], paper: r.paper || 'schlicht',
     sharedWith: r.shared_with || [], updatedAt: r.updated_at, updatedBy: r.updated_by, createdAt: r.created_at,
@@ -4638,22 +4666,21 @@ function snapshotNote(note) {
   const template = document.createElement('template');
   template.innerHTML = sanitizeNoteHtml(note.content);
   return {
-    attached_note: { title: note.title, content: template.innerHTML, paper: note.paper, drawing: note.drawing },
+    attached_note: { title: note.title, content: template.innerHTML, paper: note.paper, drawing: note.drawing, ...(note.hasPhotos ? { photoSource: note.id } : {}) },
     note_checks: [...template.content.querySelectorAll(CHECK_ITEM)].map((li) => li.dataset.checked === 'true'),
   };
 }
 
-function attachedNoteHtml(m) {
-  const note = m.attachedNote;
-  return `<section class="note-paper task-note" style="${esc(paperStyle(note.paper))}">
-    <strong>${esc(note.title || 'Notiz')}</strong><div class="note-sheet">
+function attachedNoteHtml(m, note, index) {
+  return `<details class="guide-entry task-attachment" data-attachment="note-${index}">
+    <summary>${ballSvg('poke', 16)}<span>${esc(note.title || 'Notiz')}</span></summary>
+    <section class="note-paper task-note" style="${esc(paperStyle(note.paper))}"><div class="note-sheet">
       <div class="note-text">${sanitizeNoteHtml(note.content)}</div>
       <canvas class="note-canvas" aria-hidden="true"></canvas>
-    </div></section>`;
+    </div></section>${cardPhotosHtml('message', { id: m.id, hasPhotos: note.photoSource }, index + 1)}</details>`;
 }
 
-function bindAttachedNote(el, m) {
-  const note = m.attachedNote;
+function bindAttachedNote(el, m, note, offset) {
   const canvas = el.querySelector('canvas');
   if (Array.isArray(note.drawing) && note.drawing.length) {
     const strokes = note.drawing.filter((s) => Array.isArray(s?.p) && s.p.every((pt) => Array.isArray(pt) && pt.every(Number.isFinite)));
@@ -4663,7 +4690,8 @@ function bindAttachedNote(el, m) {
     canvas.height = Math.min(16000, Math.ceil(width * maxY) + 32);
     strokes.forEach((s) => drawNoteStroke(canvas.getContext('2d'), s, width));
   } else canvas.hidden = true;
-  el.querySelectorAll(CHECK_ITEM).forEach((li, index) => {
+  el.querySelectorAll(CHECK_ITEM).forEach((li, position) => {
+    const index = offset + position;
     const check = document.createElement('button');
     check.type = 'button';
     check.className = 'task-check';
@@ -4800,6 +4828,7 @@ function openNoteEditor(id = null) {
      <div class="note-editor">
        <input class="note-title" id="note-title" maxlength="120" placeholder="Überschrift" value="${esc(work.title)}">
        <div class="note-meta"><span id="note-meta">${esc(metaHtml())}</span> · <span id="note-people">${peopleHtml()}</span></div>
+       ${photoPickerHtml()}
        <div class="note-tools" role="toolbar" aria-label="Werkzeuge">
          <div class="seg" role="group" aria-label="Eingabe">
            <button type="button" class="tool active" data-mode="text" title="Tastatur">⌨️</button>
@@ -4859,6 +4888,13 @@ function openNoteEditor(id = null) {
           clearTimeout(markDirty.t);
           markDirty.t = setTimeout(saveDraft, 400);
         };
+
+        const notePhotos = (n) => n?.hasPhotos ? readCardPhotos('note', n.id) : [];
+        const photos = mountPhotoPicker(modal, draft?.photos ?? notePhotos(note), (values) => {
+          work.photos = values;
+          markDirty();
+        });
+        if (draft?.photos) work.photos = draft.photos;
 
         /* Zeichnen */
         const ratio = () => window.devicePixelRatio || 1;
@@ -5105,11 +5141,13 @@ function openNoteEditor(id = null) {
         btnUp.addEventListener('click', async () => {
           work.title = titleEl.value.trim();
           work.content = sanitizeNoteHtml(textEl.innerHTML);
-          if (!work.title && !noteText({ content: work.content }) && !work.drawing.length) { toast('Die Notiz ist noch leer.'); return; }
           btnUp.disabled = true;
           btnUp.textContent = '⏳ Lädt …';
           try {
             const payload = { title: work.title, content: work.content, drawing: work.drawing, paper: work.paper };
+            const selected = await photos.read();
+            if (!work.title && !noteText(work) && !work.drawing.length && !selected.length) throw Error('Die Notiz ist noch leer.');
+            if (work.photos) payload.photos_input = selected;
             if (mine) payload.shared_with = work.sharedWith;
             let row;
             if (!noteId) {
@@ -5132,6 +5170,8 @@ function openNoteEditor(id = null) {
             noteId = n.id;
             baseUpdatedAt = n.updatedAt;
             try { localStorage.removeItem(draftKey(noteId)); } catch { /* egal */ }
+            delete work.photos;
+            clearTimeout(markDirty.t);
             dirty = false;
             uploaded = true;
             $m('#note-meta').textContent = metaHtml();
@@ -5159,7 +5199,7 @@ function openNoteEditor(id = null) {
         });
 
         $m('#note-close').addEventListener('click', async () => {
-          if (dirty && (titleEl.value.trim() || noteText({ content: textEl.innerHTML }) || work.drawing.length)) {
+          if (dirty && (titleEl.value.trim() || noteText({ content: textEl.innerHTML }) || work.drawing.length || work.photos)) {
             if (!(await dsAsk('Noch nicht hochgeladen. Trotzdem schließen? Der Entwurf bleibt auf diesem Handy gespeichert.', { yes: 'Schließen', no: 'Weiter schreiben' }))) return;
             saveDraft();
           }
@@ -5170,6 +5210,7 @@ function openNoteEditor(id = null) {
         modal.addEventListener('note-remote', () => {
           const n = state.notes.find((x) => x.id === noteId);
           if (!n || dirty || n.updatedAt === baseUpdatedAt) return;
+          photos.reset(notePhotos(n));
           Object.assign(work, { title: n.title, content: n.content, drawing: [...n.drawing], paper: n.paper, sharedWith: [...n.sharedWith] });
           baseUpdatedAt = n.updatedAt;
           titleEl.value = n.title;
@@ -5227,6 +5268,7 @@ function mapStrike(r) {
     appealText: r.appeal_text || '',
     verdictText: r.verdict_text || '',
     acknowledgedAt: r.acknowledged_at,
+    hasPhotos: Boolean(r.has_photos),
     hasPhoto: Boolean(r.has_photo),
     history: Array.isArray(r.history) ? r.history : [],
     createdAt: r.created_at,
@@ -5234,6 +5276,7 @@ function mapStrike(r) {
 }
 function mapRule(r) {
   return {
+    hasPhotos: Boolean(r.has_photos),
     id: r.id, title: r.title, description: r.description || '', value: Number(r.value) || 1,
     createdBy: r.created_by, approvedBy: r.approved_by || [], approvedAt: r.approved_at, createdAt: r.created_at,
   };
@@ -5469,6 +5512,7 @@ function ruleHtml(r) {
   return `<li class="rule${pendingRule ? ' proposal' : ''}">
     <div class="rule-top"><b>${esc(r.title)}</b><span class="rule-value">${strikeWord(r.value)}</span></div>
     ${r.description ? `<p>${esc(r.description)}</p>` : ''}
+    ${cardPhotosHtml('rule', r)}
     ${pendingRule ? `<div class="rule-meta">Eingereicht von ${esc(nameOf(r.createdBy))} · beglaubigt ${r.approvedBy.length}/${state.users.length}
         (${state.users.map((u) => `${r.approvedBy.includes(u.id) ? '✓' : '○'} ${esc(u.firstName)}`).join(', ')})</div>
       <div class="rule-actions">
@@ -5600,6 +5644,7 @@ function openRuleForm() {
      <form class="form" id="rule-form">
        <label class="field"><span>Titel</span><input name="title" maxlength="60" required placeholder="z. B. Geschirr stehen lassen"></label>
        <label class="field"><span>Beschreibung</span><textarea name="description" maxlength="500" placeholder="Was genau ist der Verstoß?"></textarea></label>
+       ${photoPickerHtml()}
        <div class="field"><span>Wertigkeit</span>${valuePickerHtml('value')}</div>
        <p class="hint">Der Grund ist erst rechtskräftig und in der Schnellauswahl, wenn alle ihn beglaubigt haben.</p>
        <p class="error" id="rule-error"></p>
@@ -5612,12 +5657,14 @@ function openRuleForm() {
       cls: 'judge',
       onMount: (modal, close) => {
         const form = $('#rule-form', modal);
+        const photos = mountPhotoPicker(form);
         form.addEventListener('submit', async (e) => {
           e.preventDefault();
           const btn = form.querySelector('[type=submit]');
           btn.disabled = true;
           try {
-            const r = mapRule(must(await sb.rpc('propose_rule', {
+            const r = mapRule(must(await sb.rpc('propose_rule_with_photos', {
+              p_photos: await photos.read(),
               p_title: form.elements.title.value, p_description: form.elements.description.value, p_value: Number(form.elements.value.value),
             })));
             upsertBy(state.rules, r);
@@ -5637,14 +5684,164 @@ function openRuleForm() {
 
 /* ---- Bestrafen (Urteil fällen) --------------------------------------- */
 
+const PHOTO_LIMIT = 4;
+
+function photoPickerHtml() {
+  return `<div class="field card-photo-picker">
+    <label class="photo-pick"><span>📷 Bilder hinzufügen</span><input type="file" accept="image/*" multiple></label>
+    <small class="photo-status hint" role="status"></small>
+    <button type="button" class="btn small photo-skip" hidden>Auswahl verwerfen</button><div class="photo-thumbs"></div>
+  </div>`;
+}
+
+async function readCardPhotos(kind, id, slot = 0) {
+  const row = must(await sb.from('card_photos').select('photos').eq(kind + '_id', id).eq('slot', slot).maybeSingle());
+  return row?.photos || [];
+}
+
+function showPhoto(data, label) {
+  openModal(`<div class="modal-head"><h2>${esc(label)}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+    <img class="photo-full" alt="${esc(label)}">`, { onMount: (modal) => { modal.querySelector('.photo-full').src = data; } });
+}
+
+function photoThumbs(root, photos, remove) {
+  root.replaceChildren();
+  photos.forEach((data, index) => {
+    const label = `Bild ${index + 1} von ${photos.length}`;
+    const item = document.createElement('div');
+    const view = document.createElement('button');
+    view.type = 'button';
+    view.className = 'photo-thumb';
+    const img = new Image();
+    img.alt = label + ' vergrößern';
+    img.src = data;
+    view.append(img);
+    view.onclick = () => showPhoto(data, label);
+    item.append(view);
+    if (remove) {
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'photo-remove';
+      del.textContent = '×';
+      del.setAttribute('aria-label', `Bild ${index + 1} entfernen`);
+      del.onclick = () => remove(index);
+      item.append(del);
+    }
+    root.append(item);
+  });
+}
+
+function cardPhotosHtml(kind, card, slot = 0) {
+  return card.hasPhotos ? `<card-photos data-kind="${kind}" data-id="${esc(card.id)}" data-slot="${slot}"></card-photos>` : '';
+}
+
+customElements.define('card-photos', class extends HTMLElement {
+  connectedCallback() {
+    this.className = 'photo-thumbs';
+    this.observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        this.observer.disconnect();
+        this.load();
+      }
+    });
+    this.observer.observe(this);
+  }
+  disconnectedCallback() { this.observer?.disconnect(); }
+  async load() {
+    try {
+      const photos = await readCardPhotos(this.dataset.kind, this.dataset.id, Number(this.dataset.slot));
+      if (this.isConnected) photoThumbs(this, photos);
+    } catch {
+      this.innerHTML = '<button type="button" class="btn small">Bilder erneut laden</button>';
+      this.firstElementChild.onclick = () => this.load();
+    }
+  }
+});
+
+// Auswahl und Komprimierung abschließen, bevor das Formular gespeichert wird.
+function mountPhotoPicker(root, initial = [], changed = () => {}) {
+  const picker = root.querySelector('.card-photo-picker');
+  const input = picker.querySelector('input');
+  const status = picker.querySelector('.photo-status');
+  const thumbs = picker.querySelector('.photo-thumbs');
+  const skip = picker.querySelector('.photo-skip');
+  let photos = [];
+  let initialFailed = false;
+  let generation = 0;
+  let error = '';
+  let busy = false;
+  let pending;
+  function refresh() {
+    status.textContent = error || (busy ? 'Bilder werden geladen …' : `${photos.length} von ${PHOTO_LIMIT} Bildern`);
+    input.disabled = busy || initialFailed || photos.length >= PHOTO_LIMIT;
+    skip.hidden = !error || initialFailed;
+    photoThumbs(thumbs, photos, busy ? null : (i) => {
+      photos.splice(i, 1);
+      error = '';
+      changed([...photos]);
+      refresh();
+    });
+  }
+  skip.onclick = () => { error = ''; refresh(); };
+  function reset(values) {
+    const current = ++generation;
+    initialFailed = false;
+    busy = true;
+    error = '';
+    refresh();
+    pending = Promise.resolve(values).then((result) => {
+      if (current === generation) photos = [...result];
+    }, () => {
+      if (current !== generation) return;
+      initialFailed = true;
+      error = 'Bilder konnten nicht geladen werden. Bitte die Karte erneut öffnen.';
+    }).finally(() => { if (current === generation) { busy = false; refresh(); } });
+  }
+  reset(initial);
+  input.addEventListener('change', () => {
+    const files = [...input.files];
+    input.value = '';
+    if (!files.length) return;
+    if (files.length + photos.length > PHOTO_LIMIT) {
+      error = `Bitte insgesamt höchstens ${PHOTO_LIMIT} Bilder auswählen.`;
+      refresh();
+      return;
+    }
+    busy = true;
+    error = '';
+    refresh();
+    pending = (async () => {
+      const added = [];
+      for (const file of files) {
+        let data = await compressImage(file, 1100, 0.72);
+        if (data.length > 600000) data = await compressImage(file, 840, 0.58);
+        if (data.length > 600000) throw Error();
+        added.push(data);
+      }
+      photos.push(...added);
+      changed([...photos]);
+    })().catch(() => {
+      error = 'Bild konnte nicht gelesen werden. Bitte ein anderes Bild wählen.';
+    }).finally(() => { busy = false; refresh(); });
+  });
+  return {
+    reset,
+    async read() {
+      await pending;
+      if (error) throw Error(error);
+      return [...photos];
+    },
+  };
+}
+
 async function compressImage(file, max = 1100, quality = 0.72) {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
     const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
     const c = document.createElement('canvas');
-    c.width = Math.round(img.naturalWidth * scale);
-    c.height = Math.round(img.naturalHeight * scale);
+    c.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    c.height = Math.max(1, Math.round(img.naturalHeight * scale));
     const ctx = c.getContext('2d');
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, c.width, c.height);
@@ -5665,7 +5862,6 @@ async function openPunishForm() {
   }
   const rules = state.rules.filter((r) => r.approvedAt);
   if (!others.length) { toast('Es gibt noch niemanden, den du bestrafen könntest.'); return; }
-  let photo = null;
   openModal(
     `${judgeHeadHtml('Urteil fällen', 'Im Namen der Familie')}
      <form class="form" id="punish-form">
@@ -5682,10 +5878,7 @@ async function openPunishForm() {
        </div>
        <label class="field"><span>Begründung – warum vergibst du den Strich jetzt?</span>
          <textarea name="reason" maxlength="500" required placeholder="z. B. Heute Abend schon wieder alles stehen gelassen"></textarea></label>
-       <div class="field"><span>Beweisfoto (optional)</span>
-         <label class="photo-pick"><input type="file" name="photo" accept="image/*"><span>📷 Foto hinzufügen</span></label>
-         <div class="photo-preview" hidden><img alt=""><button type="button" class="btn small" id="photo-clear">Entfernen</button></div>
-       </div>
+       ${photoPickerHtml()}
        <p class="error" id="punish-error"></p>
        <div class="modal-actions">
          <button type="button" class="btn" data-close>Abbrechen</button>
@@ -5696,20 +5889,8 @@ async function openPunishForm() {
       cls: 'judge',
       onMount: (modal, close) => {
         const form = $('#punish-form', modal);
-        const prev = $('.photo-preview', modal);
+        const photos = mountPhotoPicker(form);
         const err = $('#punish-error', modal);
-        form.elements.photo.addEventListener('change', async () => {
-          const f = form.elements.photo.files[0];
-          if (!f) return;
-          try {
-            photo = await compressImage(f);
-            prev.querySelector('img').src = photo;
-            prev.hidden = false;
-          } catch {
-            err.textContent = 'Das Foto konnte nicht gelesen werden.';
-          }
-        });
-        $('#photo-clear', modal).addEventListener('click', () => { photo = null; form.elements.photo.value = ''; prev.hidden = true; });
         form.addEventListener('submit', async (e) => {
           e.preventDefault();
           const rule = form.elements.rule && (form.querySelector('[name=rule]:checked') || {}).value;
@@ -5720,7 +5901,7 @@ async function openPunishForm() {
           btn.disabled = true;
           try {
             const userId = form.querySelector('[name=user]:checked').value;
-            const s = mapStrike(must(await sb.rpc('give_strike', { p_user: userId, p_rule: rule, p_reason: reason, p_photo: photo })));
+            const s = mapStrike(must(await sb.rpc('give_strike_with_photos', { p_user: userId, p_rule: rule, p_reason: reason, p_photos: await photos.read() })));
             upsertBy(state.strikes, s, true);
             invokeQuiet({ action: 'strike', event: 'given', strikeId: s.id });
             close();
@@ -5750,6 +5931,7 @@ async function loadStrikePhoto(id, img) {
   } catch { /* ohne Foto weiter */ }
 }
 function evidenceHtml(s) {
+  if (s.hasPhotos) return cardPhotosHtml('strike', s);
   return s.hasPhoto ? `<figure class="evidence" hidden><img alt="Beweisfoto" data-photo="${esc(s.id)}"><figcaption>Beweisfoto</figcaption></figure>` : '';
 }
 function mountEvidence(root) {
