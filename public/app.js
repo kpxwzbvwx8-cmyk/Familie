@@ -6289,8 +6289,25 @@ function openDossier(userId) {
  *  blau für Trainer, rosa für Trainerinnen
  * ---------------------------------------------------------------------- */
 
-const APP_VERSION = '1.2.2';
+const APP_VERSION = '1.2.3';
 const CHANGELOG = [
+  {
+    version: '1.2.3', date: '2026-11-21', title: 'Das Trainer-Handbuch ist da!',
+    intro: 'Eine Einkaufsliste, ein Foto vom richtigen Beutel Pokémon-Futter und die Anleitung fürs Füttern – das passt jetzt alles in eine Aufgabe! So hat der nächste Trainer gleich zur Hand, was er braucht.',
+    items: [
+      'Euer Familienwissen bekommt einen festen Platz. Wähle auf Start unter ＋ eine Info, gib ihr einen Titel und speichere sie im Trainer-Handbuch. Über die Lupe findest du sie anhand von Titel oder Text wieder.',
+      'Im Handbuch hat jede Anleitung eine schmale Titelzeile. Tippe auf ein Vorschaubild, um es zu vergrößern, oder auf den Titel für die ganze Karte. Beim Schließen bleibt deine Suche erhalten.',
+      'Alle Familienmitglieder können Anleitungen bearbeiten, auch direkt aus einer verlinkten Aufgabe. Wer eine Anleitung überarbeitet, aktualisiert sie damit für alle Aufgaben, die darauf verweisen.',
+      'In Notizen kannst du neben Aufzählungen auch Checklisten schreiben. Tippe auf den Kreis vor einem Eintrag, um ihn abzuhaken.',
+      'Eine Aufgabe kann mehrere Notizen, Info-Karten und Anleitungen enthalten. Deine eigene Beschreibung bleibt sichtbar. Die Anhänge öffnest du einzeln über ihre Titelzeilen.',
+      'Eingebettete Notizen sind Kopien mit Formatierung, Zeichnungen und Bildern. Zuständige haken Listenpunkte direkt in der Aufgabe gemeinsam ab. Sind alle Punkte erledigt, können sie die Aufgabe abschließen.',
+      'Bis zu vier Bilder passen auf Aufgaben, Infos, Anleitungen, Notizen, Termine und Erinnerungen sowie auf Regeln und Urteile im Board der Schande. Ein Tipp aufs Bild zeigt es in Großansicht.',
+      'Eigene Aufgaben kannst du nachträglich bearbeiten, auch die Zuständigen und Anhänge. Setzt oder verschiebst du dabei eine Deadline, bleiben mindestens zwei Stunden Zeit. Änderst du nur den Text, bleibt die bestehende Frist gültig.',
+      'Im Tages- und Wochenkalender sind freie Stunden vor dem ersten und nach dem letzten Eintrag eingeklappt. Ein Tipp zeigt den ganzen Tag. Ganztägige Aufgaben haben ihren Platz in der Ganztagszeile.',
+      'Auf der Startseite erkennst du ausstehende Rückmeldungen am Schild „Rückmeldung“. Bei einem angedrohten Strich steht ein 😈 dabei. Zeiten für den nächsten Tag sind mit „morgen“ beschriftet, ganztägige Zeiträume mit „ganztags“.',
+      'Nimm deinen Trainerpass mit an den PC! Unter Menü → Einstellungen → Am PC anmelden bekommst du am Handy einen Einmal-Code. Wähle am zweiten Gerät „Ich habe schon ein Konto“ und gib den Code innerhalb von zehn Minuten ein.',
+    ],
+  },
   {
     version: '1.2.2', date: '2026-11-19', title: 'Fünf Schriftstile für dein Abenteuer!',
     intro: 'Was für ein Sprung durch die Generationen! Heute knackige Game-Boy-Pixel, morgen der moderne Switch-Look? Dazu kommen die schlanke 3DS-Schrift und der vertraute Nintendo-DS-Stil. Und jetzt wird’s geheimnisvoll: Mit Icognito verwandeln sich deine Buchstaben in Augensymbole!',
