@@ -142,6 +142,7 @@ function mapProfile(r) {
 function mapMessage(r) {
   return {
     id: r.id,
+    editRevision: r.edit_revision || 0,
     inHandbook: Boolean(r.in_handbook),
     linkedInfoIds: [r.linked_info_id, ...(r.additional_info_ids || [])].filter(Boolean),
     attachedNotes: [r.attached_note, ...(r.additional_notes || [])].filter(Boolean),
@@ -1454,7 +1455,9 @@ function messageFullHtml(m) {
         <button class="btn small primary" type="submit">Senden</button>
       </form>
     </div>
-    ${mine ? `<div class="modal-actions"><button type="button" class="btn danger" data-delete="${esc(m.id)}">Löschen</button></div>` : ''}
+    <div class="modal-actions">${editCardButton(m)}
+      ${mine ? `<button type="button" class="btn danger" data-delete="${esc(m.id)}">Löschen</button>` : ''}
+    </div>
   </div>`;
 }
 
@@ -1475,6 +1478,7 @@ function bindMessage(el, { toggle = true } = {}) {
       if ((e.key === 'Enter' || e.key === ' ') && e.target === el) { e.preventDefault(); openMessageDetail(el.dataset.msg); }
     });
   }
+  el.querySelectorAll('[data-edit-card]').forEach((b) => b.addEventListener('click', () => editCard(b.dataset.editCard)));
   el.querySelectorAll('[data-details]').forEach((b) => b.addEventListener('click', () => openMessageDetail(b.dataset.details)));
   el.querySelectorAll('[data-done]').forEach((b) => b.addEventListener('click', () => markDone(b.dataset.done, b)));
   el.querySelectorAll('[data-review]').forEach((b) => b.addEventListener('click', () => reviewMessage(b.dataset.review, b.dataset.verdict, b)));
@@ -1978,16 +1982,29 @@ async function markInfo(m, { hidden = false } = {}) {
   try { must(await sb.from('message_reads').upsert(row, { onConflict: 'message_id,user_id' })); } catch (e) { toast(e.message); }
 }
 
-function attachmentChoice(name, id, title) {
-  return `<label class="attachment-choice"><input type="checkbox" name="${name}" value="${esc(id)}"><span>${esc(title)}</span></label>`;
+function canEditCard(m) {
+  return Boolean(state.me && (m.inHandbook || (!isInfo(m) && m.authorId === state.me.id)));
 }
 
-function infoOptionsHtml() {
-  const infos = state.messages.filter((m) => isInfo(m) && !infoHidden(m) && (!m.deleteAt || Date.parse(m.deleteAt) > Date.now()))
+function editCardButton(m) {
+  return canEditCard(m) ? `<button type="button" class="btn small" data-edit-card="${esc(m.id)}">${m.inHandbook ? 'Anleitung' : 'Aufgabe'} bearbeiten</button>` : '';
+}
+
+function editCard(id) {
+  const m = state.messages.find((m) => m.id === id);
+  if (m && canEditCard(m)) openNewMessage(m.urgency, m.inHandbook, m);
+}
+
+function attachmentChoice(name, id, title, checked = false) {
+  return `<label class="attachment-choice"><input type="checkbox" name="${name}" value="${esc(id)}"${checked ? ' checked' : ''}><span>${esc(title)}</span></label>`;
+}
+
+function infoOptionsHtml(selected = []) {
+  const infos = state.messages.filter((m) => isInfo(m) && (!infoHidden(m) || selected.includes(m.id)) && (!m.deleteAt || Date.parse(m.deleteAt) > Date.now()))
     .sort((a, b) => a.title.localeCompare(b.title, 'de'));
   return [[true, 'Trainer-Handbuch'], [false, 'Infos im Verlauf']].map(([handbook, label]) => {
     const options = infos.filter((m) => m.inHandbook === handbook)
-      .map((m) => attachmentChoice('linkedInfo', m.id, m.title)).join('');
+      .map((m) => attachmentChoice('linkedInfo', m.id, m.title, selected.includes(m.id))).join('');
     return options ? `<fieldset><legend>${label}</legend>${options}</fieldset>` : '';
   }).join('') || '<p class="hint">Noch keine Info-Karten vorhanden.</p>';
 }
@@ -1996,7 +2013,7 @@ function linkedInfoHtml(id) {
   const info = state.messages.find((m) => m.id === id && isInfo(m));
   if (!info) return '';
   return `<details class="linked-info guide-entry task-attachment" data-attachment="info-${esc(id)}"><summary>${ballSvg('master', 16)}<span>${esc(info.title)}</span></summary>
-    <p>${esc(info.description || 'Keine weiteren Details.')}</p>${cardPhotosHtml('message', info)}</details>`;
+    <p>${esc(info.description || 'Keine weiteren Details.')}</p>${cardPhotosHtml('message', info)}${editCardButton(info)}</details>`;
 }
 
 function refreshHandbook() {
@@ -2011,6 +2028,7 @@ function refreshHandbook() {
     .map((m) => `<details class="guide-entry" data-guide="${esc(m.id)}"${opened.has(m.id) ? ' open' : ''}>
       <summary>${ballSvg('master', 20)}<span>${esc(m.title)}</span></summary>
       <p>${esc(m.description)}</p>${cardPhotosHtml('message', m)}
+      ${editCardButton(m)}
       ${m.authorId === state.me.id ? '<button type="button" class="btn small danger" data-remove-guide>Anleitung löschen</button>' : ''}
     </details>`).join('') || `<p class="hint">${guides.length ? 'Keine passende Anleitung gefunden.' : 'Dein Handbuch ist noch leer.'}</p>`;
 }
@@ -2026,6 +2044,8 @@ function openHandbook() {
       modal.querySelector('input').addEventListener('input', refreshHandbook);
       modal.querySelector('[data-write-guide]').addEventListener('click', () => openNewMessage('info', true));
       modal.querySelector('.guide-list').addEventListener('click', async (event) => {
+        const edit = event.target.closest('[data-edit-card]');
+        if (edit) { editCard(edit.dataset.editCard); return; }
         if (!event.target.closest('[data-remove-guide]')) return;
         const id = event.target.closest('details').dataset.guide;
         if (!await dsAsk('Anleitung löschen? Auch der Link in Aufgaben wird entfernt.', { yes: 'Löschen', danger: true })) return;
@@ -2348,7 +2368,11 @@ function openCreateMenu() {
   );
 }
 
-function openNewMessage(preset = 'normal', saveInHandbook = false) {
+function earliestEditedDeadline() {
+  return toLocalInput(new Date(Math.ceil((Date.now() + 2 * 3600e3) / 60000) * 60000));
+}
+
+function openNewMessage(preset = 'normal', saveInHandbook = false, edit = null) {
   const now = new Date();
   // Schnellwahl für Deadline & Löschdatum: Morgen · in: +1d +1h +10min +1min · Nächste Woche
   const quickChips = (target) => `<div class="chips time-chips" data-target="${target}">
@@ -2378,11 +2402,11 @@ function openNewMessage(preset = 'normal', saveInHandbook = false) {
   openModal(
     `<div class="modal-head"><h2>${preset === 'info' ? 'Neue Info' : 'Neue Aufgabe'}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
      <form class="form" id="msg-form" novalidate>
-       ${assigneePickerHtml('Für wen?', state.users.filter((u) => u.id !== state.me.id).map((u) => u.id))}
+       ${assigneePickerHtml('Für wen?', edit ? edit.assignees : state.users.filter((u) => u.id !== state.me.id).map((u) => u.id))}
        <fieldset class="field">
          <div class="field-head"><legend>Dringlichkeit</legend>${bellToggle('notify', true, 'Beim Absenden benachrichtigen')}${helpBtn('notify')}</div>
          <div class="segmented">
-           ${URGENCIES.map((u) => `<label class="u-${u.key}" style="--u:var(--u-${u.key})" title="${u.ballName}"><input type="radio" name="urgency" value="${u.key}"${u.key === preset ? ' checked' : ''}><span>${ballSvg(u.ball, 28)}<em>${u.label}</em></span></label>`).join('')}
+           ${URGENCIES.filter((u) => !edit || u.key !== 'info' || edit.inHandbook).map((u) => `<label class="u-${u.key}" style="--u:var(--u-${u.key})" title="${u.ballName}"><input type="radio" name="urgency" value="${u.key}"${u.key === preset ? ' checked' : ''}><span>${ballSvg(u.ball, 28)}<em>${u.label}</em></span></label>`).join('')}
          </div>
        </fieldset>
        <label class="field" id="info-destination"${preset === 'info' ? '' : ' hidden'}><span>Wo soll die Info erscheinen?</span>
@@ -2391,7 +2415,7 @@ function openNewMessage(preset = 'normal', saveInHandbook = false) {
        <label class="field"><span>Titel</span><input name="title" required maxlength="120" placeholder="Worum geht's?"></label>
        <label class="field"><span>Beschreibung</span><textarea name="description" maxlength="4000" placeholder="Details …"></textarea></label>
        ${photoPickerHtml()}
-       <label class="field"><span>Urheber</span><input value="${esc(fullName(state.me))}" readonly></label>
+       <label class="field"><span>Urheber</span><input value="${esc(edit ? nameOf(edit.authorId) : fullName(state.me))}" readonly></label>
        <p class="hint info-only" id="info-hint"${preset === 'info' ? '' : ' hidden'}>ℹ️ Eine Info gilt sofort – ohne Zeitpunkt, Deadline oder Rückmeldung. Sie erscheint beim Öffnen der App als Popup.</p>
        <div id="open-box"${preset === 'info' ? ' hidden' : ''}>
        <div class="toggle-row open-row"><span>⚡ Sofort &amp; offen – bis erledigt</span>${helpBtn('openEnded')}${switchToggle('openEnded')}</div>
@@ -2415,7 +2439,7 @@ function openNewMessage(preset = 'normal', saveInHandbook = false) {
        <div class="toggle-row"><span>Deadline?</span>${helpBtn('deadline')}${switchToggle('hasDeadline')}</div>
        <div class="field" id="deadline-box" hidden>
          <label class="field"><span>Deadline</span><input name="deadlineAt" type="datetime-local" class="dt"></label>
-         ${quickChips('deadlineAt')}
+         ${edit ? '<small class="hint">Beim Ändern muss die Deadline noch mindestens zwei Stunden entfernt sein.</small><button type="button" class="chip" data-earliest>Früheste Deadline setzen</button>' : quickChips('deadlineAt')}
          <div class="toggle-row strike-row"><span>😈 Strich androhen?</span>${helpBtn('strike')}${switchToggle('threatStrike')}</div>
        </div>
        <div class="toggle-row"><span>Automatisch löschen?</span>${helpBtn('autoDelete')}${switchToggle('autoDelete')}</div>
@@ -2426,12 +2450,14 @@ function openNewMessage(preset = 'normal', saveInHandbook = false) {
        </div>
        </div>
        <details class="attachment-picker" id="link-info-box"${preset === 'info' ? ' hidden' : ''}>
-         <summary>Info-Karten und Anleitungen verlinken <output></output></summary>${infoOptionsHtml()}
+         <summary>Info-Karten und Anleitungen verlinken <output></output></summary>${infoOptionsHtml(edit?.linkedInfoIds)}
        </details>
        <details class="attachment-picker" id="attach-note-box"${preset === 'info' ? ' hidden' : ''}>
          <summary>Notizen einbetten <output></output></summary>
          <small class="hint">Die ausgewählten Notizen werden mit ihren Bildern in die Aufgabe kopiert und für die Familie sichtbar.</small>
-         ${state.notes.map((n) => attachmentChoice('attachedNote', n.id, n.title || 'Ohne Überschrift')).join('') || '<p class="hint">Noch keine Notizen vorhanden.</p>'}
+         ${edit ? edit.attachedNotes.map((n, i) => attachmentChoice('keepNote', i + 1, n.title || 'Ohne Überschrift', true)).join('') : ''}
+         ${edit?.attachedNotes.length && state.notes.length ? '<small class="hint">Weitere Notizen hinzufügen</small>' : ''}
+         ${state.notes.map((n) => attachmentChoice('attachedNote', n.id, n.title || 'Ohne Überschrift')).join('') || (edit?.attachedNotes.length ? '' : '<p class="hint">Noch keine Notizen vorhanden.</p>')}
        </details>
        <div id="task-box"${preset === 'info' ? ' hidden' : ''}>
        <div class="toggle-row"><span>Rückmeldung?</span>${helpBtn('ack')}${switchToggle('needsAck')}</div>
@@ -2452,11 +2478,44 @@ function openNewMessage(preset = 'normal', saveInHandbook = false) {
     {
       onMount: (modal, close) => {
         const form = $('#msg-form', modal);
-        const photos = mountPhotoPicker(form);
-        form.querySelectorAll('.attachment-picker').forEach((picker) => picker.addEventListener('change', () => {
-          const count = picker.querySelectorAll(':checked').length;
-          picker.querySelector('output').value = count ? `(${count})` : '';
-        }));
+        let photosChanged = false;
+        const photos = mountPhotoPicker(form, edit?.hasPhotos ? readCardPhotos('message', edit.id) : [], () => { photosChanged = true; });
+        const fields = form.elements;
+        if (edit) {
+          fields.title.value = edit.title;
+          fields.description.value = edit.description;
+          fields.notify.checked = false;
+          fields.remind.checked = edit.remindAtStart;
+          fields.threatStrike.checked = edit.threatStrike;
+          fields.openEnded.checked = edit.openEnded;
+          fields.needsAck.checked = edit.needsAck;
+          fields.deleteOnDone.checked = edit.deleteOnDone;
+          fields.hasEnd.checked = Boolean(edit.endAt);
+          fields.hasDeadline.checked = Boolean(edit.deadlineAt);
+          fields.hasRespondBy.checked = Boolean(edit.respondBy);
+          fields.autoDelete.checked = Boolean(edit.deleteAt);
+          for (const key of ['eventAt', 'endAt', 'deadlineAt', 'respondBy', 'deleteAt']) {
+            fields[key].value = edit[key] ? toLocalInput(new Date(edit[key])) : '';
+          }
+          if (!edit.assignees.length) form.querySelectorAll('[name=assignee]').forEach((i) => { i.checked = false; });
+          $('#end-box', modal).hidden = !edit.endAt;
+          $('#deadline-box', modal).hidden = !edit.deadlineAt;
+          $('#respond-by-box', modal).hidden = !edit.respondBy;
+          $('#ack-list', modal).innerHTML = (edit.ackOptions || ['Erledigt']).map(ackOptionRow).join('');
+          const setMin = () => { fields.deadlineAt.min = earliestEditedDeadline(); };
+          setMin();
+          fields.deadlineAt.addEventListener('focus', setMin);
+          form.querySelector('[data-earliest]').onclick = () => { setMin(); fields.deadlineAt.value = fields.deadlineAt.min; };
+          if (edit.inHandbook) form.querySelector('.segmented').closest('fieldset').hidden = true;
+        }
+        form.querySelectorAll('.attachment-picker').forEach((picker) => {
+          const updateCount = () => {
+            const count = picker.querySelectorAll(':checked').length;
+            picker.querySelector('output').value = count ? `(${count})` : '';
+          };
+          picker.addEventListener('change', updateCount);
+          updateCount();
+        });
         form.addEventListener('click', (e) => {
           const qbtn = e.target.closest('[data-q]');
           if (qbtn) {
@@ -2494,7 +2553,7 @@ function openNewMessage(preset = 'normal', saveInHandbook = false) {
             $(box, modal).hidden = !on;
             if (on && !form.elements[field].value) {
               const base = form.elements.eventAt.value ? new Date(form.elements.eventAt.value) : new Date();
-              form.elements[field].value = toLocalInput(new Date(base.getTime() + 3600e3));
+              form.elements[field].value = edit && name === 'hasDeadline' ? earliestEditedDeadline() : toLocalInput(new Date(base.getTime() + 3600e3));
             }
           }));
         // Strich androhen macht die Aufgabe automatisch dringend
@@ -2536,13 +2595,13 @@ function openNewMessage(preset = 'normal', saveInHandbook = false) {
         const syncDestination = () => {
           const guide = isInfoSel() && form.elements.destination.value === 'handbook';
           form.querySelector('.assignee-pick').closest('.field').hidden = guide;
-          form.elements.notify.closest('.bell-toggle').hidden = guide;
-          form.querySelector('[data-help="notify"]').hidden = guide;
-          modal.querySelector('.modal-head h2').textContent = guide ? 'Neue Anleitung' : isInfoSel() ? 'Neue Info' : 'Neue Aufgabe';
+          form.elements.notify.closest('.bell-toggle').hidden = Boolean(edit || guide);
+          form.querySelector('[data-help="notify"]').hidden = Boolean(edit || guide);
+          modal.querySelector('.modal-head h2').textContent = edit ? (guide ? 'Anleitung bearbeiten' : 'Aufgabe bearbeiten') : guide ? 'Neue Anleitung' : isInfoSel() ? 'Neue Info' : 'Neue Aufgabe';
           form.elements.title.placeholder = guide ? 'z. B. Waschmaschine starten' : "Worum geht's?";
           form.elements.description.required = guide;
           form.elements.description.placeholder = guide ? 'Welche Schritte sind wichtig?' : 'Details …';
-          form.querySelector('[type=submit]').textContent = guide ? 'Anleitung speichern' : 'Senden';
+          form.querySelector('[type=submit]').textContent = edit ? 'Änderungen speichern' : guide ? 'Anleitung speichern' : 'Senden';
           $('#info-hint', modal).textContent = guide
             ? 'Diese Anleitung bleibt für die Familie im Handbuch. Ihr könnt sie in Aufgaben verlinken.'
             : 'ℹ️ Eine Info gilt sofort und erscheint beim Öffnen der App als Popup.';
@@ -2551,7 +2610,7 @@ function openNewMessage(preset = 'normal', saveInHandbook = false) {
         syncDestination();
         const syncInfo = () => {
           syncDestination();
-          $('#info-destination', modal).hidden = !isInfoSel();
+          $('#info-destination', modal).hidden = Boolean(edit) || !isInfoSel();
           $('#link-info-box', modal).hidden = isInfoSel();
           $('#attach-note-box', modal).hidden = form.elements.urgency.value === 'info';
           const info = isInfoSel();
@@ -2583,29 +2642,41 @@ function openNewMessage(preset = 'normal', saveInHandbook = false) {
           syncAck();
         });
         syncAck();
+        if (edit) { syncInfo(); syncBoxes(); }
         if (!isIos) form.elements.title.focus();
         form.addEventListener('submit', async (e) => {
           e.preventDefault();
           const f = new FormData(form);
           const err = $('#msg-error', modal);
-          const toIso = (v) => (v ? new Date(v).toISOString() : null);
+          // datetime-local zeigt Minuten an. Beim Speichern unveränderter Felder die ursprünglichen Sekunden behalten.
+          const toIso = (name) => {
+            const value = f.get(name);
+            if (edit?.[name] && value === toLocalInput(new Date(edit[name]))) return edit[name];
+            return value ? new Date(value).toISOString() : null;
+          };
           const title = f.get('title').trim();
           const isInfoMsg = f.get('urgency') === 'info';
           const guide = isInfoMsg && f.get('destination') === 'handbook';
           const openEnded = !isInfoMsg && Boolean(form.elements.openEnded && form.elements.openEnded.checked);
-          const eventAt = openEnded || isInfoMsg ? null : toIso(f.get('eventAt'));
-          const endAt = form.elements.hasEnd.checked ? toIso(f.get('endAt')) : null;
-          const deadlineAt = form.elements.hasDeadline.checked ? toIso(f.get('deadlineAt')) : null;
-          const respondBy = form.elements.needsAck.checked && form.elements.hasRespondBy.checked ? toIso(f.get('respondBy')) : null;
-          const deleteAt = form.elements.autoDelete.checked ? toIso(f.get('deleteAt')) : null;
+          const eventAt = openEnded || isInfoMsg ? null : toIso('eventAt');
+          const endAt = form.elements.hasEnd.checked ? toIso('endAt') : null;
+          const deadlineAt = form.elements.hasDeadline.checked ? toIso('deadlineAt') : null;
+          const respondBy = form.elements.needsAck.checked && form.elements.hasRespondBy.checked ? toIso('respondBy') : null;
+          const deleteAt = form.elements.autoDelete.checked ? toIso('deleteAt') : null;
           // Erinnerung nur, wenn der Start noch mindestens 2 Minuten entfernt ist (sonst käme sie sofort)
-          const remind = Boolean(!openEnded && form.elements.remind.checked && eventAt && Date.parse(eventAt) > Date.now() + 2 * 60e3);
+          const keepReminder = edit?.remindAtStart && eventAt === edit.eventAt;
+          const remind = Boolean(!openEnded && form.elements.remind.checked && eventAt && (keepReminder || Date.parse(eventAt) > Date.now() + 2 * 60e3));
           err.textContent = '';
           if (!title) { err.textContent = 'Bitte einen Titel angeben.'; return; }
           if (guide && !f.get('description').trim()) { err.textContent = 'Bitte beschreibe die Anleitung.'; return; }
-          if (!eventAt && !openEnded && !isInfoMsg) { err.textContent = 'Bitte einen Startzeitpunkt angeben.'; return; }
+          if (!eventAt && !openEnded && !isInfoMsg && !(edit && !edit.openEnded && !edit.eventAt)) { err.textContent = 'Bitte einen Startzeitpunkt angeben.'; return; }
           if (form.elements.hasEnd.checked && !endAt) { err.textContent = 'Bitte das Ende des Zeitraums angeben.'; return; }
           if (form.elements.hasDeadline.checked && !deadlineAt) { err.textContent = 'Bitte eine Deadline angeben.'; return; }
+          if (edit && deadlineAt && deadlineAt !== edit.deadlineAt && Date.parse(deadlineAt) < Date.now() + 2 * 3600e3) {
+            err.textContent = 'Eine geänderte Deadline muss mindestens zwei Stunden in der Zukunft liegen.';
+            fields.deadlineAt.min = earliestEditedDeadline();
+            return;
+          }
           if (form.elements.needsAck.checked && form.elements.hasRespondBy.checked && !respondBy) { err.textContent = 'Bitte angeben, bis wann geantwortet werden soll.'; return; }
           if (endAt && eventAt && Date.parse(endAt) < Date.parse(eventAt)) { err.textContent = 'Das Ende liegt vor dem Beginn.'; return; }
           if (form.elements.autoDelete.checked && !deleteAt) { err.textContent = 'Bitte ein Löschdatum wählen.'; return; }
@@ -2618,21 +2689,19 @@ function openNewMessage(preset = 'normal', saveInHandbook = false) {
           btn.disabled = true;
           try {
             const assignees = guide ? [] : [...form.querySelectorAll('[name=assignee]:checked')].map((i) => i.value);
-            if (!guide && !assignees.length) { err.textContent = 'Bitte auswählen, für wen die Aufgabe ist.'; btn.disabled = false; return; }
+            if (!guide && !assignees.length && !(edit && !edit.assignees.length)) { err.textContent = 'Bitte auswählen, für wen die Aufgabe ist.'; btn.disabled = false; return; }
             const infos = isInfoMsg ? [] : f.getAll('linkedInfo');
             const notes = isInfoMsg ? [] : f.getAll('attachedNote').map((id) => {
               const note = state.notes.find((n) => n.id === id);
               if (!note) throw Error('Eine gewählte Notiz ist nicht mehr verfügbar.');
               return snapshotNote(note);
             });
-            const row = must(await sb.from('messages').insert({
+            const selectedPhotos = await photos.read();
+            const card = {
               ...(guide ? { in_handbook: true } : {}),
               linked_info_id: infos[0] || null,
               additional_info_ids: infos.slice(1),
-              attached_note: notes[0]?.attached_note || null,
-              additional_notes: notes.slice(1).map((n) => n.attached_note),
-              note_checks: notes.flatMap((n) => n.note_checks),
-              photos_input: await photos.read(),
+              photos_input: !edit || photosChanged ? selectedPhotos : null,
               assignees,
               urgency: form.elements.hasDeadline.checked && form.elements.threatStrike.checked ? 'dringend' : f.get('urgency'),
               title,
@@ -2647,10 +2716,22 @@ function openNewMessage(preset = 'normal', saveInHandbook = false) {
               ack_options: ackOptions,
               delete_on_done: form.elements.deleteOnDone.checked,
               threat_strike: form.elements.hasDeadline.checked && form.elements.threatStrike.checked,
-              ...(openEnded ? { open_ended: true } : {}),
+              open_ended: openEnded,
+            };
+            const row = must(edit ? await sb.rpc('edit_message_card', {
+              p_id: edit.id, p_revision: edit.editRevision, p_card: card,
+              p_keep_slots: f.getAll('keepNote').map(Number),
+              p_check_counts: edit.attachedNotes.map((n) => snapshotNote(n).note_checks.length),
+              p_add_notes: notes,
+            }) : await sb.from('messages').insert({
+              ...card,
+              attached_note: notes[0]?.attached_note || null,
+              additional_notes: notes.slice(1).map((n) => n.attached_note),
+              note_checks: notes.flatMap((n) => n.note_checks),
             }).select().single());
             upsertMessage(mapMessage(row));
             close();
+            if (edit) { toast(guide ? 'Anleitung gespeichert.' : 'Aufgabe gespeichert.'); return; }
             catchAnimation(guide ? 'Im Trainer-Handbuch gespeichert!' : isInfoMsg ? 'Info verschickt!' : 'Aufgabe verteilt!');
             if (!guide && form.elements.notify.checked) {
               sb.functions.invoke('push', { body: { action: 'notify', messageId: row.id } })
@@ -2672,7 +2753,11 @@ function upsertMessage(m) {
   if (i >= 0) state.messages[i] = m;
   else state.messages.unshift(m);
   state.messages.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-  if (m.inHandbook) refreshHandbook();
+  if (m.inHandbook) {
+    refreshHandbook();
+    const task = state.msgDetail && state.messages.find((item) => item.id === state.msgDetail.id);
+    if (task?.linkedInfoIds.includes(m.id)) refreshMessageDetail(task.id);
+  }
   if (state.tab !== 'start') { refreshMessageDetail(m.id); return; }
   if (i >= 0 && document.getElementById(`msg-${m.id}`)) rerenderMessage(m.id);
   else render();
@@ -4706,7 +4791,7 @@ function bindAttachedNote(el, m, note, offset) {
       if (event.target.closest(CHECK_ITEM) !== li || check.disabled) return;
       check.disabled = true;
       try {
-        must(await sb.rpc('set_task_note_check', { p_message: m.id, p_index: index, p_checked: !checked }));
+        must(await sb.rpc('check_card_item', { p_message: m.id, p_revision: m.editRevision, p_index: index, p_checked: !checked }));
         const row = must(await sb.from('messages').select('*').eq('id', m.id).single());
         upsertMessage(mapMessage(row));
         if (el.isConnected) refreshMessageDetail(m.id);
