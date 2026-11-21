@@ -76,3 +76,9 @@ npx supabase start            # benötigt Docker
 # public/config.js mit lokaler URL und Publishable key füllen (siehe `npx supabase status`)
 npm start                     # http://localhost:8080
 ```
+
+### Pikachu-Bildquellen
+
+- Das Anime-Profil zeigt das überraschte Pikachu aus der Folge „Bisasam und das versteckte Idyll“. [Bildvorlage](https://github.com/Soviann/tarot/blob/fda3bd98e7a3776fd0a7a9f0dad1dc4f6831a461/frontend/public/memes/pikachu-surprised.webp)
+- Das DS-Profil verwendet die Sprites aus Pokémon Platin. Auf Aufgabenkarten erscheint die Pose aus HeartGold und SoulSilver, bei Terminen die aus Schwarz und Weiß. [Generation IV](https://github.com/PokeAPI/sprites/tree/master/sprites/pokemon/versions/generation-iv) · [Generation V](https://github.com/PokeAPI/sprites/tree/master/sprites/pokemon/versions/generation-v/black-white)
+- Das kleine Symbol neben Personennamen stammt aus dem Team-Menü von Pokémon Platin. [Pokémon-Platin-Sprite](https://github.com/pret/pokeplatinum/blob/main/res/pokemon/pikachu/icon.png)

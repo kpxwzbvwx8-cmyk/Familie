@@ -128,6 +128,7 @@ function mapProfile(r) {
     firstName: r.first_name,
     lastName: r.last_name,
     gender: r.gender,
+    avatar: r.avatar || 'trainer',
     color: r.color,
     birthday: r.birthday,
     strikes: Number(r.strikes) || 0,
@@ -358,15 +359,33 @@ const TRAINER_SVG = `
   <circle cx="26" cy="19" r="1.6" fill="#222"/><circle cx="34" cy="19" r="1.6" fill="#222"/>
 </svg>`;
 
-const SPRITES = { m: asset('img/trainer-m.png'), w: asset('img/trainer-w.png') };
-// Porträts des Urhebers an Aufgaben im Austausch
-const PORTRAITS = { m: asset('img/portrait-m.png'), w: asset('img/portrait-w.png') };
+const AVATARS = [
+  ['trainer', 'Trainerfigur'],
+  ['pikachu-anime', 'Pikachu · Anime'],
+  ['pikachu-ds', 'Pikachu · DS'],
+];
+
+function figureSrc(user, context = 'profile') {
+  if (!user) return '';
+  const pikachu = user.avatar === 'pikachu-anime' || user.avatar === 'pikachu-ds';
+  if (pikachu && context === 'head') return asset('img/pikachu/icon.png');
+  if (context === 'profile' && user.avatar === 'pikachu-anime') return asset('img/pikachu/anime.webp');
+  const gender = user.gender || (pikachu ? 'm' : '');
+  if (gender !== 'm' && gender !== 'w') return '';
+  const prefix = pikachu
+    ? { profile: 'pikachu/platin', task: 'pikachu/hgss', event: 'pikachu/sw' }[context]
+    : { profile: 'trainer', task: 'portrait', event: 'cal', head: 'cal' }[context];
+  return asset(`img/${prefix}-${gender}${context === 'head' ? '-head' : ''}.png`);
+}
+
+function figureImg(user, context, cls = '') {
+  const src = figureSrc(user, context);
+  return src ? `<img class="${cls}" src="${src}" alt="">` : '';
+}
 
 function avatarHtml(u) {
   if (u.sprite) return `<img class="sprite" src="${esc(u.sprite)}" alt="">`;
-  return SPRITES[u.gender]
-    ? `<img class="sprite" src="${SPRITES[u.gender]}" alt="">`
-    : TRAINER_SVG;
+  return figureImg(u, 'profile', 'sprite') || TRAINER_SVG;
 }
 
 function fmtNum(n) {
@@ -689,7 +708,7 @@ function loaderHtml(text = 'Lädt …') {
 /** Leerer Bereich: eigener Trainer + Spiel-Textbox */
 function emptyStateHtml(text, { icon = '' } = {}) {
   const me = state.me;
-  const sprite = me && SPRITES[me.gender] ? `<img class="empty-trainer" src="${SPRITES[me.gender]}" alt="">` : (icon ? `<div class="big">${icon}</div>` : '');
+  const sprite = figureImg(me, 'profile', 'empty-trainer') || (icon ? `<div class="big">${icon}</div>` : '');
   return `<div class="empty-ds">${sprite}<div class="ds-say static"><p class="ds-say-text">${esc(text)}</p></div></div>`;
 }
 
@@ -753,6 +772,15 @@ function profileFormHtml(u, { familyExists = false, code = '' } = {}) {
       </div>
     </fieldset>
     <fieldset class="field">
+      <legend>Profilbild</legend>
+      <div class="segmented avatar-choices">
+        ${AVATARS.map(([value, label]) => `<label style="--u:var(--accent)">
+          <input type="radio" name="avatar" value="${value}"${(u.avatar || 'trainer') === value ? ' checked' : ''}>
+          <span><img data-avatar-preview="${value}" src="${figureSrc({ gender: u.gender || 'm', avatar: value })}" alt="">${label}</span>
+        </label>`).join('')}
+      </div>
+    </fieldset>
+    <fieldset class="field">
       <legend>Lieblingsfarbe</legend>
       <div class="swatches">
         ${COLOR_PRESETS.map((c) => `<button type="button" class="swatch${c === color ? ' active' : ''}" data-color="${c}" style="background:${c}" aria-label="Farbe ${c}"></button>`).join('')}
@@ -807,6 +835,7 @@ function mountProfileForm(modal, close, base) {
       lastName: f.get('lastName').trim(),
       birthday: f.get('birthday'),
       gender: f.get('gender'),
+      avatar: f.get('avatar'),
       color: f.get('color'),
       nature: f.get('nature') || '',
       region: (f.get('region') || '').trim(),
@@ -822,6 +851,11 @@ function mountProfileForm(modal, close, base) {
     refresh();
   };
   form.addEventListener('input', (e) => {
+    if (e.target.name === 'gender') {
+      form.querySelectorAll('[data-avatar-preview]').forEach((img) => {
+        img.src = figureSrc({ gender: e.target.value, avatar: img.dataset.avatarPreview });
+      });
+    }
     if (e.target.name === 'customColor') setColor(e.target.value);
     else if (e.target.name !== 'code') refresh();
   });
@@ -848,6 +882,7 @@ function mountProfileForm(modal, close, base) {
           p_first_name: d.firstName,
           p_last_name: d.lastName,
           p_gender: d.gender,
+          p_avatar: d.avatar,
           p_color: d.color,
           p_birthday: d.birthday,
         }));
@@ -857,7 +892,7 @@ function mountProfileForm(modal, close, base) {
       } else {
         const row = must(await sb.from('profiles')
           .update({
-            first_name: d.firstName, last_name: d.lastName, gender: d.gender, color: d.color, birthday: d.birthday,
+            first_name: d.firstName, last_name: d.lastName, gender: d.gender, avatar: d.avatar, color: d.color, birthday: d.birthday,
             nature: d.nature || null, region: d.region || null, loves: d.loves || null,
             flavor: d.flavor || null, status_text: d.statusText || null,
           })
@@ -1211,7 +1246,7 @@ function slimWhen(iso) {
   if (diff > 1 && diff < 7) return `${d.toLocaleDateString('de-DE', { weekday: 'short' })} ${t}`;
   return `${d.toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' })} ${t}`;
 }
-const headImg = (u) => (u && u.gender && CAL_HEADS[u.gender] ? `<img class="fw-head" src="${CAL_HEADS[u.gender]}" alt="">` : '');
+const headImg = (u) => figureImg(u, 'head', 'fw-head');
 
 /** Schmale Karte auf Start – nur das Wichtigste; Antippen öffnet das Details-Popup */
 function messageHtml(m) {
@@ -1403,7 +1438,7 @@ function messageFullHtml(m) {
       : m.reviewStatus === 'missed' ? '😈 Deadline verpasst – Strich vergeben'
       : '🔒 Geschlossen – Deadline abgelaufen')
     : awaitingReview ? `⏸️ Timer eingefroren – ${mine ? 'bitte abnehmen' : 'wartet auf Abnahme'}` : '';
-  const portrait = author && PORTRAITS[author.gender] ? `<img class="ev-sprite msg-sprite" src="${PORTRAITS[author.gender]}" alt="">` : '';
+  const portrait = figureImg(author, 'task', 'ev-sprite msg-sprite');
   return `<div class="ev-detail msg-detail u-${esc(m.urgency)}" id="msgd-${esc(m.id)}" data-msg="${esc(m.id)}" data-msg-full="${esc(m.id)}">
     <div class="ev-banner">
       <div class="ev-banner-sprites">${portrait}</div>
@@ -1901,7 +1936,7 @@ function filterButtonHtml() {
 function openStartFilter() {
   const users = [...state.users].sort((a, b) => (b.id === state.me.id) - (a.id === state.me.id));
   const rows = [
-    ...users.map((u) => ({ key: u.id, icon: u.gender && CAL_HEADS[u.gender] ? `<img class="sf-head" src="${CAL_HEADS[u.gender]}" alt="">` : '👤',
+    ...users.map((u) => ({ key: u.id, icon: figureImg(u, 'head', 'sf-head') || '👤',
       label: u.id === state.me.id ? `${u.firstName} (ich)` : u.firstName, sub: u.id === state.me.id ? 'Alles, was für dich ist' : `Alles, was für ${u.firstName} ist`, c: GENDER_COLORS[u.gender] || GENDER_COLORS.both })),
   ];
   const kinds = [
@@ -2175,7 +2210,7 @@ function eventMiniHtml(ev) {
   if (ev.allDay) when = sameDay(sd, ed) ? (sameDay(sd, today) ? 'ganztags' : sd.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'numeric' }))
     : `bis ${ed.toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' })}`;
   else when = sameDay(sd, today) ? formatTimeOnly(ev.startAt) : `${sd.toLocaleDateString('de-DE', { weekday: 'short' })} ${formatTimeOnly(ev.startAt)}`;
-  const icon = todo ? '<span class="mini-bell">🔔</span>' : eventGenders(ev).map((g) => `<img src="${CAL_HEADS[g]}" alt="">`).join('');
+  const icon = todo ? '<span class="mini-bell">🔔</span>' : eventHeads(ev, '');
   const inv = myInvite(ev);
   return `<button type="button" class="mini-row mini-ev${todo ? ' is-todo' : ''}" data-event-card="${esc(ev.id)}" data-occ="${esc(ev.occ || '')}" style="--c:${eventColor(ev)}"><span class="mini-ico">${icon}</span><span class="mini-when">${esc(when)}</span><span class="mini-what">${esc(ev.title)}</span>${ev.recurrence ? '<span class="mini-extra">🔁</span>' : ''}${inv && inv.status === 'accepted' ? '<span class="mini-extra">✅</span>' : ''}</button>`;
 }
@@ -2243,9 +2278,9 @@ function renderAustausch(view) {
   const order = [state.me.id, ...state.users.filter((u) => u.id !== state.me.id).map((u) => u.id), 'both'];
   const groupHead = (k, fold, open, n) => {
     const tail = `<span class="kh-n">${n}</span><span class="kh-chev" aria-hidden="true">▾</span>`;
-    if (k === 'both') return `<button type="button" class="person-head" data-fold="${esc(fold)}" aria-expanded="${open}" style="--c:${GENDER_COLORS.both}">${state.users.map((u) => (u.gender && CAL_HEADS[u.gender] ? `<img src="${CAL_HEADS[u.gender]}" alt="">` : '')).join('')}<span>Gemeinsam</span>${tail}</button>`;
+    if (k === 'both') return `<button type="button" class="person-head" data-fold="${esc(fold)}" aria-expanded="${open}" style="--c:${GENDER_COLORS.both}">${state.users.map((u) => figureImg(u, 'head')).join('')}<span>Gemeinsam</span>${tail}</button>`;
     const u = userById(k);
-    return `<button type="button" class="person-head" data-fold="${esc(fold)}" aria-expanded="${open}" style="--c:${GENDER_COLORS[u && u.gender] || GENDER_COLORS.both}">${u && u.gender && CAL_HEADS[u.gender] ? `<img src="${CAL_HEADS[u.gender]}" alt="">` : ''}<span>${esc(k === state.me.id ? 'Ich' : u ? u.firstName : '?')}</span>${tail}</button>`;
+    return `<button type="button" class="person-head" data-fold="${esc(fold)}" aria-expanded="${open}" style="--c:${GENDER_COLORS[u && u.gender] || GENDER_COLORS.both}">${figureImg(u, 'head')}<span>${esc(k === state.me.id ? 'Ich' : u ? u.firstName : '?')}</span>${tail}</button>`;
   };
 
   let list;
@@ -2334,7 +2369,7 @@ function assigneePickerHtml(label, preset) {
   return `<div class="field"><span>${esc(label)}</span>
     <div class="ev-invite assignee-pick">${users.map((u) => `<label class="ev-inv" style="--c:${GENDER_COLORS[u.gender] || GENDER_COLORS.both}">
       <input type="checkbox" name="assignee" value="${esc(u.id)}"${chosen.includes(u.id) ? ' checked' : ''}>
-      <span>${u.gender && CAL_HEADS[u.gender] ? `<img src="${CAL_HEADS[u.gender]}" alt="">` : ''}${esc(u.id === state.me.id ? 'Ich' : u.firstName)}</span></label>`).join('')}</div>
+      <span>${figureImg(u, 'head')}${esc(u.id === state.me.id ? 'Ich' : u.firstName)}</span></label>`).join('')}</div>
   </div>`;
 }
 
@@ -2820,7 +2855,7 @@ function partySlotHtml(entry, i) {
 function renderParty() {
   const users = state.users.slice().sort((a, b) => fullName(a).localeCompare(fullName(b), 'de'));
   const entries = [
-    ...users.map((u) => ({ kind: 'user', id: u.id, name: u.firstName.toUpperCase(), gender: u.gender, sprite: SPRITES[u.gender], birthday: u.birthday, selected: state.me && u.id === state.me.id })),
+    ...users.map((u) => ({ kind: 'user', id: u.id, name: u.firstName.toUpperCase(), gender: u.gender, sprite: figureSrc(u), birthday: u.birthday, selected: state.me && u.id === state.me.id })),
     ...POKEMON.map((p) => ({ kind: 'pokemon', id: p.id, name: p.firstName.toUpperCase(), gender: p.gender, sprite: p.sprite, birthday: p.birthday })),
     { kind: 'egg', id: 'egg', name: 'EI', sprite: asset('img/egg.png') },
   ];
@@ -2843,7 +2878,7 @@ function renderTeam(view) {
     .map((u) => {
       const age = ageParts(parseBirthday(u.birthday));
       return `<button class="team-tile" data-user="${esc(u.id)}" style="${colorVars(u.color)}">
-        <span class="avatar">${SPRITES[u.gender] ? `<img class="sprite sprite-${u.gender}" src="${SPRITES[u.gender]}" alt="">` : esc(initials(u))}</span>
+        <span class="avatar">${figureImg(u, 'profile', 'sprite') || esc(initials(u))}</span>
         <span class="name">${esc(fullName(u))}${state.me && u.id === state.me.id ? '<span class="me-badge">Du</span>' : ''}</span>
         <span class="meta">ID ${esc(u.trainerId)} · Lv. ${age.years}</span>
       </button>`;
@@ -3241,8 +3276,6 @@ function renderPlaceholder(view, icon, title, text) {
  *  – Farbe + Sprite zeigen, für wen der Termin gilt: Er / Sie / beide
  * ---------------------------------------------------------------------- */
 
-const CAL_SPRITES = { m: asset('img/cal-m.png'), w: asset('img/cal-w.png') };
-const CAL_HEADS = { m: asset('img/cal-m-head.png'), w: asset('img/cal-w-head.png') };
 const GENDER_COLORS = { m: '#3b78d8', w: '#e0568c', both: '#8a5bd6' };
 const GENDER_NAMES = { m: 'Er', w: 'Sie', both: 'Beide' };
 const WEEKDAYS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
@@ -3314,8 +3347,16 @@ function eventColor(ev) {
   const g = eventGenders(ev);
   return GENDER_COLORS[g.length > 1 ? 'both' : g[0] || 'both'];
 }
-const eventHeads = (ev, cls = 'ev-head') => eventGenders(ev).map((g) => `<img class="${cls}" src="${CAL_HEADS[g]}" alt="">`).join('');
-const eventSprites = (ev) => eventGenders(ev).map((g) => `<img class="ev-sprite" src="${CAL_SPRITES[g]}" alt="">`).join('');
+function participantSprites(people, context, cls = '') {
+  return [...new Set(people.map((u) => figureImg(u, context, cls)))].join('');
+}
+const eventHeads = (ev, cls = 'ev-head') => participantSprites(eventPeople(ev), 'head', cls);
+const eventSprites = (ev) => participantSprites(eventPeople(ev), 'event', 'ev-sprite');
+
+function calendarLegendHeads(gender) {
+  const people = state.users.filter((u) => u.gender === gender);
+  return participantSprites(people.length ? people : [{ gender }], 'head');
+}
 
 /** Ende für die Tagesberechnung (ein Termin bis 0:00 zählt nicht mehr zum Folgetag) */
 const evStartDay = (ev) => startOfDay(new Date(ev.startAt));
@@ -3942,7 +3983,7 @@ function renderCalendar(view) {
       <div class="cal-views" role="tablist">${CAL_VIEWS.map(([k, l]) => `<button type="button" role="tab" class="cal-view-btn${state.calView === k ? ' active' : ''}" data-view="${k}" aria-selected="${state.calView === k}">${l}</button>`).join('')}</div>
       ${body}
       <div class="cal-foot">
-        <span class="cal-legend">${['m', 'w', 'both'].map((g) => `<span style="--c:${GENDER_COLORS[g]}">${g === 'both' ? `<img src="${CAL_HEADS.m}" alt=""><img src="${CAL_HEADS.w}" alt="">` : `<img src="${CAL_HEADS[g]}" alt="">`}${GENDER_NAMES[g]}</span>`).join('')}<span class="leg-todo">🔔 Erinnerung</span><span class="leg-task">${ballSvg('poke', 12)} Aufgabe</span>${hsvEnabled() ? '<span class="leg-hsv">⚽ HSV</span>' : ''}<span class="leg-hol">Feiertag</span></span>
+        <span class="cal-legend">${['m', 'w', 'both'].map((g) => `<span style="--c:${GENDER_COLORS[g]}">${g === 'both' ? calendarLegendHeads('m') + calendarLegendHeads('w') : calendarLegendHeads(g)}${GENDER_NAMES[g]}</span>`).join('')}<span class="leg-todo">🔔 Erinnerung</span><span class="leg-task">${ballSvg('poke', 12)} Aufgabe</span>${hsvEnabled() ? '<span class="leg-hsv">⚽ HSV</span>' : ''}<span class="leg-hol">Feiertag</span></span>
         <button type="button" class="cal-today" id="cal-today">Heute</button>
       </div>
     </div>
@@ -4149,7 +4190,7 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
        ${!todo && others.length ? `<div class="field"><span>Einladen</span>
          <div class="ev-invite">${others.map((u) => `<label class="ev-inv" style="--c:${GENDER_COLORS[u.gender] || GENDER_COLORS.both}">
            <input type="checkbox" name="invite" value="${esc(u.id)}"${invited.includes(u.id) ? ' checked' : ''}>
-           <span>${u.gender && CAL_HEADS[u.gender] ? `<img src="${CAL_HEADS[u.gender]}" alt="">` : ''}${esc(u.firstName)}</span></label>`).join('')}</div>
+           <span>${figureImg(u, 'head')}${esc(u.firstName)}</span></label>`).join('')}</div>
          <p class="hint">Eingeladene bekommen die Einladung auf ihren Start-Bildschirm. Nach der Zusage gelten die Hinweise auch für sie.</p>
        </div>` : ''}
        <div class="field"><span>Hinweise</span>
