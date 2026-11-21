@@ -6344,8 +6344,18 @@ function openDossier(userId) {
  *  blau für Trainer, rosa für Trainerinnen
  * ---------------------------------------------------------------------- */
 
-const APP_VERSION = '1.2.3';
+const APP_VERSION = '1.2.4';
 const CHANGELOG = [
+  {
+    version: '1.2.4', date: '2026-11-21', title: 'Ein eigenes Team für jede Familie!',
+    intro: 'Pikachu ist dabei! Ob du das überraschte Gesicht aus dem Anime liebst oder mit den Pixeln vom Nintendo DS aufgewachsen bist – jetzt kannst du mit deinem Lieblings-Pikachu im Trainerpass ins Familienabenteuer starten.',
+    items: [
+      'Gib beim Erstellen deines Trainerpasses einen neuen Familien-Code ein, um dein eigenes Team zu gründen. Teile den Code oder den Einladungslink unter Team → Einladen. Wer denselben Code verwendet, kommt zu euch.',
+      'Jede Familie hat ihren eigenen Kalender, ihre Aufgaben und ihr Trainer-Handbuch. Einladungen und Erinnerungen gehen an das jeweilige Team. Eure bisherigen Trainerpässe und Karten gehören weiterhin zu eurer Familie.',
+      'Beim ersten Einrichten und unter Profil bearbeiten können Trainer und Trainerinnen zwischen ihrer Trainerfigur, Anime-Pikachu und DS-Pikachu wählen. Auf Aufgaben und Terminen begleitet euch Pikachu mit passenden Spielsprites.',
+      'Im Trainer-Handbuch reicht für eine Bildanleitung ein Titel mit Foto. Ein einzelnes Bild erscheint groß, durch mehrere Bilder kannst du wischen. Ergänzt du eine Beschreibung, erscheinen die Bilder als antippbare Vorschau.',
+    ],
+  },
   {
     version: '1.2.3', date: '2026-11-21', title: 'Das Trainer-Handbuch ist da!',
     intro: 'Eine Einkaufsliste, ein Foto vom richtigen Beutel Pokémon-Futter und die Anleitung fürs Füttern – das passt jetzt alles in eine Aufgabe! So hat der nächste Trainer gleich zur Hand, was er braucht.',
