@@ -142,6 +142,8 @@ function mapProfile(r) {
 function mapMessage(r) {
   return {
     id: r.id,
+    inHandbook: Boolean(r.in_handbook),
+    linkedInfoId: r.linked_info_id || null,
     attachedNote: r.attached_note || null,
     checks: r.note_checks || [],
     authorId: r.author_id,
@@ -1363,10 +1365,12 @@ function refreshMessageDetail(id) {
   const el = $('[data-msg-full]', d.modal);
   const input = el && el.querySelector('.comment-form input');
   const draft = input ? input.value : '';
+  const infoOpen = el?.querySelector('.linked-info')?.open;
   const tpl = document.createElement('template');
   tpl.innerHTML = messageFullHtml(m).trim();
   const fresh = tpl.content.firstElementChild;
   if (el) el.replaceWith(fresh); else $('.msg-detail-body', d.modal).appendChild(fresh);
+  if (infoOpen && fresh.querySelector('.linked-info')) fresh.querySelector('.linked-info').open = true;
   bindMessage(fresh, { toggle: false });
   const ni = fresh.querySelector('.comment-form input');
   if (ni) ni.value = draft;
@@ -1424,6 +1428,7 @@ function messageFullHtml(m) {
       ${m.deleteAt ? `<div class="ev-row"><span>🗑️</span><small class="hint">Löscht sich ${esc(relative(m.deleteAt))} (${esc(formatDateTime(m.deleteAt))})</small></div>` : ''}
       ${pin ? `<div class="ev-row"><span>📌</span><small class="hint">In „Fortlaufend“ bis ${esc(formatDateTime(pin))}</small></div>` : ''}
     </div>
+    ${m.linkedInfoId ? linkedInfoHtml(m.linkedInfoId) : ''}
     ${m.attachedNote ? attachedNoteHtml(m) : ''}
     ${m.needsAck ? `<div class="ev-answer">
       <span>${responsible && !m.closedAt ? (myResp ? `Deine Antwort: <b>${esc(myResp.option)}</b> – ändern?` : 'Deine Rückmeldung:') : 'Antworten:'}</span>
@@ -1871,6 +1876,7 @@ const eventPeopleIds = (ev) => eventPeople(ev).map((u) => u.id);
 
 function filterButtonHtml() {
   return `<div class="start-tools">
+    <button type="button" class="filter-btn handbook-btn" id="open-handbook"><img src="img/menu/dex.png" alt="">Trainer-Handbuch</button>
     <button type="button" class="filter-btn" id="start-filter" aria-label="Filter und Sortierung">
       <span class="fb-ball">${ballSvg('poke', 20)}</span><span class="fb-label">Ansicht &amp; Filter</span>
     </button>
@@ -1957,13 +1963,69 @@ const isInfo = (m) => m.urgency === 'info';
 const readOf = (m) => (state.reads ? state.reads.get(m.id) : null);
 const infoHidden = (m) => Boolean(readOf(m) && readOf(m).hidden);
 /** Ungelesen: von jemand anderem, noch nicht bestätigt, höchstens eine Woche alt */
-const infoUnread = (m) => isInfo(m) && state.me && m.authorId !== state.me.id && !readOf(m)
+const infoUnread = (m) => isInfo(m) && !m.inHandbook && state.me && m.authorId !== state.me.id && !readOf(m)
   && Date.parse(m.createdAt) > Date.now() - 7 * 86400e3 && (!m.deleteAt || Date.parse(m.deleteAt) > Date.now());
 
 async function markInfo(m, { hidden = false } = {}) {
   const row = { message_id: m.id, user_id: state.me.id, read_at: new Date().toISOString(), hidden };
   state.reads.set(m.id, { readAt: row.read_at, hidden });
   try { must(await sb.from('message_reads').upsert(row, { onConflict: 'message_id,user_id' })); } catch (e) { toast(e.message); }
+}
+
+function infoOptionsHtml() {
+  const infos = state.messages.filter((m) => isInfo(m) && !infoHidden(m) && (!m.deleteAt || Date.parse(m.deleteAt) > Date.now()))
+    .sort((a, b) => a.title.localeCompare(b.title, 'de'));
+  return [[true, 'Trainer-Handbuch'], [false, 'Infos im Verlauf']].map(([handbook, label]) => {
+    const options = infos.filter((m) => m.inHandbook === handbook)
+      .map((m) => `<option value="${esc(m.id)}">${esc(m.title)}</option>`).join('');
+    return options ? `<optgroup label="${label}">${options}</optgroup>` : '';
+  }).join('');
+}
+
+function linkedInfoHtml(id) {
+  const info = state.messages.find((m) => m.id === id && isInfo(m));
+  if (!info) return '';
+  return `<details class="linked-info guide-entry"><summary>${ballSvg('master', 20)}<span>${esc(info.title)}</span></summary>
+    <p>${esc(info.description || 'Keine weiteren Details.')}</p></details>`;
+}
+
+function refreshHandbook() {
+  const book = document.querySelector('.handbook-modal');
+  if (!book) return;
+  const query = book.querySelector('input[type=search]').value.trim().toLocaleLowerCase('de');
+  const list = book.querySelector('.guide-list');
+  const opened = new Set([...list.querySelectorAll('details[open]')].map((d) => d.dataset.guide));
+  const guides = state.messages.filter((m) => m.inHandbook)
+    .sort((a, b) => a.title.localeCompare(b.title, 'de'));
+  list.innerHTML = guides.filter((m) => (m.title + ' ' + m.description).toLocaleLowerCase('de').includes(query))
+    .map((m) => `<details class="guide-entry" data-guide="${esc(m.id)}"${opened.has(m.id) ? ' open' : ''}>
+      <summary>${ballSvg('master', 20)}<span>${esc(m.title)}</span></summary>
+      <p>${esc(m.description)}</p>
+      ${m.authorId === state.me.id ? '<button type="button" class="btn small danger" data-remove-guide>Anleitung löschen</button>' : ''}
+    </details>`).join('') || `<p class="hint">${guides.length ? 'Keine passende Anleitung gefunden.' : 'Dein Handbuch ist noch leer.'}</p>`;
+}
+
+function openHandbook() {
+  openModal(`<div class="modal-head"><h2>Trainer-Handbuch</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+    <label class="guide-search"><span aria-hidden="true">🔍</span><input type="search" aria-label="Anleitungen durchsuchen" placeholder="Anleitungen durchsuchen"></label>
+    <div class="guide-list"></div>
+    <button type="button" class="btn primary" data-write-guide>＋ Anleitung schreiben</button>`, {
+    cls: 'handbook-modal',
+    onMount: (modal) => {
+      refreshHandbook();
+      modal.querySelector('input').addEventListener('input', refreshHandbook);
+      modal.querySelector('[data-write-guide]').addEventListener('click', () => openNewMessage('info', true));
+      modal.querySelector('.guide-list').addEventListener('click', async (event) => {
+        if (!event.target.closest('[data-remove-guide]')) return;
+        const id = event.target.closest('details').dataset.guide;
+        if (!await dsAsk('Anleitung löschen? Auch der Link in Aufgaben wird entfernt.', { yes: 'Löschen', danger: true })) return;
+        try {
+          must(await sb.from('messages').delete().eq('id', id));
+          removeMessage(id);
+        } catch (err) { toast(err.message); }
+      });
+    },
+  });
 }
 
 function infoMiniHtml(m) {
@@ -2093,7 +2155,7 @@ function renderAustausch(view) {
     : '');
   const f = startFilter();
   const now = Date.now();
-  const visible = state.messages.filter((m) => (!m.deleteAt || Date.parse(m.deleteAt) > now) && !(isInfo(m) && infoHidden(m)));
+  const visible = state.messages.filter((m) => !m.inHandbook && (!m.deleteAt || Date.parse(m.deleteAt) > now) && !(isInfo(m) && infoHidden(m)));
 
   // Alle Einträge sammeln: kind 'mini' (Balken) oder 'card'
   const entries = [];
@@ -2189,6 +2251,7 @@ function renderAustausch(view) {
     }).join('');
   }
   view.innerHTML = banner + filterButtonHtml() + invitationCardsHtml() + list;
+  $('#open-handbook', view).addEventListener('click', openHandbook);
   $('#start-filter', view).addEventListener('click', openStartFilter);
   bindEventCards(view);
   view.querySelectorAll('.mini-info[data-info]').forEach((b) => b.addEventListener('click', () => openInfoPopup([b.dataset.info])));
@@ -2274,7 +2337,7 @@ function openCreateMenu() {
   );
 }
 
-function openNewMessage(preset = 'normal') {
+function openNewMessage(preset = 'normal', saveInHandbook = false) {
   const now = new Date();
   // Schnellwahl für Deadline & Löschdatum: Morgen · in: +1d +1h +10min +1min · Nächste Woche
   const quickChips = (target) => `<div class="chips time-chips" data-target="${target}">
@@ -2311,6 +2374,9 @@ function openNewMessage(preset = 'normal') {
            ${URGENCIES.map((u) => `<label class="u-${u.key}" style="--u:var(--u-${u.key})" title="${u.ballName}"><input type="radio" name="urgency" value="${u.key}"${u.key === preset ? ' checked' : ''}><span>${ballSvg(u.ball, 28)}<em>${u.label}</em></span></label>`).join('')}
          </div>
        </fieldset>
+       <label class="field" id="info-destination"${preset === 'info' ? '' : ' hidden'}><span>Wo soll die Info erscheinen?</span>
+         <select name="destination"><option value="feed">Im Verlauf</option><option value="handbook"${saveInHandbook ? ' selected' : ''}>Im Trainer-Handbuch</option></select>
+       </label>
        <label class="field"><span>Titel</span><input name="title" required maxlength="120" placeholder="Worum geht's?"></label>
        <label class="field"><span>Beschreibung</span><textarea name="description" maxlength="4000" placeholder="Details …"></textarea></label>
        <label class="field"><span>Urheber</span><input value="${esc(fullName(state.me))}" readonly></label>
@@ -2347,6 +2413,9 @@ function openNewMessage(preset = 'normal') {
          <p class="hint">Die Nachricht verschwindet zu diesem Zeitpunkt für alle.</p>
        </div>
        </div>
+       <label class="field" id="link-info-box"${preset === 'info' ? ' hidden' : ''}><span>Info-Karte verlinken</span>
+         <select name="linkedInfo"><option value="">Keine Info-Karte</option>${infoOptionsHtml()}</select>
+       </label>
        <label class="field" id="attach-note-box"${preset === 'info' ? ' hidden' : ''}><span>Notiz einbetten</span>
          <select name="attachedNote"><option value="">Keine Notiz</option>${state.notes.map((n) => `<option value="${esc(n.id)}">${esc(n.title || 'Ohne Überschrift')}</option>`).join('')}</select>
          <small class="hint">Eine Kopie der gespeicherten Notiz wird für die Familie in der Aufgabe sichtbar.</small>
@@ -2446,7 +2515,26 @@ function openNewMessage(preset = 'normal') {
         if (form.elements.openEnded) form.elements.openEnded.addEventListener('change', syncOpen);
         // Info: sofort – keine Zeiten, Fristen oder Rückmeldungen
         const isInfoSel = () => (form.querySelector('input[name=urgency]:checked') || {}).value === 'info';
+        const syncDestination = () => {
+          const guide = isInfoSel() && form.elements.destination.value === 'handbook';
+          form.querySelector('.assignee-pick').closest('.field').hidden = guide;
+          form.elements.notify.closest('.bell-toggle').hidden = guide;
+          form.querySelector('[data-help="notify"]').hidden = guide;
+          modal.querySelector('.modal-head h2').textContent = guide ? 'Neue Anleitung' : isInfoSel() ? 'Neue Info' : 'Neue Aufgabe';
+          form.elements.title.placeholder = guide ? 'z. B. Waschmaschine starten' : "Worum geht's?";
+          form.elements.description.required = guide;
+          form.elements.description.placeholder = guide ? 'Welche Schritte sind wichtig?' : 'Details …';
+          form.querySelector('[type=submit]').textContent = guide ? 'Anleitung speichern' : 'Senden';
+          $('#info-hint', modal).textContent = guide
+            ? 'Diese Anleitung bleibt für die Familie im Handbuch. Ihr könnt sie in Aufgaben verlinken.'
+            : 'ℹ️ Eine Info gilt sofort und erscheint beim Öffnen der App als Popup.';
+        };
+        form.elements.destination.addEventListener('change', syncDestination);
+        syncDestination();
         const syncInfo = () => {
+          syncDestination();
+          $('#info-destination', modal).hidden = !isInfoSel();
+          $('#link-info-box', modal).hidden = isInfoSel();
           $('#attach-note-box', modal).hidden = form.elements.urgency.value === 'info';
           const info = isInfoSel();
           $('#info-hint', modal).hidden = !info;
@@ -2485,6 +2573,7 @@ function openNewMessage(preset = 'normal') {
           const toIso = (v) => (v ? new Date(v).toISOString() : null);
           const title = f.get('title').trim();
           const isInfoMsg = f.get('urgency') === 'info';
+          const guide = isInfoMsg && f.get('destination') === 'handbook';
           const openEnded = !isInfoMsg && Boolean(form.elements.openEnded && form.elements.openEnded.checked);
           const eventAt = openEnded || isInfoMsg ? null : toIso(f.get('eventAt'));
           const endAt = form.elements.hasEnd.checked ? toIso(f.get('endAt')) : null;
@@ -2495,6 +2584,7 @@ function openNewMessage(preset = 'normal') {
           const remind = Boolean(!openEnded && form.elements.remind.checked && eventAt && Date.parse(eventAt) > Date.now() + 2 * 60e3);
           err.textContent = '';
           if (!title) { err.textContent = 'Bitte einen Titel angeben.'; return; }
+          if (guide && !f.get('description').trim()) { err.textContent = 'Bitte beschreibe die Anleitung.'; return; }
           if (!eventAt && !openEnded && !isInfoMsg) { err.textContent = 'Bitte einen Startzeitpunkt angeben.'; return; }
           if (form.elements.hasEnd.checked && !endAt) { err.textContent = 'Bitte das Ende des Zeitraums angeben.'; return; }
           if (form.elements.hasDeadline.checked && !deadlineAt) { err.textContent = 'Bitte eine Deadline angeben.'; return; }
@@ -2509,10 +2599,12 @@ function openNewMessage(preset = 'normal') {
           const btn = form.querySelector('[type=submit]');
           btn.disabled = true;
           try {
-            const assignees = [...form.querySelectorAll('[name=assignee]:checked')].map((i) => i.value);
-            if (!assignees.length) { err.textContent = 'Bitte auswählen, für wen die Aufgabe ist.'; btn.disabled = false; return; }
+            const assignees = guide ? [] : [...form.querySelectorAll('[name=assignee]:checked')].map((i) => i.value);
+            if (!guide && !assignees.length) { err.textContent = 'Bitte auswählen, für wen die Aufgabe ist.'; btn.disabled = false; return; }
             const note = !isInfoMsg && state.notes.find((n) => n.id === f.get('attachedNote'));
             const row = must(await sb.from('messages').insert({
+              ...(guide ? { in_handbook: true } : {}),
+              ...(!isInfoMsg && f.get('linkedInfo') ? { linked_info_id: f.get('linkedInfo') } : {}),
               ...(note ? snapshotNote(note) : {}),
               assignees,
               urgency: form.elements.hasDeadline.checked && form.elements.threatStrike.checked ? 'dringend' : f.get('urgency'),
@@ -2532,12 +2624,12 @@ function openNewMessage(preset = 'normal') {
             }).select().single());
             upsertMessage(mapMessage(row));
             close();
-            catchAnimation(f.get('urgency') === 'info' ? 'Info verschickt!' : 'Aufgabe verteilt!');
-            if (form.elements.notify.checked) {
+            catchAnimation(guide ? 'Im Trainer-Handbuch gespeichert!' : isInfoMsg ? 'Info verschickt!' : 'Aufgabe verteilt!');
+            if (!guide && form.elements.notify.checked) {
               sb.functions.invoke('push', { body: { action: 'notify', messageId: row.id } })
                 .then((r) => r.error && console.warn('Benachrichtigung fehlgeschlagen', r.error));
             }
-            if (pushSupported && Notification.permission === 'default') enablePush();
+            if (!guide && pushSupported && Notification.permission === 'default') enablePush();
           } catch (ex) {
             err.textContent = ex.message;
             btn.disabled = false;
@@ -2553,6 +2645,7 @@ function upsertMessage(m) {
   if (i >= 0) state.messages[i] = m;
   else state.messages.unshift(m);
   state.messages.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  if (m.inHandbook) refreshHandbook();
   if (state.tab !== 'start') { refreshMessageDetail(m.id); return; }
   if (i >= 0 && document.getElementById(`msg-${m.id}`)) rerenderMessage(m.id);
   else render();
@@ -2560,6 +2653,7 @@ function upsertMessage(m) {
 
 function removeMessage(id) {
   state.messages = state.messages.filter((m) => m.id !== id);
+  refreshHandbook();
   if (state.msgDetail && state.msgDetail.id === id) state.msgDetail.close();
   if (state.tab === 'start') render();
 }
@@ -6233,6 +6327,7 @@ function awayFeed() {
   const items = [];
   const push = (iso, icon, text, go) => { if (iso && inWin(iso)) items.push({ t: Date.parse(iso), icon, text, go }); };
   for (const m of state.messages) {
+    if (m.inHandbook) continue;
     if (m.authorId !== me) push(m.createdAt, m.urgency === 'info' ? '🟣' : '📨', `${who(m.authorId)}: ${m.urgency === 'info' ? 'neue Info' : 'neue Aufgabe'} „${m.title}“`, { msg: m.id });
     if (m.doneBy && m.doneBy !== me) push(m.doneAt, '✅', `${who(m.doneBy)} hat „${m.title}“ erledigt`, { msg: m.id });
     for (const r of state.responses.get(m.id) || []) if (r.userId !== me) push(r.createdAt, '✉️', `${who(r.userId)} antwortet „${r.option}“ – ${m.title}`, { msg: m.id });
@@ -6415,13 +6510,30 @@ async function loadUsers() {
   if (me) state.me = me;
 }
 
+// Auch ältere Handbucheinträge und verlinkte Infos über das API-Zeilenlimit hinaus laden.
+async function loadMessageRows() {
+  const messages = [];
+  const pageSize = 500;
+  let afterId;
+  while (true) {
+    let query = sb.from('messages').select('*').order('id').limit(pageSize);
+    if (afterId) query = query.gt('id', afterId);
+    const rows = must(await query);
+    messages.push(...rows.map(mapMessage));
+    if (rows.length < pageSize) break;
+    afterId = rows[rows.length - 1].id;
+  }
+  return messages.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+}
+
 async function loadMessages() {
   const [msgs, resps, comments] = await Promise.all([
-    sb.from('messages').select('*').order('created_at', { ascending: false }),
+    loadMessageRows(),
     sb.from('message_responses').select('*'),
     sb.from('message_comments').select('*').order('created_at', { ascending: true }),
   ]);
-  state.messages = must(msgs).map(mapMessage);
+  state.messages = msgs;
+  refreshHandbook();
   state.responses = new Map();
   for (const r of must(resps)) setResponse(r);
   state.comments = new Map();
@@ -6480,7 +6592,7 @@ function startRealtime() {
       const known = state.messages.some((x) => x.id === m.id);
       upsertMessage(m);
       const author = userById(m.authorId);
-      if (!known && state.me && m.authorId !== state.me.id && document.visibilityState === 'visible') {
+      if (!known && !m.inHandbook && state.me && m.authorId !== state.me.id && document.visibilityState === 'visible') {
         if (!pushActive()) showBanner({ title: `${urgencyLabel(m.urgency)}: ${m.title}`, body: author ? fullName(author) : '', tag: m.id, urgency: m.urgency, url: `?tab=start&msg=${m.id}` });
       }
     })

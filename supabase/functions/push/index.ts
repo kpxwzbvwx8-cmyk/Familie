@@ -31,6 +31,7 @@ Deno.serve(async (req) => {
       const { data: msg } = await admin.from('messages').select('*')
         .eq('id', body.messageId).eq('author_id', me.id).maybeSingle();
       if (!msg) return json({ error: 'Nachricht nicht gefunden' }, 404);
+      if (msg.in_handbook) return json({ sent: 0 });
       // Für wen? Zuständige (ohne einen selbst), sonst alle anderen
       const assignees: string[] = (msg.assignees ?? []).filter((id: string) => id !== me.id);
       if (msg.assignees?.length && !assignees.length) return json({ sent: 0 }); // nur für sich selbst
