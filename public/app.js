@@ -21,6 +21,8 @@ const state = {
   users: [],
   messages: [],
   familyCode: null,
+  teamPokemon: [],
+  teamEgg: null,
   tab: 'start',
   highlight: null,
   expanded: new Set(),
@@ -124,6 +126,7 @@ function friendlyError(error) {
 function mapProfile(r) {
   return {
     id: r.id,
+    familyId: r.family_id,
     trainerId: r.trainer_id,
     firstName: r.first_name,
     lastName: r.last_name,
@@ -289,48 +292,11 @@ function initials(u) {
 }
 
 /* -------------------------------------------------------------------------
- * Pokémon-Konten (fest hinterlegt, ohne Anmeldung)
+ * Pokémon im Familien-Team
  * ---------------------------------------------------------------------- */
 
-const POKEMON = [
-  {
-    id: 'pokemon-speedy',
-    kind: 'pokemon',
-    trainerId: '15616',
-    firstName: 'Speedy',
-    lastName: '',
-    gender: 'm',
-    sprite: asset('img/speedy.png'),
-    color: '#8d6e63', // braun
-    birthday: '2016-06-15',
-    strikes: 0,
-    nature: 'Sanft',
-    region: 'Kanto',
-    loves: 'Essen und Schlafen',
-    flavor: 'bitter',
-    statusText: 'Am Essen',
-  },
-  {
-    id: 'pokemon-idefix',
-    kind: 'pokemon',
-    trainerId: '01120',
-    firstName: 'Idefix',
-    lastName: '',
-    gender: 'm',
-    sprite: asset('img/idefix.png'),
-    color: '#ececf0', // weiß
-    birthday: '2020-01-01',
-    strikes: 0,
-    nature: 'Frech',
-    region: 'Sinnoh',
-    loves: 'es zu provozieren',
-    flavor: 'bitter',
-    statusText: 'Am Putzen',
-  },
-];
-
 function pokemonById(id) {
-  return POKEMON.find((p) => p.id === id);
+  return state.teamPokemon.find((p) => p.id === id);
 }
 
 /** Geschlechtssymbol wie im Spiel: blaues ♂ bzw. rotes ♀ */
@@ -742,19 +708,17 @@ function toast(text, onClick, { instant = false, ms = 5000 } = {}) {
  * Profil (Einrichten & Bearbeiten)
  * ---------------------------------------------------------------------- */
 
-function profileFormHtml(u, { familyExists = false, code = '' } = {}) {
+function profileFormHtml(u, { code = '' } = {}) {
   const color = u.color || COLOR_PRESETS[0];
   const isNew = !u.id;
   return `
   <form class="form" id="profile-form" novalidate>
     <div class="preview-wrap" id="card-preview">${trainerCardHtml({ ...u, color })}</div>
     ${isNew ? `
-    <label class="field"><span>${familyExists ? 'Familien-Code' : 'Familien-Code festlegen'}</span>
+    <label class="field"><span>Familien-Code</span>
       <input name="code" required minlength="4" maxlength="40" autocapitalize="characters" autocomplete="off" value="${esc(code)}"
-        placeholder="${familyExists ? 'Bekommst du von deiner Familie' : 'z. B. MUELLER2026'}">
-      <p class="hint">${familyExists
-        ? 'Den Code findet jedes Familienmitglied im Reiter „Team“.'
-        : 'Du bist die erste Person. Alle weiteren brauchen diesen Code, um beizutreten.'}</p>
+        placeholder="Code eingeben">
+      <p class="hint">Mit dem Code deiner Familie trittst du ihrem Team bei. Wähle einen neuen Code, um ein eigenes Familien-Team zu gründen. Unter „Team“ kannst du den Code mit deiner Familie teilen.</p>
     </label>` : ''}
     <div class="row2">
       <label class="field"><span>Vorname</span>
@@ -910,21 +874,15 @@ function mountProfileForm(modal, close, base) {
   });
 }
 
-async function openSetup() {
-  let familyExists = false;
-  try {
-    familyExists = Boolean(must(await sb.rpc('family_exists')));
-  } catch (e) {
-    toast(e.message);
-  }
+function openSetup() {
   const code = new URLSearchParams(location.search).get('code') || '';
   openModal(
     `<div class="modal-head"><h2>Willkommen! 👋</h2></div>
-     ${familyExists ? `<button type="button" class="pair-entry" id="pair-login">
+     <button type="button" class="pair-entry" id="pair-login">
         <span class="pair-entry-ico">📲</span><span><b>Ich habe schon ein Konto</b><small>Mit dem Code von deinem Handy anmelden</small></span><span aria-hidden="true">›</span>
-      </button>` : ''}
+      </button>
      <p class="setup-intro">Richte dein Konto ein. Daraus entsteht dein persönlicher Trainerpass – die Lieblingsfarbe wird zur Farbe deines Passes.</p>
-     ${profileFormHtml({}, { familyExists, code })}`,
+     ${profileFormHtml({}, { code })}`,
     { dismissible: false, onMount: (m, c) => {
       mountProfileForm(m, c, {});
       const pl = $('#pair-login', m);
@@ -2856,8 +2814,8 @@ function renderParty() {
   const users = state.users.slice().sort((a, b) => fullName(a).localeCompare(fullName(b), 'de'));
   const entries = [
     ...users.map((u) => ({ kind: 'user', id: u.id, name: u.firstName.toUpperCase(), gender: u.gender, sprite: figureSrc(u), birthday: u.birthday, selected: state.me && u.id === state.me.id })),
-    ...POKEMON.map((p) => ({ kind: 'pokemon', id: p.id, name: p.firstName.toUpperCase(), gender: p.gender, sprite: p.sprite, birthday: p.birthday })),
-    { kind: 'egg', id: 'egg', name: 'EI', sprite: asset('img/egg.png') },
+    ...state.teamPokemon.map((p) => ({ kind: 'pokemon', id: p.id, name: p.firstName.toUpperCase(), gender: p.gender, sprite: p.sprite, birthday: p.birthday })),
+    ...(state.teamEgg ? [{ kind: 'egg', id: 'egg', name: 'EI', sprite: asset('img/egg.png') }] : []),
   ];
   return `<div class="party">
     <div class="party-grid">${entries.map(partySlotHtml).join('')}</div>
@@ -2883,7 +2841,7 @@ function renderTeam(view) {
         <span class="meta">ID ${esc(u.trainerId)} · Lv. ${age.years}</span>
       </button>`;
     })
-    .join('')}${POKEMON.map(pokemonTileHtml).join('')}${eggTileHtml()}</div>`;
+    .join('')}${state.teamPokemon.map(pokemonTileHtml).join('')}${state.teamEgg ? eggTileHtml() : ''}</div>`;
   const invite = state.familyCode
     ? `<div class="invite">
         <div><span class="hint">Familien-Code zum Einladen</span><div class="code">${esc(state.familyCode)}</div></div>
@@ -2924,14 +2882,8 @@ function renderTeam(view) {
 }
 
 /* -------------------------------------------------------------------------
- * Das Ei (Platzhalter-Konto für die kommende Tochter)
+ * Das Ei im Familien-Team
  * ---------------------------------------------------------------------- */
-
-const EGG = {
-  name: '???',
-  due: '2027-03-14', // errechneter Entbindungstermin
-  from: 'Mama & Papa',
-};
 
 // Die vier Stufen der „Ei-Uhr“ aus dem Spiel (Gen. III/IV), auf die Schwangerschaft gelegt:
 //  bis 27+6 SSW  → „wird noch lange dauern“          (Spiel: > 40 Ei-Zyklen übrig)
@@ -2946,7 +2898,7 @@ const EGG_STAGES = [
 ];
 
 function eggInfo(now = new Date()) {
-  const due = parseBirthday(EGG.due);
+  const due = parseBirthday(state.teamEgg.due);
   const start = new Date(due.getFullYear(), due.getMonth(), due.getDate() - 280); // 40 Wochen vor ET
   const days = Math.max(0, daysBetween(start, now));
   const week = Math.floor(days / 7);
@@ -2965,7 +2917,7 @@ function eggTileHtml() {
   const e = eggInfo();
   return `<button class="team-tile egg-tile" data-egg>
     <span class="avatar"><img class="sprite" src="${asset('img/egg.png')}" alt=""></span>
-    <span class="name">${esc(EGG.name)}</span>
+    <span class="name">${esc(state.teamEgg.name)}</span>
     <span class="meta">SSW ${esc(e.ssw)} · ${e.remaining > 0 ? `${e.remaining} T` : 'bald!'}</span>
   </button>`;
 }
@@ -2980,11 +2932,11 @@ function openEggMemo() {
          <div class="memo-left">
            <div class="memo-name"><span class="ball"></span>Ei</div>
            <div class="memo-egg"><img class="sprite" src="${asset('img/egg.png')}" alt="Ei"></div>
-           <div class="memo-item"><span>Name</span><b>${esc(EGG.name)}</b></div>
+           <div class="memo-item"><span>Name</span><b>${esc(state.teamEgg.name)}</b></div>
          </div>
          <div class="memo-right">
            <p>ET ${esc(formatDate(e.due))}</p>
-           <p>Ein geheimnisvolles Ei, erhalten von <span class="memo-red">${esc(EGG.from)}</span>.</p>
+           <p>Ein geheimnisvolles Ei, erhalten von <span class="memo-red">${esc(state.teamEgg.from)}</span>.</p>
            <p>&nbsp;</p>
            <p>„Die Ei-Uhr“</p>
            <p class="memo-watch">${esc(e.text)}</p>
@@ -4911,7 +4863,10 @@ function openNoteById(id) {
 
 /* ---- Editor ----------------------------------------------------------- */
 
-const draftKey = (id) => `familie.noteDraft.${id || 'neu'}`;
+// Für die bisherige Familie bleiben auch noch nicht gesendete Entwürfe verfügbar.
+const draftKey = (id) => state.me.familyId === 1
+  ? `familie.noteDraft.${id || 'neu'}`
+  : `familie.noteDraft.${state.me.id}.${id || 'neu'}`;
 
 function openNoteEditor(id = null) {
   const note = id ? state.notes.find((n) => n.id === id) : null;
@@ -6890,6 +6845,12 @@ function setTab(tab) {
  * Daten laden & Live-Updates
  * ---------------------------------------------------------------------- */
 
+async function loadFamilyTeam() {
+  const extras = must(await sb.rpc('get_family_team'));
+  state.teamPokemon = (extras?.pokemon || []).map((p) => ({ ...p, sprite: asset(p.sprite) }));
+  state.teamEgg = extras?.egg || null;
+}
+
 async function loadUsers() {
   state.users = must(await sb.from('profiles').select('*')).map(mapProfile);
   const me = state.me && userById(state.me.id);
@@ -6968,11 +6929,23 @@ function refreshEvents() {
   }, 250);
 }
 
+let familyRefreshTimer;
+function refreshAfterDeletion() {
+  clearTimeout(familyRefreshTimer);
+  familyRefreshTimer = setTimeout(async () => {
+    await refreshAll();
+    refreshMessageDetail();
+    document.querySelectorAll('.modal.ev-modal').forEach((m) => m.dispatchEvent(new Event('event-remote')));
+    document.querySelector('.modal.note-modal')?.dispatchEvent(new Event('note-remote'));
+  }, 150);
+}
+
 let channel;
 function startRealtime() {
   if (channel) return;
   channel = sb
     .channel('familie')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'family_refresh' }, refreshAfterDeletion)
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, ({ new: row }) => {
       const m = mapMessage(row);
       const known = state.messages.some((x) => x.id === m.id);
@@ -6991,13 +6964,7 @@ function startRealtime() {
         if (!pushActive()) showBanner({ title: `Erledigt: ${m.title}`, body: `${who ? who.firstName : 'Jemand'} hat die Aufgabe als erledigt markiert.`, tag: `done-${m.id}`, urgency: 'info', url: `?tab=start&msg=${m.id}` });
       }
     })
-    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, ({ old }) => removeMessage(old.id))
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'message_responses' }, ({ eventType, new: row, old }) => {
-      if (eventType === 'DELETE') {
-        for (const [mid, list] of state.responses) state.responses.set(mid, list.filter((x) => !(x.userId === old.user_id && mid === old.message_id)));
-        if (old.message_id) rerenderMessage(old.message_id);
-        return;
-      }
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'message_responses' }, ({ new: row }) => {
       setResponse(row);
       rerenderMessage(row.message_id);
       const m = state.messages.find((x) => x.id === row.message_id);
@@ -7010,15 +6977,13 @@ function startRealtime() {
       addComment(mapComment(row));
       rerenderMessage(row.message_id);
     })
-    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'message_comments' }, ({ old }) => removeComment(old.id))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, async () => {
       await loadUsers().catch(() => {});
       renderProfileButton();
       if (state.tab === 'team' || state.tab === 'start' || state.tab === 'schande') render();
     })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'strikes' }, ({ eventType, new: row, old }) => {
-      if (eventType === 'DELETE') state.strikes = state.strikes.filter((x) => x.id !== old.id);
-      else upsertBy(state.strikes, mapStrike(row), true);
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'strikes' }, ({ new: row }) => {
+      upsertBy(state.strikes, mapStrike(row), true);
       if (state.tab === 'schande') render();
       checkVerdicts();
     })
@@ -7032,14 +6997,12 @@ function startRealtime() {
       if (ed) ed.dispatchEvent(new Event('note-remote'));
       else if (state.tab === 'notizen') render();
     })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'strike_rules' }, ({ eventType, new: row, old }) => {
-      if (eventType === 'DELETE') state.rules = state.rules.filter((x) => x.id !== old.id);
-      else upsertBy(state.rules, mapRule(row));
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'strike_rules' }, ({ new: row }) => {
+      upsertBy(state.rules, mapRule(row));
       if (state.tab === 'schande') render();
     })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'fines' }, ({ eventType, new: row, old }) => {
-      if (eventType === 'DELETE') state.fines = state.fines.filter((x) => x.id !== old.id);
-      else upsertBy(state.fines, mapFine(row), true);
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'fines' }, ({ new: row }) => {
+      upsertBy(state.fines, mapFine(row), true);
       if (state.tab === 'schande') render();
     })
     .subscribe((status) => {
@@ -7097,7 +7060,7 @@ async function startApp() {
     if (Date.now() - upd < 120000) setTimeout(() => toast('✅ Update installiert – du hast jetzt die neueste Version!', null, { ms: 6000 }), 900);
   }
   renderProfileButton();
-  await Promise.all([loadUsers(), loadMessages(), loadFamilyCode(), loadBoard(), loadNotes(), loadEvents()]).catch((e) => toast(e.message));
+  await Promise.all([loadUsers(), loadMessages(), loadFamilyCode(), loadFamilyTeam(), loadBoard(), loadNotes(), loadEvents()]).catch((e) => toast(e.message));
   if (state.openNote) { const id = state.openNote; state.openNote = null; openNoteById(id); }
   if (state.openEvent) { const id = state.openEvent; state.openEvent = null; openEventById(id); }
   renderProfileButton();

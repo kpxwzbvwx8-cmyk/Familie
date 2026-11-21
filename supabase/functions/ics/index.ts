@@ -50,11 +50,15 @@ function allDayLines(start: string, end: Date): string[] | null {
 /** Kalender-Abo: alle Termine der Familie (ab 60 Tagen zurück) als ein Kalender */
 async function feed(token: string) {
   const { data: f } = await admin.from('calendar_feeds').select('user_id').eq('token', token).maybeSingle();
-  if (!f) return new Response('Unbekannter Kalender-Link', { status: 404, headers: cors });
+  const { data: member } = f
+    ? await admin.from('profiles').select('family_id').eq('id', f.user_id).maybeSingle()
+    : { data: null };
+  if (!member) return new Response('Unbekannter Kalender-Link', { status: 404, headers: cors });
   const since = new Date(Date.now() - 60 * 86400e3).toISOString();
   const { data: msgs } = await admin
     .from('messages')
     .select('*, author:profiles!messages_author_id_fkey(first_name, last_name)')
+    .eq('family_id', member.family_id)
     .not('event_at', 'is', null)
     .or(`event_at.gte.${since},end_at.gte.${since},deadline_at.gte.${since}`)
     .order('event_at', { ascending: true })
@@ -122,6 +126,7 @@ Deno.serve(async (req) => {
   const { data: msg } = await admin
     .from('messages')
     .select('*, author:profiles!messages_author_id_fkey(first_name, last_name)')
+    .eq('family_id', me.family_id)
     .eq('id', url.searchParams.get('id') ?? '')
     .maybeSingle();
   if (!msg) return new Response('Nachricht nicht gefunden', { status: 404, headers: cors });

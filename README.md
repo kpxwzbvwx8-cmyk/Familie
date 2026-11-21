@@ -9,7 +9,7 @@ Die App wird über Safari zum Home-Bildschirm hinzugefügt und verhält sich dan
 ## Funktionen
 
 - **Konto einrichten** beim ersten Start: Familien-Code, Vor- & Nachname, Geburtsdatum, Geschlecht (bestimmt die Figur), Lieblingsfarbe.
-  Wer zuerst beitritt, legt den Familien-Code fest. Alle anderen brauchen ihn, damit Fremde nicht mitlesen können.
+  Ein neuer Code gründet ein eigenes Familien-Team. Wer denselben Code eingibt, tritt diesem Team bei. Jede Familie hat ihren eigenen Austausch, Kalender und Trainerbereich.
 - **Trainerpass** (oben rechts) in der Lieblingsfarbe: ID Nr. (zufällig), Trainer, Striche, Spielzeit (J/M/W/T seit Geburt),
   Abenteuer gestartet (= Geburtsdatum), XP-Balken (1 XP pro Tag, 365/366 bis zum nächsten Geburtstag, Level = Alter).
 - **Austausch:** Nachrichten mit Dringlichkeit (Farbe der Kachel), Titel, Beschreibung, Urheber, Zeitpunkt und automatischem Löschen.

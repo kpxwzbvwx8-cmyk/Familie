@@ -12,6 +12,14 @@ export const admin = createClient(
   { auth: { persistSession: false, autoRefreshToken: false } },
 );
 
+/** Lesezugriffe im Namen des Mitglieds beachten dieselben Regeln wie die App. */
+export function memberClient(token: string) {
+  return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
 export function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     status,

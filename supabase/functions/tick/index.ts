@@ -18,7 +18,7 @@ Deno.serve(async (req) => {
 
   let sent = 0;
   for (const msg of due ?? []) {
-    const r = await sendPush({
+    const r = await sendPush(msg.family_id, {
       title: `⏰ Jetzt: ${msg.title}`,
       body: msg.description ? msg.description.slice(0, 140) : 'Das Ereignis beginnt.',
       tag: `start-${msg.id}`,
@@ -42,11 +42,11 @@ Deno.serve(async (req) => {
     if (Date.parse(msg.respond_by) < Date.now()) continue; // Frist schon vorbei – nicht mehr erinnern
     const { data: answered } = await admin.from('message_responses').select('user_id').eq('message_id', msg.id);
     const done = new Set([msg.author_id, ...(answered ?? []).map((r) => r.user_id)]);
-    const { data: members } = await admin.from('profiles').select('id');
+    const { data: members } = await admin.from('profiles').select('id').eq('family_id', msg.family_id);
     const toUsers = (members ?? []).map((m) => m.id).filter((id) => !done.has(id));
     if (!toUsers.length) continue;
     const time = new Date(msg.respond_by).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' });
-    const r = await sendPush({
+    const r = await sendPush(msg.family_id, {
       title: `⏳ Rückmeldung bis ${time}: ${msg.title}`,
       body: 'Noch eine Stunde – bitte antworte in der Aufgabe.',
       tag: `frist-${msg.id}`,
@@ -57,10 +57,11 @@ Deno.serve(async (req) => {
   }
   // Läuft aus: 12 Stunden vor Deadline / Rückmelde-Frist die Zuständigen warnen (Handlungsbedarf)
   const in12h = new Date(Date.now() + 12 * 3600e3).toISOString();
-  const { data: members } = await admin.from('profiles').select('id');
-  const allIds = (members ?? []).map((m) => m.id as string);
-  const responsibleOf = (msg: { assignees: string[] | null; author_id: string }) =>
-    msg.assignees?.length ? msg.assignees : allIds.filter((id) => id !== msg.author_id);
+  const responsibleOf = async (msg: { family_id: number; assignees: string[] | null; author_id: string }) => {
+    if (msg.assignees?.length) return msg.assignees;
+    const { data } = await admin.from('profiles').select('id').eq('family_id', msg.family_id).neq('id', msg.author_id);
+    return (data ?? []).map((p) => p.id as string);
+  };
   const fmt = (iso: string) => new Date(iso).toLocaleString('de-DE', { timeZone: 'Europe/Berlin', weekday: 'short', hour: '2-digit', minute: '2-digit' });
   const left = (iso: string) => {
     const mins = Math.max(1, Math.round((Date.parse(iso) - Date.now()) / 60000));
@@ -76,9 +77,9 @@ Deno.serve(async (req) => {
     .select('*');
   for (const msg of dl ?? []) {
     if (Date.parse(msg.deadline_at) < Date.now() || msg.done_by || fresh(msg)) continue;
-    const toUsers = responsibleOf(msg);
+    const toUsers = await responsibleOf(msg);
     if (!toUsers.length) continue;
-    const r = await sendPush({
+    const r = await sendPush(msg.family_id, {
       title: `⌛ Läuft aus: ${msg.title}`,
       body: `Noch ${left(msg.deadline_at)} bis zur Deadline (${fmt(msg.deadline_at)}) – hier ist Handlungsbedarf!${msg.threat_strike ? ' 😈 Sonst gibt es einen Strich.' : ''}`,
       tag: `expiry-${msg.id}`,
@@ -96,9 +97,9 @@ Deno.serve(async (req) => {
     if (Date.parse(msg.respond_by) < Date.now() || msg.closed_at || fresh(msg)) continue;
     const { data: answered } = await admin.from('message_responses').select('user_id').eq('message_id', msg.id);
     const done = new Set((answered ?? []).map((r) => r.user_id));
-    const toUsers = responsibleOf(msg).filter((id) => !done.has(id));
+    const toUsers = (await responsibleOf(msg)).filter((id) => !done.has(id));
     if (!toUsers.length) continue;
-    const r = await sendPush({
+    const r = await sendPush(msg.family_id, {
       title: `⌛ Läuft aus: ${msg.title}`,
       body: `Noch ${left(msg.respond_by)} für deine Rückmeldung (bis ${fmt(msg.respond_by)}) – bitte antworte!`,
       tag: `expiry-${msg.id}`,
@@ -128,7 +129,7 @@ Deno.serve(async (req) => {
       ? (mins <= 0 ? 'heute' : mins < 1440 * 1.5 ? 'morgen' : `in ${Math.round(mins / 1440)} Tagen`)
       : mins <= 0 ? 'jetzt' : mins < 60 ? `in ${mins} Minuten` : mins < 1440 ? `in ${Math.round(mins / 60)} Stunden` : `in ${Math.round(mins / 1440)} Tagen`;
     const time = ev.all_day ? 'ganztägig' : new Date(occStart).toLocaleString('de-DE', { timeZone: 'Europe/Berlin', weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-    const r = await sendPush({
+    const r = await sendPush(ev.family_id, {
       title: `${ev.kind === 'todo' ? '🔔 Erinnerung: ' : '📅 '}${ev.title} – ${when}`,
       body: [time, ev.location ? `📍 ${ev.location}` : ''].filter(Boolean).join(' · '),
       tag: `event-${ev.id}`,

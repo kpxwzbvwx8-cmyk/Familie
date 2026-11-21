@@ -47,12 +47,14 @@ jobs:
       - run: npm ci
       - name: Mit Supabase-Projekt verbinden
         run: npx supabase link --project-ref "$PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
-      - name: Datenbank aktualisieren
-        run: npx supabase db push --password "$SUPABASE_DB_PASSWORD" --include-all
+      # Familienzugriffe in Push und Kalender begrenzen, bevor neue Codes zugelassen werden.
       - name: Edge Functions veröffentlichen
         run: npx supabase functions deploy push ics tick hsv pair --project-ref "$PROJECT_REF" --use-api
+      - name: Datenbank aktualisieren
+        run: npx supabase db push --password "$SUPABASE_DB_PASSWORD" --include-all
 
   pages:
+    needs: supabase
     name: Web-App veröffentlichen
     if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
