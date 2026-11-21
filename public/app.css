@@ -2458,7 +2458,19 @@ button.person-head { padding: 2px 2px 4px; }
   background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
 }
 .guide-search input { flex: 1; min-width: 0; min-height: 44px; border: 0; background: transparent; }
-.guide-list { display: grid; gap: 8px; margin-bottom: 16px; }
+.guide-list { display: grid; gap: 4px; margin-bottom: 16px; }
+.guide-row {
+  display: flex; align-items: center; min-width: 0; gap: 4px; padding: 0 5px;
+  background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--u-info); border-radius: 6px;
+}
+.guide-title {
+  display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; min-height: 34px; padding: 3px;
+  font: inherit; text-align: left; color: var(--text); background: transparent; border: 0; cursor: pointer;
+}
+.guide-title svg { flex: none; }
+.guide-row card-photos.photo-thumbs { flex-wrap: nowrap; max-width: 50%; overflow-x: auto; gap: 3px; margin: 0; }
+.guide-row .photo-thumb { display: block; width: 28px; height: 28px; border-radius: 4px; }
+.guide-row .photo-thumb:focus-visible { outline-offset: -3px; }
 .guide-entry {
   min-width: 0; overflow-wrap: anywhere; color: var(--text); background: var(--surface);
   border: 1px solid var(--border); border-left: 4px solid #8053a1; border-radius: 10px;

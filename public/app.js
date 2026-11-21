@@ -439,7 +439,7 @@ function openModal(html, { dismissible = true, onMount, full = false, cls = '' }
     setTimeout(() => checkVerdicts(), 50);
   };
   const onKey = (e) => {
-    if (e.key === 'Escape' && dismissible) close();
+    if (e.key === 'Escape' && dismissible && root.lastElementChild === backdrop) close();
   };
   document.addEventListener('keydown', onKey);
   if (dismissible) {
@@ -1406,13 +1406,14 @@ function messageFullHtml(m) {
     <div class="ev-banner">
       <div class="ev-banner-sprites">${portrait}</div>
       <div class="ev-banner-text">
-        <span class="ev-tag">${info ? 'ℹ️ INFO' : '📋 AUFGABE'} · ${esc(urgencyLabel(m.urgency))}</span>
+        <span class="ev-tag">${m.inHandbook ? 'TRAINER-HANDBUCH' : `${info ? 'ℹ️ INFO' : '📋 AUFGABE'} · ${esc(urgencyLabel(m.urgency))}`}</span>
         <h2>${m.doneBy || m.closedAt ? '✓ ' : ''}${esc(m.title)}</h2>
       </div>
       <span class="msg-banner-ball">${ballSvg(urgencyInfo(m.urgency).ball, 34)}</span>
       <button class="icon-btn" data-close aria-label="Schließen">✕</button>
     </div>
     <div class="ev-rows">
+      ${m.inHandbook ? cardPhotosHtml('message', m) : ''}
       ${exp ? `<div class="ev-row exp-row"><span>⌛</span><b>${exp.kind === 'respond' ? 'Deine Rückmeldung fehlt' : 'Läuft aus'} – <span data-left="${esc(exp.at)}">${esc(timeLeft(exp.at))}</span> (bis ${esc(formatTimeOnly(exp.at))})</b></div>` : ''}
       ${m.openEnded ? `<div class="ev-row"><span>⚡</span><b>Sofort &amp; offen – bleibt, bis ${m.needsAck ? 'alle geantwortet haben' : 'sie erledigt ist'}</b></div>` : ''}
       ${timed ? `<div class="ev-row"><span>🕒</span><b>${esc(formatRange(m.eventAt, m.endAt))}${m.remindAtStart ? ' 🔔' : ''}</b></div>` : ''}
@@ -1430,7 +1431,7 @@ function messageFullHtml(m) {
       ${m.deleteAt ? `<div class="ev-row"><span>🗑️</span><small class="hint">Löscht sich ${esc(relative(m.deleteAt))} (${esc(formatDateTime(m.deleteAt))})</small></div>` : ''}
       ${pin ? `<div class="ev-row"><span>📌</span><small class="hint">In „Fortlaufend“ bis ${esc(formatDateTime(pin))}</small></div>` : ''}
     </div>
-    ${cardPhotosHtml('message', m)}
+    ${m.inHandbook ? '' : cardPhotosHtml('message', m)}
     ${m.linkedInfoIds.map(linkedInfoHtml).join('')}
     ${m.attachedNotes.map((note, i) => attachedNoteHtml(m, note, i)).join('')}
     ${m.needsAck ? `<div class="ev-answer">
@@ -1442,7 +1443,7 @@ function messageFullHtml(m) {
     ${mine && awaitingReview ? `<div class="ev-answer"><span>Rückmeldung ist da – nimm das Ergebnis ab:</span><div class="ev-answer-btns">
       <button type="button" class="btn primary" data-review="${esc(m.id)}" data-verdict="accept">👍 Abnehmen</button>
       <button type="button" class="btn danger" data-review="${esc(m.id)}" data-verdict="strike">😈 Strich vergeben</button></div></div>` : ''}
-    ${info ? `<div class="ev-answer"><span>📌 In „Fortlaufend“ behalten (nur für dich):</span><div class="chips">
+    ${info && !m.inHandbook ? `<div class="ev-answer"><span>📌 In „Fortlaufend“ behalten (nur für dich):</span><div class="chips">
       ${[['1 Tag', 1], ['3 Tage', 3], ['1 Woche', 7], ['1 Monat', 30]].map(([l, d]) => `<button type="button" class="chip" data-pin="${esc(m.id)}" data-days="${d}">${l}</button>`).join('')}
       ${pin ? `<button type="button" class="chip" data-pin="${esc(m.id)}" data-days="0">Nicht mehr</button>` : ''}</div></div>` : ''}
     <div class="ev-comments">
@@ -1492,7 +1493,8 @@ function bindMessage(el, { toggle = true } = {}) {
   el.querySelectorAll('[data-comment-form]').forEach((f) => f.addEventListener('submit', (e) => { e.preventDefault(); sendComment(f); }));
   el.querySelectorAll('[data-delete]').forEach((b) =>
     b.addEventListener('click', async () => {
-      if (!(await dsAsk('Diese Nachricht wirklich löschen?', { yes: 'Löschen', danger: true }))) return;
+      const question = message?.inHandbook ? 'Anleitung löschen? Auch der Link in Aufgaben wird entfernt.' : 'Diese Nachricht wirklich löschen?';
+      if (!(await dsAsk(question, { yes: 'Löschen', danger: true }))) return;
       try {
         must(await sb.from('messages').delete().eq('id', b.dataset.delete));
         if (state.msgDetail && state.msgDetail.id === b.dataset.delete) state.msgDetail.close();
@@ -2016,43 +2018,43 @@ function linkedInfoHtml(id) {
     <p>${esc(info.description || 'Keine weiteren Details.')}</p>${cardPhotosHtml('message', info)}${editCardButton(info)}</details>`;
 }
 
+function filterHandbook(book) {
+  const query = book.querySelector('input[type=search]').value.trim().toLocaleLowerCase('de');
+  const matches = new Set(state.messages.filter((m) => m.inHandbook &&
+    (m.title + ' ' + m.description).toLocaleLowerCase('de').includes(query)).map((m) => m.id));
+  const rows = book.querySelectorAll('.guide-row');
+  rows.forEach((row) => { row.hidden = !matches.has(row.dataset.guide); });
+  const empty = book.querySelector('.guide-empty');
+  empty.hidden = matches.size > 0;
+  empty.textContent = rows.length ? 'Keine passende Anleitung gefunden.' : 'Dein Handbuch ist noch leer.';
+}
+
 function refreshHandbook() {
   const book = document.querySelector('.handbook-modal');
   if (!book) return;
-  const query = book.querySelector('input[type=search]').value.trim().toLocaleLowerCase('de');
-  const list = book.querySelector('.guide-list');
-  const opened = new Set([...list.querySelectorAll('details[open]')].map((d) => d.dataset.guide));
-  const guides = state.messages.filter((m) => m.inHandbook)
-    .sort((a, b) => a.title.localeCompare(b.title, 'de'));
-  list.innerHTML = guides.filter((m) => (m.title + ' ' + m.description).toLocaleLowerCase('de').includes(query))
-    .map((m) => `<details class="guide-entry" data-guide="${esc(m.id)}"${opened.has(m.id) ? ' open' : ''}>
-      <summary>${ballSvg('master', 20)}<span>${esc(m.title)}</span></summary>
-      <p>${esc(m.description)}</p>${cardPhotosHtml('message', m)}
-      ${editCardButton(m)}
-      ${m.authorId === state.me.id ? '<button type="button" class="btn small danger" data-remove-guide>Anleitung löschen</button>' : ''}
-    </details>`).join('') || `<p class="hint">${guides.length ? 'Keine passende Anleitung gefunden.' : 'Dein Handbuch ist noch leer.'}</p>`;
+  const guides = state.messages.filter((m) => m.inHandbook).sort((a, b) => a.title.localeCompare(b.title, 'de'));
+  book.querySelector('.guide-list').innerHTML = guides.map((m) => `<div class="guide-row" role="listitem" data-guide="${esc(m.id)}">
+    <button type="button" class="guide-title" data-open-guide="${esc(m.id)}" aria-haspopup="dialog">
+      ${ballSvg('master', 18)}<span class="mini-what">${esc(m.title)}</span>
+    </button>${cardPhotosHtml('message', m)}
+  </div>`).join('');
+  filterHandbook(book);
 }
 
 function openHandbook() {
   openModal(`<div class="modal-head"><h2>Trainer-Handbuch</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
     <label class="guide-search"><span aria-hidden="true">🔍</span><input type="search" aria-label="Anleitungen durchsuchen" placeholder="Anleitungen durchsuchen"></label>
-    <div class="guide-list"></div>
+    <div class="guide-list" role="list" aria-label="Anleitungen"></div>
+    <p class="hint guide-empty" hidden></p>
     <button type="button" class="btn primary" data-write-guide>＋ Anleitung schreiben</button>`, {
     cls: 'handbook-modal',
     onMount: (modal) => {
       refreshHandbook();
-      modal.querySelector('input').addEventListener('input', refreshHandbook);
+      modal.querySelector('input').addEventListener('input', () => filterHandbook(modal));
       modal.querySelector('[data-write-guide]').addEventListener('click', () => openNewMessage('info', true));
-      modal.querySelector('.guide-list').addEventListener('click', async (event) => {
-        const edit = event.target.closest('[data-edit-card]');
-        if (edit) { editCard(edit.dataset.editCard); return; }
-        if (!event.target.closest('[data-remove-guide]')) return;
-        const id = event.target.closest('details').dataset.guide;
-        if (!await dsAsk('Anleitung löschen? Auch der Link in Aufgaben wird entfernt.', { yes: 'Löschen', danger: true })) return;
-        try {
-          must(await sb.from('messages').delete().eq('id', id));
-          removeMessage(id);
-        } catch (err) { toast(err.message); }
+      modal.querySelector('.guide-list').addEventListener('click', (event) => {
+        const title = event.target.closest('[data-open-guide]');
+        if (title) openMessageDetail(title.dataset.openGuide);
       });
     },
   });
