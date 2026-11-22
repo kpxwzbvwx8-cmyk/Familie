@@ -38,15 +38,8 @@ jobs:
         with:
           node-version: 22
       - name: Einstellungen prüfen
-        env:
-          PRIVACY_CONTROLLER: ${{ vars.PRIVACY_CONTROLLER }}
-          PRIVACY_CONTACT: ${{ vars.PRIVACY_CONTACT }}
-          TEAM_MASCOT_FAMILY_CODE: ${{ secrets.TEAM_MASCOT_FAMILY_CODE }}
         run: |
           missing=""
-          [ -n "$PRIVACY_CONTROLLER" ] || missing="$missing PRIVACY_CONTROLLER"
-          [ -n "$PRIVACY_CONTACT" ] || missing="$missing PRIVACY_CONTACT"
-          [ -n "$TEAM_MASCOT_FAMILY_CODE" ] || missing="$missing TEAM_MASCOT_FAMILY_CODE(Secret)"
           [ -n "$PROJECT_REF" ] || missing="$missing SUPABASE_PROJECT_REF(Variable)"
           [ -n "$SUPABASE_ACCESS_TOKEN" ] || missing="$missing SUPABASE_ACCESS_TOKEN(Secret)"
           [ -n "$SUPABASE_DB_PASSWORD" ] || missing="$missing SUPABASE_DB_PASSWORD(Secret)"
@@ -66,6 +59,10 @@ jobs:
           PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           PGSSLMODE: require
         run: |
+          if [ -z "$TEAM_MASCOT_FAMILY_CODE" ]; then
+            echo "::notice::Team-Maskottchen behalten die im Projekt gespeicherte Zuordnung."
+            exit 0
+          fi
           db_url="postgresql://postgres@db.${PROJECT_REF}.supabase.co:5432/postgres"
           if [ -s supabase/.temp/pooler-url ]; then db_url="$(cat supabase/.temp/pooler-url)"; fi
           node scripts/configure-mascots.js "$db_url"
@@ -84,8 +81,6 @@ jobs:
         env:
           PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
           SUPABASE_KEY: ${{ vars.SUPABASE_KEY }}
-          PRIVACY_CONTROLLER: ${{ vars.PRIVACY_CONTROLLER }}
-          PRIVACY_CONTACT: ${{ vars.PRIVACY_CONTACT }}
           PRIVACY_RETENTION: ${{ vars.PRIVACY_RETENTION }}
           PRIVACY_TRANSFERS: ${{ vars.PRIVACY_TRANSFERS }}
         run: |
@@ -99,8 +94,7 @@ jobs:
             supabaseUrl: `https://${e.PROJECT_REF}.supabase.co`,
             supabaseKey: e.SUPABASE_KEY,
             version: e.GITHUB_SHA.slice(0, 8),
-            privacy: { controller: e.PRIVACY_CONTROLLER, contact: e.PRIVACY_CONTACT,
-              retention: e.PRIVACY_RETENTION, transfers: e.PRIVACY_TRANSFERS },
+            privacy: { retention: e.PRIVACY_RETENTION, transfers: e.PRIVACY_TRANSFERS },
           };
           writeFileSync('public/config.js', 'window.FAMILIE_CONFIG = ' + JSON.stringify(config) + ';\n');
           JS

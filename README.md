@@ -39,9 +39,7 @@ Im Repository unter **Settings → Secrets and variables → Actions**:
 | Variable | `SUPABASE_KEY` | Publishable key |
 | Secret | `SUPABASE_ACCESS_TOKEN` | Access Token |
 | Secret | `SUPABASE_DB_PASSWORD` | Datenbank-Passwort |
-| Secret | `TEAM_MASCOT_FAMILY_CODE` | Exakter Einladungscode der Familie mit den beiden Kaninchen und dem Ei, nur für die Datenbankmigration |
-| Variable | `PRIVACY_CONTROLLER` | Öffentlich anzuzeigende verantwortliche Person oder Organisation einschließlich Anschrift |
-| Variable | `PRIVACY_CONTACT` | Erreichbarer Kontakt für Datenschutzanfragen |
+| Secret | `TEAM_MASCOT_FAMILY_CODE` | Für die Zuordnung der Kaninchen und des Eis. Ohne dieses Secret bleibt die vorhandene private Zuordnung bestehen. Ohne Zuordnung erscheint das Trio in keinem Team. |
 | Variable | `PRIVACY_RETENTION` | Tatsächliche Fristen für Nachweise, Sicherungen und technische Protokolle |
 | Variable | `PRIVACY_TRANSFERS` | Tatsächliche Speicherregion, gegebenenfalls Drittlandtransfers und geltende Garantien |
 

@@ -2530,6 +2530,7 @@ html[data-privacy-pending] #privacy-screen {
 }
 #privacy-screen h1 { font-size: 1.65rem; margin: 0 0 1rem; }
 .privacy-copy { font-family: system-ui, sans-serif; font-size: 1rem; line-height: 1.55; color: var(--text); }
+.privacy-copy address { font-style: normal; }
 .privacy-copy h3 { margin: 1.5em 0 .4em; font-size: 1.08em; }
 .privacy-copy p, .privacy-copy li { margin: .5em 0; overflow-wrap: anywhere; }
 .privacy-copy ul { padding-inline-start: 1.4em; }

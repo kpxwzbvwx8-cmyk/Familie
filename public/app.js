@@ -3086,7 +3086,8 @@ function privacyNoticeHtml() {
   return `<div class="privacy-copy">
     <p>Mit deinem Trainerpass kannst du Aufgaben, Termine und Erinnerungen mit deiner Familie organisieren. Hier siehst du, welche Daten dabei entstehen und wer sie sehen kann.</p>
     <h3>Wer verantwortlich ist</h3>
-    <p>${esc(privacy.controller || 'Die Betreiberangaben werden noch ergänzt.')}<br>${esc(privacy.contact || '')}</p>
+    <address>Jan-Erik Struß<br>Danziger Straße 19<br>24148 Kiel<br>
+      <a href="mailto:j.struss16@gmail.com">j.struss16@gmail.com</a></address>
     <h3>Was dein Team sieht</h3>
     <p>Alle Konten, die mit eurem Familien-Code beitreten, sehen die Trainerpässe mit Namen, Geburtstag, Figur und freiwilligen Profilangaben. Auch Aufgaben, Termine, Zuständigkeiten, Antworten, Kommentare, Fotos, Anleitungen und Einträge im Board der Schande sind innerhalb des Teams sichtbar. Gib den Code nur an die vorgesehenen Personen weiter. Bei Aufgaben mit Strich-Androhung kann eine verpasste Frist automatisch einen Eintrag im Board auslösen.</p>
     <p>Private Notizen sind in der App nur für dich sichtbar. Teilst du eine Notiz, erhalten die ausgewählten Mitglieder Zugriff. Bettest du sie in eine Aufgabe ein, entsteht eine Kopie mit Text und Bildern, die das ganze Team sehen kann. Familien mit einem anderen Code haben über die App keinen Zugriff auf euren Bereich.</p>
@@ -3126,10 +3127,6 @@ function privacyGate() {
           <button class="btn" data-accept>Ich willige ein und möchte die App nutzen</button></div>`);
       const accept = screen.querySelector('[data-accept]');
       const decline = screen.querySelector('[data-decline]');
-      if (!CFG.privacy?.controller || !CFG.privacy?.contact) {
-        accept.disabled = true;
-        screen.querySelector('[role=status]').textContent = 'Die Angaben zur verantwortlichen Stelle fehlen noch. Eine Einwilligung ist erst danach möglich.';
-      }
       accept.onclick = async () => {
         accept.disabled = decline.disabled = true;
         try {
