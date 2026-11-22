@@ -1,6 +1,6 @@
 {
   "name": "familie",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "private": true,
   "description": "Familien-App mit Trainerpass, Austausch, Notizen, Kalender, Board der Schande und Team",
   "scripts": {

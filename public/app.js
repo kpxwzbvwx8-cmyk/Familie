@@ -301,6 +301,7 @@ function pokemonById(id) {
 
 /** Geschlechtssymbol wie im Spiel: blaues ♂ bzw. rotes ♀ */
 function genderSvg(g) {
+  if (g !== 'm' && g !== 'w') return '';
   if (g === 'm') {
     return '<svg class="gender-svg" viewBox="0 0 16 16" width="14" height="14" aria-label="männlich"><circle cx="6.5" cy="9.5" r="4" fill="none" stroke="#3b7dd8" stroke-width="2.2"/><path d="M9.5 6.5 14 2M9.6 2H14v4.4" fill="none" stroke="#3b7dd8" stroke-width="2.2" stroke-linecap="square"/></svg>';
   }
@@ -2782,12 +2783,114 @@ function inviteLink() {
   return url.toString();
 }
 
+function removePetBackground(ctx, x, y) {
+  const { width, height } = ctx.canvas;
+  const frame = ctx.getImageData(0, 0, width, height);
+  const pixels = frame.data;
+  const seed = (y * width + x) * 4;
+  const color = pixels.slice(seed, seed + 3);
+  const queue = new Int32Array(width * height);
+  let read = 0, write = 0;
+  function visit(index) {
+    const offset = index * 4;
+    if (!pixels[offset + 3]) return;
+    if (color.some((v, i) => Math.abs(v - pixels[offset + i]) > 44)) return;
+    pixels[offset + 3] = 0;
+    queue[write++] = index;
+  }
+  visit(y * width + x);
+  while (read < write) {
+    const i = queue[read++];
+    if (i % width) visit(i - 1);
+    if (i % width < width - 1) visit(i + 1);
+    if (i >= width) visit(i - width);
+    if (i < width * (height - 1)) visit(i + width);
+  }
+  ctx.putImageData(frame, 0, 0);
+}
+
+function openPetForm() {
+  openModal(`<div class="modal-head"><h2>Haustier ins Team holen</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+    <form class="form"><label class="field"><span>Name</span><input name="petName" required maxlength="40"></label>
+    <label class="field"><span>Geburtstag (optional)</span><input name="birthday" type="date" max="${new Date().toLocaleDateString('sv-SE')}"></label>
+    <label class="field"><span>Tierfoto (optional)</span><input name="photo" type="file" accept="image/*"></label>
+    <div data-photo-tools hidden><canvas aria-label="Foto-Vorschau"></canvas>
+    <p class="hint">Bei einfarbigem Hintergrund genügt oft der Knopf. Tippe für weitere Flächen direkt auf den Hintergrund. Bereits transparente Bilder kannst du sofort speichern.</p>
+    <button type="button" class="btn small" data-cut>Hintergrund entfernen</button>
+    <button type="button" class="btn small" data-restore>Original wiederherstellen</button></div>
+    <p role="status" class="error"></p><button class="btn primary" type="submit">Haustier speichern</button></form>`, {
+    onMount(modal, close) {
+      const form = modal.querySelector('form');
+      const canvas = form.querySelector('canvas');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      const tools = form.querySelector('[data-photo-tools]');
+      const save = form.querySelector('[type=submit]');
+      const status = form.querySelector('[role=status]');
+      let original = null;
+      form.elements.photo.onchange = async () => {
+        const file = form.elements.photo.files[0];
+        original = null;
+        tools.hidden = true;
+        status.textContent = '';
+        save.disabled = !!file;
+        if (!file) return;
+        const url = URL.createObjectURL(file);
+        try {
+          const img = new Image();
+          img.src = url;
+          await img.decode();
+          if (file !== form.elements.photo.files[0]) return;
+          const scale = Math.min(1, 384 / Math.max(img.width, img.height));
+          canvas.width = Math.max(1, Math.round(img.width * scale));
+          canvas.height = Math.max(1, Math.round(img.height * scale));
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          original = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          tools.hidden = false;
+        } catch {
+          if (file === form.elements.photo.files[0]) {
+            form.elements.photo.value = '';
+            status.textContent = 'Dieses Foto lässt sich nicht öffnen. Bitte wähle ein PNG-, JPEG- oder WebP-Bild.';
+          }
+        } finally {
+          URL.revokeObjectURL(url);
+          if (!form.elements.photo.files[0] || file === form.elements.photo.files[0]) save.disabled = false;
+        }
+      };
+      form.querySelector('[data-cut]').onclick = () => {
+        for (const x of [0, canvas.width - 1]) for (const y of [0, canvas.height - 1]) removePetBackground(ctx, x, y);
+      };
+      canvas.onclick = (e) => {
+        const r = canvas.getBoundingClientRect();
+        removePetBackground(ctx, Math.min(canvas.width - 1, Math.floor((e.clientX-r.left)*canvas.width/r.width)),
+          Math.min(canvas.height - 1, Math.floor((e.clientY-r.top)*canvas.height/r.height)));
+      };
+      form.querySelector('[data-restore]').onclick = () => ctx.putImageData(original, 0, 0);
+      form.onsubmit = async (e) => {
+        e.preventDefault();
+        if (save.disabled) return;
+        save.disabled = true;
+        try {
+          const row = must(await sb.from('pets').insert({ name: form.elements.petName.value.trim(),
+            birthday: form.elements.birthday.value || null, photo: original ? canvas.toDataURL('image/webp', .86) : null }).select().single());
+          state.teamPokemon.push(mapPet(row));
+          close(); render();
+        } catch (err) { status.textContent = err.message; save.disabled = false; }
+      };
+    },
+  });
+}
+
+function mapPet(row) {
+  return { id: row.id, trainerId: row.id.slice(0, 5).toUpperCase(), kind: 'pokemon', firstName: row.name,
+    lastName: '', birthday: row.birthday, color: '#598050', sprite: row.photo || asset('img/pokeball.png') };
+}
+
 function pokemonTileHtml(p) {
-  const age = ageParts(parseBirthday(p.birthday));
+  const age = p.birthday ? ageParts(parseBirthday(p.birthday)) : null;
   return `<button class="team-tile pokemon-tile" data-pokemon="${esc(p.id)}" style="${colorVars(p.color)}">
     <span class="avatar"><img class="sprite" src="${esc(p.sprite)}" alt=""></span>
     <span class="name">${esc(p.firstName)} ${genderSvg(p.gender)}</span>
-    <span class="meta">Pokémon · Lv. ${age.years}</span>
+    <span class="meta">${age ? 'Pokémon · Lv. ' + age.years : 'Pokémon'}</span>
   </button>`;
 }
 
@@ -2807,7 +2910,7 @@ function partySlotHtml(entry, i) {
     ${gender ? `<span class="party-gender">${genderSvg(gender)}</span>` : ''}
     ${xp ? `<span class="party-bar"><span class="party-bar-tag">XP</span><span class="party-bar-track"><span class="party-bar-fill" style="width:${pct.toFixed(1)}%"></span></span></span>
     <span class="party-lv">Lv.${xp.level}</span>
-    <span class="party-xp">${xp.xp} /${xp.total}</span>` : `<span class="party-egg-hint">SSW ${esc(eggInfo().ssw)} · ${eggInfo().remaining} T</span>`}
+    <span class="party-xp">${xp.xp} /${xp.total}</span>` : kind !== 'egg' ? '' : `<span class="party-egg-hint">SSW ${esc(eggInfo().ssw)} · ${eggInfo().remaining} T</span>`}
   </button>`;
 }
 
@@ -2850,7 +2953,8 @@ function renderTeam(view) {
       </div>`
     : '';
   const version = `<p class="app-version">App-Version: ${esc(CFG.version || 'dev')}</p>`;
-  view.innerHTML = switcher + grid + invite + version;
+  view.innerHTML = switcher + grid + '<button class="btn" id="add-pet">＋ Haustier hinzufügen</button>' + invite + version;
+  $('#add-pet', view).onclick = openPetForm;
   view.querySelectorAll('[data-team-view]').forEach((b) => b.addEventListener('click', () => {
     try { localStorage.setItem('familie.teamView', b.dataset.teamView); } catch { /* privat */ }
     render();
@@ -3089,7 +3193,7 @@ function privacyNoticeHtml() {
     <address>Jan-Erik Struß<br>Danziger Straße 19<br>24148 Kiel<br>
       <a href="mailto:j.struss16@gmail.com">j.struss16@gmail.com</a></address>
     <h3>Was dein Team sieht</h3>
-    <p>Alle Konten, die mit eurem Familien-Code beitreten, sehen die Trainerpässe mit Namen, Geburtstag, Figur und freiwilligen Profilangaben. Auch Aufgaben, Termine, Zuständigkeiten, Antworten, Kommentare, Fotos, Anleitungen und Einträge im Board der Schande sind innerhalb des Teams sichtbar. Gib den Code nur an die vorgesehenen Personen weiter. Bei Aufgaben mit Strich-Androhung kann eine verpasste Frist automatisch einen Eintrag im Board auslösen.</p>
+    <p>Alle Konten, die mit eurem Familien-Code beitreten, sehen die Trainerpässe mit Namen, Geburtstag, Figur und freiwilligen Profilangaben. Auch Haustierprofile mit ihren Fotos, Aufgaben, Termine, Zuständigkeiten, Antworten, Kommentare, Fotos, Anleitungen und Einträge im Board der Schande sind innerhalb des Teams sichtbar. Gib den Code nur an die vorgesehenen Personen weiter. Bei Aufgaben mit Strich-Androhung kann eine verpasste Frist automatisch einen Eintrag im Board auslösen.</p>
     <p>Private Notizen sind in der App nur für dich sichtbar. Teilst du eine Notiz, erhalten die ausgewählten Mitglieder Zugriff. Bettest du sie in eine Aufgabe ein, entsteht eine Kopie mit Text und Bildern, die das ganze Team sehen kann. Familien mit einem anderen Code haben über die App keinen Zugriff auf euren Bereich.</p>
     <h3>Wer die Daten technisch verarbeitet</h3>
     <ul><li><b>GitHub Pages</b> liefert die App-Dateien aus. Schon beim Öffnen erhält GitHub technische Verbindungsdaten wie IP-Adresse und Zeitpunkt. Mit der App ausgelieferte Bilder sind über ihre Webadresse öffentlich abrufbar.</li>
@@ -6435,8 +6539,14 @@ function openDossier(userId) {
  *  blau für Trainer, rosa für Trainerinnen
  * ---------------------------------------------------------------------- */
 
-const APP_VERSION = '1.2.5';
+const APP_VERSION = '1.2.6';
 const CHANGELOG = [
+  { version: '1.2.6', date: '2026-11-22', title: 'Dein Haustier bekommt einen Pokémon-Pass!',
+    intro: 'Jetzt ziehen deine eigenen Tiere ins Team ein. Ihr findet ihre Pässe in der Übersicht und in der Party.',
+    items: ['Unter Team → Haustier hinzufügen genügen ein Name und auf Wunsch Geburtstag und Foto.',
+      'Entferne gleichfarbige Hintergründe direkt auf deinem Gerät. In der Vorschau kannst du weitere Flächen antippen oder das Original wiederherstellen.',
+      'Beim Einstieg siehst du den Datenschutzhinweis mit Kontakt zum Betreiber. Unter Einstellungen → Datenschutz kannst du ihn erneut lesen und deine Einwilligung widerrufen.'],
+  },
   {
     version: '1.2.5', date: '2026-11-22', title: 'Datenschutz für dein Trainer-Team',
     intro: 'Beim Öffnen erfährst du, wer deinen Trainerpass, eure Karten und geteilte Bilder sehen kann. Du entscheidest, ob du den Familienbereich nutzen möchtest.',
@@ -6955,8 +7065,8 @@ function setTab(tab) {
  * ---------------------------------------------------------------------- */
 
 async function loadFamilyTeam() {
-  const extras = must(await sb.rpc('get_family_team'));
-  state.teamPokemon = (extras?.pokemon || []).map((p) => ({ ...p, sprite: asset(p.sprite) }));
+  const [extras, pets] = await Promise.all([sb.rpc('get_family_team').then(must), sb.from('pets').select('*').order('name').then(must)]);
+  state.teamPokemon = (extras?.pokemon || []).map((p) => ({ ...p, sprite: asset(p.sprite) })).concat(pets.map(mapPet));
   state.teamEgg = extras?.egg || null;
 }
 
@@ -7017,7 +7127,7 @@ async function loadFamilyCode() {
 
 async function refreshAll() {
   try {
-    await Promise.all([loadUsers(), loadMessages(), loadBoard(), loadNotes(), loadEvents()]);
+    await Promise.all([loadUsers(), loadFamilyTeam(), loadMessages(), loadBoard(), loadNotes(), loadEvents()]);
     renderProfileButton();
     render();
     checkVerdicts();

@@ -2536,3 +2536,4 @@ html[data-privacy-pending] #privacy-screen {
 .privacy-copy ul { padding-inline-start: 1.4em; }
 .privacy-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 1rem; }
 .privacy-actions .btn { flex: 1 1 15rem; white-space: normal; }
+[data-photo-tools] canvas { display: block; max-width: 100%; height: auto; margin: .5rem auto; cursor: crosshair; background: repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0 / 16px 16px; }
