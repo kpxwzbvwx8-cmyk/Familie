@@ -44,14 +44,6 @@ jobs:
           [ -n "$SUPABASE_ACCESS_TOKEN" ] || missing="$missing SUPABASE_ACCESS_TOKEN(Secret)"
           [ -n "$SUPABASE_DB_PASSWORD" ] || missing="$missing SUPABASE_DB_PASSWORD(Secret)"
           if [ -n "$missing" ]; then echo "::error::Es fehlen:$missing – siehe README"; exit 1; fi
-      - name: Öffentlicher Schlüssel für die einmalige Familienzuordnung
-        run: |
-          node <<'JS'
-          const c = require('node:crypto');
-          const seed = c.hkdfSync('sha256', process.env.SUPABASE_ACCESS_TOKEN, process.env.PROJECT_REF, 'Familie/mascot-provisioning/v1', 32);
-          const key = c.createPrivateKey({key: Buffer.concat([Buffer.from('302e020100300506032b656e04220420','hex'), Buffer.from(seed)]), format:'der', type:'pkcs8'});
-          console.log('::notice::Mascot recipient ' + c.createPublicKey(key).export({format:'der',type:'spki'}).toString('base64'));
-          JS
       - run: npm ci
       - name: Mit Supabase-Projekt verbinden
         run: npx supabase link --project-ref "$PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
@@ -67,13 +59,9 @@ jobs:
           PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           PGSSLMODE: require
         run: |
-          if [ -z "$TEAM_MASCOT_FAMILY_CODE" ]; then
-            echo "::notice::Team-Maskottchen behalten die im Projekt gespeicherte Zuordnung."
-            exit 0
-          fi
           db_url="postgresql://postgres@db.${PROJECT_REF}.supabase.co:5432/postgres"
           if [ -s supabase/.temp/pooler-url ]; then db_url="$(cat supabase/.temp/pooler-url)"; fi
-          node scripts/configure-mascots.js "$db_url"
+          node scripts/restore-team-once.js "$db_url"
 
   pages:
     needs: supabase
