@@ -762,13 +762,17 @@ function profileFormHtml(u, { code = '' } = {}) {
   </form>`;
 }
 
+function memoTitle(u) {
+  return u.kind === 'pokemon' ? 'Haustier-Memo' : 'Trainer-Memo';
+}
+
 function memoFieldsHtml(u) {
   const opts = (list, cur, label = (x) => x) =>
     `<option value="">– keine Angabe –</option>` +
     list.map((x) => `<option value="${esc(x)}"${x === cur ? ' selected' : ''}>${esc(label(x))}</option>`).join('');
   return `
     <fieldset class="field memo-fields">
-      <legend>Trainer-Memo</legend>
+      <legend>${memoTitle(u)}</legend>
       <label class="field"><span>Wesen</span><select name="nature">${opts(NATURES, u.nature)}</select></label>
       <label class="field"><span>Geburtsort</span><input name="region" maxlength="40" placeholder="z. B. Hamburg" value="${esc(u.region || '')}">
         <p class="hint">Frei eintragbar – steht im Memo an der Stelle der Region (wie „Kanto“ im Spiel).</p></label>
@@ -1015,8 +1019,8 @@ function openEditProfile() {
 function trainerMemoHtml(u) {
   const red = (t) => `<span class="memo-red">${esc(t)}</span>`;
   return `
-  <article class="memo memo-trainer" aria-label="Trainer-Memo von ${esc(fullName(u))}">
-    <div class="memo-head">TRAINER-MEMO</div>
+  <article class="memo memo-trainer" aria-label="${memoTitle(u)} von ${esc(fullName(u))}">
+    <div class="memo-head">${memoTitle(u).toUpperCase()}</div>
     <div class="memo-body">
       <div class="memo-right">
         <p>Wesen: ${u.nature ? red(u.nature) : '???'}</p>
@@ -2819,6 +2823,7 @@ function openPetForm(pet = null) {
     <p class="hint">Bei einfarbigem Hintergrund genügt oft der Knopf. Tippe für weitere Flächen direkt auf den Hintergrund. Bereits transparente Bilder kannst du sofort speichern.</p>
     <button type="button" class="btn small" data-cut>Hintergrund entfernen</button>
     <button type="button" class="btn small" data-restore>Original wiederherstellen</button></div>
+    ${memoFieldsHtml(pet || { kind: 'pokemon' })}
     <p role="status" class="error"></p><button class="btn primary" type="submit">Haustier speichern</button></form>`, {
     onMount(modal, close) {
       const form = modal.querySelector('form');
@@ -2871,7 +2876,10 @@ function openPetForm(pet = null) {
         if (save.disabled) return;
         save.disabled = true;
         try {
-          const values = { name: form.elements.petName.value.trim(), birthday: form.elements.birthday.value || null };
+          const fields = form.elements;
+          const values = { name: fields.petName.value.trim(), birthday: fields.birthday.value || null,
+            nature: fields.nature.value, region: fields.region.value.trim(), loves: fields.loves.value.trim(),
+            flavor: fields.flavor.value, status_text: fields.statusText.value.trim() };
           if (original) values.photo = canvas.toDataURL('image/webp', .86);
           const query = pet ? sb.from('pets').update(values).eq('id', pet.id) : sb.from('pets').insert(values);
           const updated = mapPet(must(await query.select().single()));
@@ -2886,6 +2894,8 @@ function openPetForm(pet = null) {
 function mapPet(row) {
   const legacy = row.legacy_profile || {};
   return { ...legacy, id: row.id, trainerId: legacy.trainerId || row.id.slice(0, 5).toUpperCase(), kind: 'pokemon',
+    nature: row.nature ?? legacy.nature, region: row.region ?? legacy.region, loves: row.loves ?? legacy.loves,
+    flavor: row.flavor ?? legacy.flavor, statusText: row.status_text ?? legacy.statusText,
     firstName: row.name, lastName: '', birthday: row.birthday, color: legacy.color || '#598050',
     sprite: row.photo || asset(legacy.sprite || 'img/pokeball.png') };
 }
