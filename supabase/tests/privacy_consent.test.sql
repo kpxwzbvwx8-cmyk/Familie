@@ -3,7 +3,7 @@ create extension if not exists pgtap with schema extensions;
 set local search_path = public, extensions;
 select no_plan();
 insert into auth.users(id) values ('ffaacccc-1111-4000-8000-112233445566'), ('ffaacccc-2222-4000-8000-112233445566');
-insert into public.app_secrets values ('team_mascots','{"pokemon":[{"id":"rabbit-a"},{"id":"rabbit-b"}],"egg":{}}')
+insert into public.app_secrets values ('team_mascots','{"pokemon":[{"id":"pokemon-speedy","firstName":"Tier A"},{"id":"pokemon-idefix","firstName":"Tier B"}],"egg":{}}')
 on conflict (key) do nothing;
 insert into public.app_secrets values ('team_mascot_code','"TEST-MASKOTTCHEN"') on conflict (key) do update set value=excluded.value;
 set local role authenticated;
@@ -17,8 +17,10 @@ select public.set_privacy_consent(public.privacy_notice_version(), true);
 select public.set_privacy_consent(public.privacy_notice_version(), true);
 select is((select count(*) from public.privacy_consents),1::bigint,'Wiederholter Klick ist idempotent');
 select public.join_family('test-maskottchen','T','A','m','#123456','2000-01-01');
-select is(jsonb_array_length(public.get_family_team()->'pokemon'),2,'Zugeordnete Familie sieht beide Kaninchen');
+select is((select count(*) from public.pets),2::bigint,'Zugeordnete Familie sieht beide Kaninchen');
 select ok(public.get_family_team() ? 'egg','Zugeordnete Familie sieht das Ei');
+update public.pets set name = 'Neuer Name' where legacy_profile->>'id' = 'pokemon-speedy';
+select is((select name from public.pets where legacy_profile->>'id' = 'pokemon-speedy'),'Neuer Name','Importierter Pass ist bearbeitbar');
 select public.calendar_feed_token();
 select public.set_privacy_consent(public.privacy_notice_version(),false);
 select is(public.has_privacy_consent(),false,'Widerruf beendet die Zustimmung');
@@ -35,5 +37,6 @@ select is((select count(*) from public.privacy_consents),0::bigint,'Einwilligung
 select public.set_privacy_consent(public.privacy_notice_version(),true);
 select public.join_family('TEST-ANDERES-TEAM','T','B','w','#123456','2000-01-01');
 select is(public.get_family_team(),'{}'::jsonb,'Andere Familie sieht weder Kaninchen noch Ei');
+select is((select count(*) from public.pets),0::bigint,'Andere Familie sieht keine importierten Pässe');
 select * from finish();
 rollback;

@@ -1040,12 +1040,12 @@ function openTrainerCard(user) {
        ${trainerCardHtml(user)}
        ${trainerMemoHtml(user)}
      </div>
-     ${isMe ? '<div class="modal-actions"><button class="btn" id="edit-profile">Profil bearbeiten</button></div>' : ''}`,
+     ${isMe || user.kind === 'pokemon' ? `<div class="modal-actions"><button class="btn" id="edit-profile">${isMe ? 'Profil bearbeiten' : 'Haustier bearbeiten'}</button></div>` : ''}`,
     {
       full: true,
       onMount: (modal, close) => {
         const btn = $('#edit-profile', modal);
-        if (btn) btn.addEventListener('click', () => { close(); openEditProfile(); });
+        if (btn) btn.addEventListener('click', () => { close(); if (isMe) openEditProfile(); else openPetForm(user); });
       },
     }
   );
@@ -2809,10 +2809,11 @@ function removePetBackground(ctx, x, y) {
   ctx.putImageData(frame, 0, 0);
 }
 
-function openPetForm() {
-  openModal(`<div class="modal-head"><h2>Haustier ins Team holen</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
-    <form class="form"><label class="field"><span>Name</span><input name="petName" required maxlength="40"></label>
-    <label class="field"><span>Geburtstag (optional)</span><input name="birthday" type="date" max="${new Date().toLocaleDateString('sv-SE')}"></label>
+function openPetForm(pet = null) {
+  openModal(`<div class="modal-head"><h2>${pet ? 'Haustier bearbeiten' : 'Haustier ins Team holen'}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+    <form class="form"><label class="field"><span>Name</span><input name="petName" value="${esc(pet?.firstName || '')}" required maxlength="40"></label>
+    <label class="field"><span>Geburtstag (optional)</span><input name="birthday" type="date" value="${esc(pet?.birthday || '')}" max="${new Date().toLocaleDateString('sv-SE')}"></label>
+    ${pet ? `<img class="pet-edit-preview" src="${esc(pet.sprite)}" alt="Aktuelles Tierbild" width="80">` : ''}
     <label class="field"><span>Tierfoto (optional)</span><input name="photo" type="file" accept="image/*"></label>
     <div data-photo-tools hidden><canvas aria-label="Foto-Vorschau"></canvas>
     <p class="hint">Bei einfarbigem Hintergrund genügt oft der Knopf. Tippe für weitere Flächen direkt auf den Hintergrund. Bereits transparente Bilder kannst du sofort speichern.</p>
@@ -2870,9 +2871,11 @@ function openPetForm() {
         if (save.disabled) return;
         save.disabled = true;
         try {
-          const row = must(await sb.from('pets').insert({ name: form.elements.petName.value.trim(),
-            birthday: form.elements.birthday.value || null, photo: original ? canvas.toDataURL('image/webp', .86) : null }).select().single());
-          state.teamPokemon.push(mapPet(row));
+          const values = { name: form.elements.petName.value.trim(), birthday: form.elements.birthday.value || null };
+          if (original) values.photo = canvas.toDataURL('image/webp', .86);
+          const query = pet ? sb.from('pets').update(values).eq('id', pet.id) : sb.from('pets').insert(values);
+          const updated = mapPet(must(await query.select().single()));
+          state.teamPokemon = [...state.teamPokemon.filter((p) => p.id !== updated.id), updated];
           close(); render();
         } catch (err) { status.textContent = err.message; save.disabled = false; }
       };
@@ -2881,8 +2884,10 @@ function openPetForm() {
 }
 
 function mapPet(row) {
-  return { id: row.id, trainerId: row.id.slice(0, 5).toUpperCase(), kind: 'pokemon', firstName: row.name,
-    lastName: '', birthday: row.birthday, color: '#598050', sprite: row.photo || asset('img/pokeball.png') };
+  const legacy = row.legacy_profile || {};
+  return { ...legacy, id: row.id, trainerId: legacy.trainerId || row.id.slice(0, 5).toUpperCase(), kind: 'pokemon',
+    firstName: row.name, lastName: '', birthday: row.birthday, color: legacy.color || '#598050',
+    sprite: row.photo || asset(legacy.sprite || 'img/pokeball.png') };
 }
 
 function pokemonTileHtml(p) {
@@ -2954,7 +2959,7 @@ function renderTeam(view) {
     : '';
   const version = `<p class="app-version">App-Version: ${esc(CFG.version || 'dev')}</p>`;
   view.innerHTML = switcher + grid + '<button class="btn" id="add-pet">＋ Haustier hinzufügen</button>' + invite + version;
-  $('#add-pet', view).onclick = openPetForm;
+  $('#add-pet', view).onclick = () => openPetForm();
   view.querySelectorAll('[data-team-view]').forEach((b) => b.addEventListener('click', () => {
     try { localStorage.setItem('familie.teamView', b.dataset.teamView); } catch { /* privat */ }
     render();
@@ -7066,7 +7071,7 @@ function setTab(tab) {
 
 async function loadFamilyTeam() {
   const [extras, pets] = await Promise.all([sb.rpc('get_family_team').then(must), sb.from('pets').select('*').order('name').then(must)]);
-  state.teamPokemon = (extras?.pokemon || []).map((p) => ({ ...p, sprite: asset(p.sprite) })).concat(pets.map(mapPet));
+  state.teamPokemon = pets.map(mapPet);
   state.teamEgg = extras?.egg || null;
 }
 
