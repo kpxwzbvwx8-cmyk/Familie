@@ -2520,3 +2520,18 @@ card-photos.photo-thumbs { min-height: 1px; margin: 6px 0; }
 .tcard-avatar img[src*="img/pikachu/"] { max-width: 100%; object-fit: contain; }
 .team-tile .avatar img[src*="img/pikachu/"] { width: 100%; height: 100%; object-fit: contain; margin: 0; }
 img.sprite[src*="pikachu/anime.webp"] { image-rendering: auto; }
+
+#privacy-screen { display: none; }
+html[data-privacy-pending] body > :not(#privacy-screen) { display: none !important; }
+html[data-privacy-pending] #privacy-screen {
+  display: block; margin: max(16px, env(safe-area-inset-top)) auto; max-width: 46rem;
+  padding: clamp(16px, 4vw, 32px); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 16px; outline: none;
+}
+#privacy-screen h1 { font-size: 1.65rem; margin: 0 0 1rem; }
+.privacy-copy { font-family: system-ui, sans-serif; font-size: 1rem; line-height: 1.55; color: var(--text); }
+.privacy-copy h3 { margin: 1.5em 0 .4em; font-size: 1.08em; }
+.privacy-copy p, .privacy-copy li { margin: .5em 0; overflow-wrap: anywhere; }
+.privacy-copy ul { padding-inline-start: 1.4em; }
+.privacy-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 1rem; }
+.privacy-actions .btn { flex: 1 1 15rem; white-space: normal; }

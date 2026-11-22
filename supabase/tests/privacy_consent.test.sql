@@ -1,0 +1,39 @@
+begin;
+create extension if not exists pgtap with schema extensions;
+set local search_path = public, extensions;
+select no_plan();
+insert into auth.users(id) values ('ffaacccc-1111-4000-8000-112233445566'), ('ffaacccc-2222-4000-8000-112233445566');
+insert into public.app_secrets values ('team_mascots','{"pokemon":[{"id":"rabbit-a"},{"id":"rabbit-b"}],"egg":{}}')
+on conflict (key) do nothing;
+insert into public.app_secrets values ('team_mascot_code','"TEST-MASKOTTCHEN"') on conflict (key) do update set value=excluded.value;
+set local role authenticated;
+set local request.jwt.claim.sub = 'ffaacccc-1111-4000-8000-112233445566';
+select is(public.has_privacy_consent(), false, 'Keine Zustimmung vorausgewählt');
+select throws_ok($$select public.join_family('TEST-MASKOTTCHEN','T','A','m','#123456','2000-01-01')$$,
+  'P0001','Bitte lies zuerst den Datenschutzhinweis und entscheide über die Nutzung.','Trainerpass erst nach Zustimmung');
+select throws_ok($$select public.set_privacy_consent('alt', true)$$,
+  'P0001','Bitte lade den aktuellen Datenschutzhinweis.', 'Veraltete Fassung abgewiesen');
+select public.set_privacy_consent(public.privacy_notice_version(), true);
+select public.set_privacy_consent(public.privacy_notice_version(), true);
+select is((select count(*) from public.privacy_consents),1::bigint,'Wiederholter Klick ist idempotent');
+select public.join_family('test-maskottchen','T','A','m','#123456','2000-01-01');
+select is(jsonb_array_length(public.get_family_team()->'pokemon'),2,'Zugeordnete Familie sieht beide Kaninchen');
+select ok(public.get_family_team() ? 'egg','Zugeordnete Familie sieht das Ei');
+select public.calendar_feed_token();
+select public.set_privacy_consent(public.privacy_notice_version(),false);
+select is(public.has_privacy_consent(),false,'Widerruf beendet die Zustimmung');
+select is((select count(*) from public.profiles),0::bigint,'Familienprofile sind nach Widerruf gesperrt');
+select is(public.get_family_team(),'{}'::jsonb,'Familienmaskottchen sind nach Widerruf gesperrt');
+reset role;
+select is((select count(*) from public.calendar_feeds where user_id=auth.uid()),0::bigint,'Widerruf sperrt vorhandene Abo-Links');
+select is((select count(*) from public.consenting_profiles where id=auth.uid()),0::bigint,'Dienstzugriff nach Widerruf gesperrt');
+set local role authenticated;
+select public.set_privacy_consent(public.privacy_notice_version(),true);
+select is((select count(*) from public.privacy_consents),2::bigint,'Früherer Widerruf bleibt nach erneuter Einwilligung nachweisbar');
+set local request.jwt.claim.sub = 'ffaacccc-2222-4000-8000-112233445566';
+select is((select count(*) from public.privacy_consents),0::bigint,'Einwilligungsnachweise sind privat');
+select public.set_privacy_consent(public.privacy_notice_version(),true);
+select public.join_family('TEST-ANDERES-TEAM','T','B','w','#123456','2000-01-01');
+select is(public.get_family_team(),'{}'::jsonb,'Andere Familie sieht weder Kaninchen noch Ei');
+select * from finish();
+rollback;

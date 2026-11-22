@@ -38,8 +38,15 @@ jobs:
         with:
           node-version: 22
       - name: Einstellungen prüfen
+        env:
+          PRIVACY_CONTROLLER: ${{ vars.PRIVACY_CONTROLLER }}
+          PRIVACY_CONTACT: ${{ vars.PRIVACY_CONTACT }}
+          TEAM_MASCOT_FAMILY_CODE: ${{ secrets.TEAM_MASCOT_FAMILY_CODE }}
         run: |
           missing=""
+          [ -n "$PRIVACY_CONTROLLER" ] || missing="$missing PRIVACY_CONTROLLER"
+          [ -n "$PRIVACY_CONTACT" ] || missing="$missing PRIVACY_CONTACT"
+          [ -n "$TEAM_MASCOT_FAMILY_CODE" ] || missing="$missing TEAM_MASCOT_FAMILY_CODE(Secret)"
           [ -n "$PROJECT_REF" ] || missing="$missing SUPABASE_PROJECT_REF(Variable)"
           [ -n "$SUPABASE_ACCESS_TOKEN" ] || missing="$missing SUPABASE_ACCESS_TOKEN(Secret)"
           [ -n "$SUPABASE_DB_PASSWORD" ] || missing="$missing SUPABASE_DB_PASSWORD(Secret)"
@@ -52,6 +59,16 @@ jobs:
         run: npx supabase functions deploy push ics tick hsv pair --project-ref "$PROJECT_REF" --use-api
       - name: Datenbank aktualisieren
         run: npx supabase db push --password "$SUPABASE_DB_PASSWORD" --include-all
+
+      - name: Team-Maskottchen ihrer Familie zuordnen
+        env:
+          TEAM_MASCOT_FAMILY_CODE: ${{ secrets.TEAM_MASCOT_FAMILY_CODE }}
+          PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          PGSSLMODE: require
+        run: |
+          db_url="postgresql://postgres@db.${PROJECT_REF}.supabase.co:5432/postgres"
+          if [ -s supabase/.temp/pooler-url ]; then db_url="$(cat supabase/.temp/pooler-url)"; fi
+          node scripts/configure-mascots.js "$db_url"
 
   pages:
     needs: supabase
@@ -67,16 +84,25 @@ jobs:
         env:
           PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
           SUPABASE_KEY: ${{ vars.SUPABASE_KEY }}
+          PRIVACY_CONTROLLER: ${{ vars.PRIVACY_CONTROLLER }}
+          PRIVACY_CONTACT: ${{ vars.PRIVACY_CONTACT }}
+          PRIVACY_RETENTION: ${{ vars.PRIVACY_RETENTION }}
+          PRIVACY_TRANSFERS: ${{ vars.PRIVACY_TRANSFERS }}
         run: |
           if [ -z "$PROJECT_REF" ] || [ -z "$SUPABASE_KEY" ]; then
             echo "::error::Variablen SUPABASE_PROJECT_REF und SUPABASE_KEY fehlen – siehe README"; exit 1
           fi
-          cat > public/config.js <<JS
-          window.FAMILIE_CONFIG = {
-            supabaseUrl: 'https://${PROJECT_REF}.supabase.co',
-            supabaseKey: '${SUPABASE_KEY}',
-            version: '${GITHUB_SHA::8}',
+          node --input-type=module <<'JS'
+          import { writeFileSync } from 'node:fs';
+          const e = process.env;
+          const config = {
+            supabaseUrl: `https://${e.PROJECT_REF}.supabase.co`,
+            supabaseKey: e.SUPABASE_KEY,
+            version: e.GITHUB_SHA.slice(0, 8),
+            privacy: { controller: e.PRIVACY_CONTROLLER, contact: e.PRIVACY_CONTACT,
+              retention: e.PRIVACY_RETENTION, transfers: e.PRIVACY_TRANSFERS },
           };
+          writeFileSync('public/config.js', 'window.FAMILIE_CONFIG = ' + JSON.stringify(config) + ';\n');
           JS
           # Cache-Version des Service Workers pro Veröffentlichung erneuern
           sed -i "s/const CACHE = 'familie-[^']*'/const CACHE = 'familie-${GITHUB_SHA::8}'/" public/sw.js

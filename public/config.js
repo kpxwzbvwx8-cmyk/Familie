@@ -5,4 +5,5 @@ window.FAMILIE_CONFIG = {
   supabaseUrl: '',
   supabaseKey: '',
   version: 'dev',
+  privacy: { controller: '', contact: '', retention: '', transfers: '' },
 };

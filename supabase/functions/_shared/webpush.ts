@@ -31,7 +31,7 @@ export async function sendPush(
   payload: PushPayload,
   opts: { toUsers?: string[]; exceptUser?: string; high?: boolean; contact?: string | null } = {},
 ) {
-  let q = admin.from('push_subscriptions').select('endpoint, subscription, profiles!inner(family_id)').eq('profiles.family_id', familyId);
+  let q = admin.from('consenting_push_subscriptions').select('endpoint, subscription').eq('family_id', familyId);
   if (opts.toUsers) q = q.in('user_id', opts.toUsers);
   if (opts.exceptUser) q = q.neq('user_id', opts.exceptUser);
   const { data: subs } = await q;

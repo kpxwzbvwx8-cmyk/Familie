@@ -841,6 +841,7 @@ function mountProfileForm(modal, close, base) {
           const { session } = must(await sb.auth.signInAnonymously());
           state.session = session;
         }
+        must(await sb.rpc('set_privacy_consent', { p_version: PRIVACY_VERSION, p_accept: true }));
         const row = must(await sb.rpc('join_family', {
           p_code: d.code,
           p_first_name: d.firstName,
@@ -3078,6 +3079,94 @@ const APP_FONTS = [
   ['icognito', 'Icognito', 'Die geheimnisvolle Zeichenschrift', 'Familie Icognito'],
 ];
 
+const PRIVACY_VERSION = '2026-11-22';
+
+function privacyNoticeHtml() {
+  const privacy = CFG.privacy || {};
+  return `<div class="privacy-copy">
+    <p>Mit deinem Trainerpass kannst du Aufgaben, Termine und Erinnerungen mit deiner Familie organisieren. Hier siehst du, welche Daten dabei entstehen und wer sie sehen kann.</p>
+    <h3>Wer verantwortlich ist</h3>
+    <p>${esc(privacy.controller || 'Die Betreiberangaben werden noch ergänzt.')}<br>${esc(privacy.contact || '')}</p>
+    <h3>Was dein Team sieht</h3>
+    <p>Alle Konten, die mit eurem Familien-Code beitreten, sehen die Trainerpässe mit Namen, Geburtstag, Figur und freiwilligen Profilangaben. Auch Aufgaben, Termine, Zuständigkeiten, Antworten, Kommentare, Fotos, Anleitungen und Einträge im Board der Schande sind innerhalb des Teams sichtbar. Gib den Code nur an die vorgesehenen Personen weiter. Bei Aufgaben mit Strich-Androhung kann eine verpasste Frist automatisch einen Eintrag im Board auslösen.</p>
+    <p>Private Notizen sind in der App nur für dich sichtbar. Teilst du eine Notiz, erhalten die ausgewählten Mitglieder Zugriff. Bettest du sie in eine Aufgabe ein, entsteht eine Kopie mit Text und Bildern, die das ganze Team sehen kann. Familien mit einem anderen Code haben über die App keinen Zugriff auf euren Bereich.</p>
+    <h3>Wer die Daten technisch verarbeitet</h3>
+    <ul><li><b>GitHub Pages</b> liefert die App-Dateien aus. Schon beim Öffnen erhält GitHub technische Verbindungsdaten wie IP-Adresse und Zeitpunkt. Mit der App ausgelieferte Bilder sind über ihre Webadresse öffentlich abrufbar.</li>
+    <li><b>Supabase</b> übernimmt Anmeldung, Datenbank, Synchronisierung und Serverfunktionen. Beim Öffnen prüfen wir für bestehende Konten die Anmeldung und den Einwilligungsstatus. Supabase verarbeitet dazu auch technische Verbindungsdaten. Im Familienbereich kommen Familienzuordnung und gespeicherte Inhalte hinzu. Berechtigte Projektadministratoren können technisch auch private Inhalte einsehen. Dienstleister und deren Unterauftragnehmer können im Rahmen von Betrieb und Support Zugriff erhalten.</li>
+    <li><b>Dein Gerät</b> speichert die Anmeldung, Einstellungen, lokale Notizentwürfe und App-Dateien. Wer dein entsperrtes Gerät benutzt, kann dein Konto öffnen.</li>
+    <li><b>Optionale Benachrichtigungen</b> verwenden den Push-Dienst deines Browsers oder Betriebssystems, etwa von Apple, Google oder Mozilla. Der Dienst erhält die Geräte-Zieladresse und verschlüsselte Nachrichten. Titel und Text können auf deinem Sperrbildschirm erscheinen.</li>
+    <li><b>Kalenderexporte</b> geben ausgewählte Inhalte an die von dir gewählte Kalender-App und gegebenenfalls deren Cloudanbieter weiter. Wer deinen persönlichen Abo-Link erhält, kann damit Familientermine abrufen.</li></ul>
+    <p>Wenn du Fotos oder Angaben über andere teilst, kläre das vorher mit ihnen. Über die HSV-Funktion fragt der App-Server öffentliche Spielpläne bei OpenLigaDB ab. Beim Anzeigen von Vereinswappen lädt dein Browser Bilder beim jeweiligen Bildanbieter. Dabei erhält dieser deine IP-Adresse. Die HSV-Anzeige kannst du in den Einstellungen ausschalten.</p>
+    <h3>Einwilligung und Speicherung</h3>
+    <p>Für die beschriebenen Familienfunktionen bitten wir um deine Einwilligung nach Art. 6 Abs. 1 Buchst. a DSGVO. Wir speichern dazu deine Konto-ID, die Fassung des Hinweises sowie den Zeitpunkt deiner Zustimmung und eines Widerrufs. Ohne Zustimmung bleibt der Familienbereich geschlossen.</p>
+    <p>Konto und Inhalte bleiben grundsätzlich bis zur Löschung gespeichert. Für Karten mit Löschdatum gilt die eingestellte Frist. Kopien in Aufgaben oder externen Kalendern können nach der Löschung des Originals fortbestehen. ${esc(privacy.retention || '')}</p>
+    ${privacy.transfers ? `<p>${esc(privacy.transfers)}</p>` : ''}
+    <h3>Deine Rechte</h3>
+    <p>Unter Menü → Einstellungen → Datenschutz kannst du deine Einwilligung jederzeit mit Wirkung für die Zukunft widerrufen. Der Zugriff deines Kontos auf die App endet, Push-Abos und Kalender-Abolinks dieses Kontos werden aufgehoben. Bereits geteilte Inhalte werden dadurch nicht automatisch gelöscht.</p>
+    <p>Für Auskunft, Berichtigung, Löschung, Einschränkung oder Datenübertragbarkeit wende dich an den oben genannten Kontakt. Du kannst dich auch bei einer Datenschutzaufsichtsbehörde beschweren.</p>
+    <p class="hint">Fassung vom 22. November 2026</p>
+  </div>`;
+}
+
+function privacyScreen(html) {
+  document.documentElement.dataset.privacyPending = '';
+  const screen = $('#privacy-screen');
+  screen.innerHTML = html;
+  screen.focus();
+  window.scrollTo(0, 0);
+  return screen;
+}
+
+function privacyGate() {
+  return new Promise((resolve) => {
+    function showNotice() {
+      const screen = privacyScreen(`<h1>Datenschutz im Familien-Team</h1>${privacyNoticeHtml()}
+        <p class="error" role="status"></p>
+        <div class="privacy-actions"><button class="btn" data-decline>Ohne Zustimmung beenden</button>
+          <button class="btn" data-accept>Ich willige ein und möchte die App nutzen</button></div>`);
+      const accept = screen.querySelector('[data-accept]');
+      const decline = screen.querySelector('[data-decline]');
+      if (!CFG.privacy?.controller || !CFG.privacy?.contact) {
+        accept.disabled = true;
+        screen.querySelector('[role=status]').textContent = 'Die Angaben zur verantwortlichen Stelle fehlen noch. Eine Einwilligung ist erst danach möglich.';
+      }
+      accept.onclick = async () => {
+        accept.disabled = decline.disabled = true;
+        try {
+          if (state.session) must(await sb.rpc('set_privacy_consent', { p_version: PRIVACY_VERSION, p_accept: true }));
+          resolve();
+        } catch (e) {
+          screen.querySelector('[role=status]').textContent = e.message;
+          accept.disabled = decline.disabled = false;
+        }
+      };
+      decline.onclick = () => {
+        const closed = privacyScreen('<h1>Familienbereich geschlossen</h1><p>Du kannst die App jetzt schließen oder deine Entscheidung später ändern.</p><button class="btn" data-return>Datenschutzhinweis ansehen</button>');
+        closed.querySelector('[data-return]').onclick = showNotice;
+      };
+    }
+    showNotice();
+  });
+}
+
+function openPrivacySettings() {
+  openModal(`<div class="modal-head"><h2>Datenschutz</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+    ${privacyNoticeHtml()}<p class="error" role="status"></p><button class="btn" data-withdraw>Einwilligung widerrufen</button>`,
+    { onMount(modal) {
+      const withdraw = modal.querySelector('[data-withdraw]');
+      withdraw.onclick = async () => {
+        withdraw.disabled = true;
+        try {
+          must(await sb.rpc('set_privacy_consent', { p_version: PRIVACY_VERSION, p_accept: false }));
+          location.reload();
+        } catch (e) {
+          modal.querySelector('[role=status]').textContent = e.message;
+          withdraw.disabled = false;
+        }
+      };
+    } });
+}
+
 function renderSettings(view) {
   const dark = isDark();
   const currentFont = document.documentElement.dataset.font || 'ds';
@@ -3126,6 +3215,10 @@ function renderSettings(view) {
         <button class="btn small" id="set-hsv">${hsvEnabled() ? 'Ausblenden' : 'Einblenden'}</button>
       </div>
       <div class="setting-row">
+        <div><b>Datenschutz</b><p class="hint">Hinweis lesen und Einwilligung verwalten</p></div>
+        <button class="btn small" id="set-privacy">Öffnen</button>
+      </div>
+      <div class="setting-row">
         <div><b>App-Version</b><p class="hint">v${APP_VERSION} · Stand ${esc(CFG.version || 'dev')}</p></div>
         <button class="btn small" id="set-update">Nach Updates suchen</button>
       </div>
@@ -3144,6 +3237,7 @@ function renderSettings(view) {
   const prof = $('#set-profile', view); if (prof) prof.addEventListener('click', openEditProfile);
   const card = $('#set-card', view); if (card) card.addEventListener('click', () => openTrainerCard(state.me));
   const pairBtn = $('#set-pair', view); if (pairBtn) pairBtn.addEventListener('click', openPairCreate);
+  $('#set-privacy', view).addEventListener('click', openPrivacySettings);
   $('#set-update', view).addEventListener('click', checkForUpdate);
   $('#set-log', view).addEventListener('click', () => openDiary(0));
   $('#set-hsv', view).addEventListener('click', () => { lsSet('familie.hsvOn', !hsvEnabled()); render(); });
@@ -6344,8 +6438,16 @@ function openDossier(userId) {
  *  blau für Trainer, rosa für Trainerinnen
  * ---------------------------------------------------------------------- */
 
-const APP_VERSION = '1.2.4';
+const APP_VERSION = '1.2.5';
 const CHANGELOG = [
+  {
+    version: '1.2.5', date: '2026-11-22', title: 'Datenschutz für dein Trainer-Team',
+    intro: 'Beim Öffnen erfährst du, wer deinen Trainerpass, eure Karten und geteilte Bilder sehen kann. Du entscheidest, ob du den Familienbereich nutzen möchtest.',
+    items: [
+      'Lies den Datenschutzhinweis vor dem Einstieg. Deine Einwilligung gehört zu deinem Konto. Unter Menü → Einstellungen → Datenschutz kannst du den Hinweis erneut lesen und die Einwilligung widerrufen.',
+      'Die beiden Kaninchen und das Ei erscheinen in der Übersicht und in der Party ihrer eigenen Familie.',
+    ],
+  },
   {
     version: '1.2.4', date: '2026-11-21', title: 'Ein eigenes Team für jede Familie!',
     intro: 'Pikachu ist dabei! Ob du das überraschte Gesicht aus dem Anime liebst oder mit den Pixeln vom Nintendo DS aufgewachsen bist – jetzt kannst du mit deinem Lieblings-Pikachu im Trainerpass ins Familienabenteuer starten.',
@@ -6560,7 +6662,7 @@ const CHANGELOG = [
       'Pixelschrift wie auf dem DS',
       'Dringlichkeit als Poké-, Super-, Hyper- und Meisterball',
       'Trainer-Memo, Hell- und Dunkelmodus',
-      'Speedy, Idefix und das Ei sind dabei',
+      'Persönliche Team-Maskottchen haben einen eigenen Platz in der Teamansicht',
     ],
   },
   {
@@ -7055,7 +7157,12 @@ function expirySignature() {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') { if (state.me) markActive(); return; }
   pollForUpdate();
-  if (state.me) { markReturn(); refreshAll(); }
+  if (state.me) {
+    sb.rpc('has_privacy_consent').then(({ data, error }) => {
+      if (error || !data) { location.reload(); return; }
+      markReturn(); refreshAll();
+    });
+  }
 });
 
 /* -------------------------------------------------------------------------
@@ -7116,6 +7223,7 @@ async function init() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch((e) => console.warn('SW-Registrierung fehlgeschlagen', e));
     navigator.serviceWorker.addEventListener('message', (e) => {
+      if (!state.me || 'privacyPending' in document.documentElement.dataset) return;
       if (e.data && e.data.type === 'push') { showBanner(e.data.data); return; }
       if (e.data && e.data.type === 'open-message') {
         const id = String(e.data.id || '');
@@ -7128,19 +7236,28 @@ async function init() {
     });
   }
 
-  if (!configured) { render(); return; }
+  if (!configured) { delete document.documentElement.dataset.privacyPending; render(); return; }
 
   sb.auth.onAuthStateChange((_event, session) => { state.session = session; });
-  state.session = (await sb.auth.getSession()).data.session;
+  await openAccount();
+}
 
-  if (state.session) {
-    try {
+async function openAccount() {
+  try {
+    state.session = must(await sb.auth.getSession()).session;
+    if (!state.session || !must(await sb.rpc('has_privacy_consent'))) await privacyGate();
+    if (state.session) {
       const row = must(await sb.from('profiles').select('*').eq('id', state.session.user.id).maybeSingle());
       if (row) state.me = mapProfile(row);
-    } catch (e) {
-      toast(e.message);
     }
+  } catch (e) {
+    const screen = privacyScreen('<h1>Familienbereich öffnen</h1><p role="status"></p><button class="btn">Erneut versuchen</button>');
+    screen.querySelector('[role=status]').textContent = e.message;
+    screen.querySelector('button').onclick = () => { screen.querySelector('button').disabled = true; openAccount(); };
+    return;
   }
+  delete document.documentElement.dataset.privacyPending;
+  $('#privacy-screen').replaceChildren();
 
   if (!state.me) {
     render();

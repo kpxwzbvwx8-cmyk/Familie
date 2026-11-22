@@ -32,7 +32,7 @@ export async function memberFromToken(token: string | null) {
   if (!token) return null;
   const { data, error } = await admin.auth.getUser(token);
   if (error || !data.user) return null;
-  const { data: profile } = await admin.from('profiles').select('*').eq('id', data.user.id).maybeSingle();
+  const { data: profile } = await admin.from('consenting_profiles').select('*').eq('id', data.user.id).maybeSingle();
   return profile;
 }
 

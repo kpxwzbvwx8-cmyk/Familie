@@ -39,6 +39,11 @@ Im Repository unter **Settings → Secrets and variables → Actions**:
 | Variable | `SUPABASE_KEY` | Publishable key |
 | Secret | `SUPABASE_ACCESS_TOKEN` | Access Token |
 | Secret | `SUPABASE_DB_PASSWORD` | Datenbank-Passwort |
+| Secret | `TEAM_MASCOT_FAMILY_CODE` | Exakter Einladungscode der Familie mit den beiden Kaninchen und dem Ei, nur für die Datenbankmigration |
+| Variable | `PRIVACY_CONTROLLER` | Öffentlich anzuzeigende verantwortliche Person oder Organisation einschließlich Anschrift |
+| Variable | `PRIVACY_CONTACT` | Erreichbarer Kontakt für Datenschutzanfragen |
+| Variable | `PRIVACY_RETENTION` | Tatsächliche Fristen für Nachweise, Sicherungen und technische Protokolle |
+| Variable | `PRIVACY_TRANSFERS` | Tatsächliche Speicherregion, gegebenenfalls Drittlandtransfers und geltende Garantien |
 
 Dann unter **Settings → Pages** bei **Source** die Option **GitHub Actions** wählen.
 (GitHub Pages ist für **öffentliche** Repositories kostenlos. Für private Repositories braucht man GitHub Pro.)

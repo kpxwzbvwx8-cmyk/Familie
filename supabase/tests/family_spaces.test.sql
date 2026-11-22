@@ -9,6 +9,7 @@ insert into auth.users(id) values
   ('11111111-aaaa-4000-8000-000000000003');
 set local role authenticated;
 set local request.jwt.claim.sub = '11111111-aaaa-4000-8000-000000000001';
+select public.set_privacy_consent(public.privacy_notice_version(),true);
 select is((public.join_family('  tAP-team-a  ','A','Eins','w','#123456','2000-01-01','pikachu-ds')).avatar,
   'pikachu-ds', 'Neues Team per Trainerpass anlegen');
 select is(public.get_family_code(), 'TAP-TEAM-A', 'Familiencode wird normalisiert');
@@ -23,6 +24,7 @@ insert into public.notes(title) values ('Privat A');
 
 select public.save_event(null, 'Termin A', '', '', true, now(), now() + interval '1 hour', '[]', '{}');
 set local request.jwt.claim.sub = '11111111-aaaa-4000-8000-000000000002';
+select public.set_privacy_consent(public.privacy_notice_version(),true);
 select is((public.join_family('TAP-TEAM-B','B','Eins','m','#123456','2000-01-01')).first_name,
   'B', 'Zweiter Code legt ein zweites Team an');
 select is(public.get_family_code(), 'TAP-TEAM-B', 'Einladen zeigt den eigenen Code');
@@ -51,6 +53,7 @@ select is((select cardinality(shared_with) from public.notes), 0, 'Notizfreigabe
 select ok((public.propose_rule('Regel B','',1)).approved_at is not null, 'Abstimmungen zählen nur das eigene Team');
 
 set local request.jwt.claim.sub = '11111111-aaaa-4000-8000-000000000003';
+select public.set_privacy_consent(public.privacy_notice_version(),true);
 select is((public.join_family('tap-team-a','A','Zwei','m','#123456','2000-01-01')).first_name,
   'A', 'Bestehender Code führt zum selben Team');
 select is((select count(*) from public.profiles), 2::bigint, 'Beide Mitglieder im ursprünglichen Team');

@@ -51,7 +51,7 @@ function allDayLines(start: string, end: Date): string[] | null {
 async function feed(token: string) {
   const { data: f } = await admin.from('calendar_feeds').select('user_id').eq('token', token).maybeSingle();
   const { data: member } = f
-    ? await admin.from('profiles').select('family_id').eq('id', f.user_id).maybeSingle()
+    ? await admin.from('consenting_profiles').select('family_id').eq('id', f.user_id).maybeSingle()
     : { data: null };
   if (!member) return new Response('Unbekannter Kalender-Link', { status: 404, headers: cors });
   const since = new Date(Date.now() - 60 * 86400e3).toISOString();
