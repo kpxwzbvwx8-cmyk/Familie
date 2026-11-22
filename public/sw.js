@@ -1,5 +1,5 @@
 /* Service Worker: Offline-Hülle + Push-Benachrichtigungen */
-const CACHE = 'familie-1.2.6';
+const CACHE = 'familie-1.2.7';
 // Zähler am App-Symbol: Stand liegt in einem eigenen Speicher, den auch die App lesen/schreiben kann
 const BADGE_CACHE = 'familie-badge';
 

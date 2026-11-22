@@ -6544,8 +6544,13 @@ function openDossier(userId) {
  *  blau für Trainer, rosa für Trainerinnen
  * ---------------------------------------------------------------------- */
 
-const APP_VERSION = '1.2.6';
+const APP_VERSION = '1.2.7';
 const CHANGELOG = [
+  { version: '1.2.7', date: '2026-11-22', title: 'Tierpässe wachsen mit!',
+    intro: 'Ein neues Foto vom Familienliebling? Öffne seinen Pass in der Teamübersicht oder in der Party und tippe auf „Haustier bearbeiten“.',
+    items: ['Familienmitglieder können Name, Geburtstag und Foto ihrer Tiere ändern. Beim Speichern ohne neues Foto bleibt das bisherige Bild erhalten.',
+      'Die bestehenden Kaninchenpässe werden bei hinterlegter Familienzuordnung mit ihren ursprünglichen Passnummern und Memos übernommen.'],
+  },
   { version: '1.2.6', date: '2026-11-22', title: 'Dein Haustier bekommt einen Pokémon-Pass!',
     intro: 'Jetzt ziehen deine eigenen Tiere ins Team ein. Ihr findet ihre Pässe in der Übersicht und in der Party.',
     items: ['Unter Team → Haustier hinzufügen genügen ein Name und auf Wunsch Geburtstag und Foto.',
