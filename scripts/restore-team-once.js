@@ -14,8 +14,17 @@ console.log('::notice::Private Übergabe entschlüsselt.');
 const query = (input,env) => {try { return execFileSync('psql',['-XqAt','-v','ON_ERROR_STOP=1','--dbname',db],{input,env,encoding:'utf8'}).trim(); } catch(err) { console.error('::error::Datenbankabfrage fehlgeschlagen: ' + (err.status ?? err.code)); process.exit(1); } };
 const env = {...process.env, CANDIDATE:candidate};
 const family = query(`\\getenv candidate CANDIDATE
-select code from public.family where regexp_replace(code,'[^[:alnum:]]','','g') =
-  regexp_replace(upper(:'candidate'),'[^[:alnum:]]','','g');`,env);
+with matches as (
+  select f.code from public.family f where regexp_replace(upper(f.code),'[^[:alnum:]]','','g') =
+    regexp_replace(upper(:'candidate'),'[^[:alnum:]]','','g')
+), original as (
+  select f.code from public.family f where f.id=1 and
+    (2=(select count(distinct p.legacy_profile->>'id') from public.pets p where p.family_id=f.id
+        and p.legacy_profile->>'id' in ('pokemon-speedy','pokemon-idefix'))
+     or exists(select from public.profiles p where p.family_id=f.id and lower(trim(p.first_name))='jan-erik'
+               and lower(trim(p.last_name)) in ('struß','struss')))
+)
+select code from matches union all select code from original where not exists(select from matches);`,env);
 if (!family || family.includes('\n')) { console.error('::error::Kein eindeutiger Familiencode-Treffer.'); process.exit(1); }
 process.env.TEAM_MASCOT_FAMILY_CODE = family;
 try { require('./configure-mascots.js'); } catch { console.error('::error::Maskottchen-Datensatz konnte nicht gespeichert werden.'); process.exit(1); }

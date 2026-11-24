@@ -13,7 +13,8 @@ execFileSync('psql', ['-Xq', '-1', '-v', 'ON_ERROR_STOP=1', '--dbname', process.
   env: { ...process.env, TEAM_MASCOT_FAMILY_CODE: familyCode, MASCOT_TEMPLATE: JSON.stringify(legacyTeam) },
   input: `\\getenv family_code TEAM_MASCOT_FAMILY_CODE
 \\getenv template MASCOT_TEMPLATE
-insert into public.app_secrets(key,value) values ('team_mascots', :'template'::jsonb) on conflict (key) do nothing;
+insert into public.app_secrets(key,value) values ('team_mascots', :'template'::jsonb) on conflict (key) do update set value = public.app_secrets.value || jsonb_build_object('egg', excluded.value->'egg')
+where jsonb_typeof(public.app_secrets.value->'egg') is distinct from 'object';
 insert into public.app_secrets(key,value) values ('team_mascot_code',to_jsonb(:'family_code'::text))
 on conflict (key) do update set value = excluded.value;
 `,
