@@ -129,8 +129,9 @@ Deno.serve(async (req) => {
       ? (mins <= 0 ? 'heute' : mins < 1440 * 1.5 ? 'morgen' : `in ${Math.round(mins / 1440)} Tagen`)
       : mins <= 0 ? 'jetzt' : mins < 60 ? `in ${mins} Minuten` : mins < 1440 ? `in ${Math.round(mins / 60)} Stunden` : `in ${Math.round(mins / 1440)} Tagen`;
     const time = ev.all_day ? 'ganztägig' : new Date(occStart).toLocaleString('de-DE', { timeZone: 'Europe/Berlin', weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const alarm = ev.reminders?.some((r: { tone?: string }) => r.tone);
     const r = await sendPush(ev.family_id, {
-      title: `${ev.kind === 'todo' ? '🔔 Erinnerung: ' : '📅 '}${ev.title} – ${when}`,
+      title: `${alarm ? '⏰ Pokégear-Wecker: ' : ev.kind === 'todo' ? '🔔 Erinnerung: ' : '📅 '}${ev.title} – ${when}`,
       body: [time, ev.location ? `📍 ${ev.location}` : ''].filter(Boolean).join(' · '),
       tag: `event-${ev.id}`,
       url: ev.kind === 'todo' ? '?tab=start' : `?tab=kalender&event=${ev.id}`,

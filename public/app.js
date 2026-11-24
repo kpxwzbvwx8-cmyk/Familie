@@ -3442,6 +3442,81 @@ const GENDER_COLORS = { m: '#3b78d8', w: '#e0568c', both: '#8a5bd6' };
 const GENDER_NAMES = { m: 'Er', w: 'Sie', both: 'Beide' };
 const WEEKDAYS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
 
+// Kurze, einstimmige Fassungen der Spielmotive. Tonhöhe als MIDI-Note, Länge in Taktschritten.
+const ALARM_TONES = {
+  center: { name: 'Pokémon-Center · Heilmelodie', step: .11, notes: [[71,4],[71,4],[71,2],[68,2],[76,8]] },
+  gear: { name: 'HeartGold & SoulSilver · Pokégear-Anruf', step: .035, notes: [[78,1.4],[82,.8],[78,1],[82,1],[78,1.4],[82,1],[78,1.4],[82,1],[78,1.4],[82,3]] },
+  cgear: { name: 'Schwarz & Weiß · Viso-Caster', step: .1, notes: [[83,1],[78,1],[83,1],[90,2],[78,1],[80,1],[82,1],[83,1],[87,3]] },
+  capture: { name: 'Johto · Pokémon gefangen', step: .105, notes: [[71,2],[69,2],[68,2],[69,2],[71,2],[71,2],[71,4],[73,2],[73,2],[73,4],[71,2],[71,2],[71,4]] },
+  item: { name: 'Hoenn · Item erhalten', step: .135, notes: [[80,3],[75,1],[80,1],[75,1],[82,2],[82,2],[82,2],[80,5]] },
+  badge: { name: 'Hoenn · Orden erhalten', step: .095, notes: [[82,3],[77,1],[77,8],[81,.5],[82,2],[83,2],[84,3],[79,1],[79,7.5],[83,.5],[84,4],[86,8]] },
+};
+let alarmAudio;
+let alarmGain;
+function enableAlarmAudio() {
+  const Audio = window.AudioContext || window.webkitAudioContext;
+  if (!Audio) return;
+  if (!alarmAudio) alarmAudio = new Audio();
+  if (alarmAudio.state !== 'running') alarmAudio.resume().catch(() => {});
+}
+document.addEventListener('click', () => {
+  if (state.me && (!alarmAudio || alarmAudio.state !== 'running')) enableAlarmAudio();
+}, { capture: true });
+function stopAlarmSound() {
+  if (alarmGain) { alarmGain.disconnect(); alarmGain = null; }
+}
+function playAlarm(id, repeats = 1) {
+  enableAlarmAudio();
+  if (!alarmAudio || !Object.hasOwn(ALARM_TONES, id)) return;
+  stopAlarmSound();
+  const tone = ALARM_TONES[id];
+  alarmGain = alarmAudio.createGain();
+  alarmGain.gain.value = .09;
+  alarmGain.connect(alarmAudio.destination);
+  let at = alarmAudio.currentTime + .04;
+  for (let i = 0; i < repeats; i++) {
+    for (const [note, length] of tone.notes) {
+      const osc = alarmAudio.createOscillator(), env = alarmAudio.createGain();
+      const end = at + tone.step * length;
+      osc.type = 'triangle';
+      osc.frequency.value = 440 * 2 ** ((note - 69) / 12);
+      env.gain.setValueAtTime(0, at);
+      env.gain.linearRampToValueAtTime(1, at + .012);
+      env.gain.linearRampToValueAtTime(0, end - .012);
+      osc.connect(env).connect(alarmGain);
+      osc.start(at); osc.stop(end);
+      osc.onended = () => { osc.disconnect(); env.disconnect(); };
+      at = end;
+    }
+    at += .7;
+  }
+}
+const rungAlarms = new Map();
+function checkAlarms() {
+  if (!state.me || document.hidden || 'privacyPending' in document.documentElement.dataset) return;
+  const now = Date.now();
+  for (const [key, t] of rungAlarms) if (now - t > 120000) rungAlarms.delete(key);
+  for (const ev of state.events) {
+    const tone = ev.reminders.find(r => Object.hasOwn(ALARM_TONES, r.tone))?.tone;
+    if (!tone || (ev.ownerId !== state.me.id && myInvite(ev)?.status !== 'accepted')) continue;
+    for (const occ of occurrenceStarts(ev, now - 60000, now)) {
+      const key = ev.id + '/' + occ.getTime();
+      if (rungAlarms.has(key)) continue;
+      rungAlarms.set(key, now);
+      playAlarm(tone, 5);
+      document.getElementById('ringing-alarm')?.remove();
+      const button = document.createElement('button');
+      button.id = 'ringing-alarm';
+      button.className = 'btn primary';
+      button.textContent = '⏰ ' + ev.title + ' · Wecker ausschalten';
+      button.onclick = () => { stopAlarmSound(); button.remove(); };
+      document.body.append(button);
+    }
+  }
+}
+setInterval(checkAlarms, 1000);
+document.addEventListener('visibilitychange', checkAlarms);
+
 const REMINDERS_TIMED = [
   ['none', 'Ohne'], ['o:0', 'Zum Zeitpunkt des Ereignisses'], ['o:5', '5 Minuten vorher'], ['o:10', '10 Minuten vorher'],
   ['o:15', '15 Minuten vorher'], ['o:30', '30 Minuten vorher'], ['o:60', '1 Stunde vorher'], ['o:120', '2 Stunden vorher'],
@@ -3453,6 +3528,7 @@ const REMINDERS_ALLDAY = [
 ];
 const specToValue = (r) => (r.k === 'offset' ? `o:${r.m}` : r.k === 'day' ? `d:${r.d}` : 'custom');
 function reminderLabel(r, allDay) {
+  if (Object.hasOwn(ALARM_TONES, r.tone)) return ALARM_TONES[r.tone].name;
   if (r.k === 'custom') return `Am ${formatDateTime(r.at)} Uhr`;
   const v = specToValue(r);
   const hit = (allDay ? REMINDERS_ALLDAY : REMINDERS_TIMED).find(([k]) => k === v)
@@ -3536,13 +3612,14 @@ const REPEAT_PRESETS = {
 };
 function repeatPreset(rec) {
   if (!rec) return 'none';
+  if (rec.weekdays) return 'weekdays';
   const hit = Object.entries(REPEAT_PRESETS).find(([, p]) => p.u === rec.u && p.n === (rec.n || 1));
   return hit ? hit[0] : 'custom';
 }
 function recurrenceLabel(rec) {
   if (!rec) return '';
   const n = rec.n || 1;
-  const base = rec.u === 'day' ? (n === 1 ? 'Täglich' : `Alle ${n} Tage`)
+  const base = rec.weekdays ? rec.weekdays.map(d => WEEKDAYS[d - 1]).join(', ') : rec.u === 'day' ? (n === 1 ? 'Täglich' : `Alle ${n} Tage`)
     : rec.u === 'week' ? (n === 1 ? 'Wöchentlich' : n === 2 ? 'Alle 14 Tage' : `Alle ${n} Wochen`)
     : (n === 1 ? 'Monatlich' : `Alle ${n} Monate`);
   return rec.until ? `${base} bis ${new Date(`${rec.until}T12:00:00`).toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric', year: 'numeric' })}` : base;
@@ -3564,6 +3641,18 @@ function occurrenceStarts(ev, from, to) {
   const base = new Date(s);
   const until = ev.recurrence.until ? new Date(`${ev.recurrence.until}T23:59:59`).getTime() : Infinity;
   const out = [];
+  if (ev.recurrence.weekdays) {
+    const firstDay = new Date(Math.max(s, from - dur));
+    const day = new Date(firstDay.getFullYear(), firstDay.getMonth(), firstDay.getDate(), 12);
+    while (true) {
+      const occ = new Date(day.getFullYear(), day.getMonth(), day.getDate(), base.getHours(), base.getMinutes(), base.getSeconds(), base.getMilliseconds());
+      const t = occ.getTime();
+      if (t > to || t > until) break;
+      if (t >= s && t + dur >= from && ev.recurrence.weekdays.includes(day.getDay() || 7) && !ev.exdates.includes(t)) out.push(occ);
+      day.setDate(day.getDate() + 1);
+    }
+    return out;
+  }
   for (let i = 0; i < 4000; i++) {
     const o = shiftOcc(base, ev.recurrence, i);
     const t = o.getTime();
@@ -4149,6 +4238,7 @@ function renderCalendar(view) {
         <button type="button" class="cal-today" id="cal-today">Heute</button>
       </div>
     </div>
+    <button type="button" class="cal-add" id="cal-alarm">⏰ Pokégear-Wecker stellen</button>
     ${state.calView === 'month' ? dayPanelHtml() : `<button type="button" class="cal-add cal-add-solo" id="cal-add">＋ Termin am ${esc(state.calDay.toLocaleDateString('de-DE', { day: 'numeric', month: 'numeric' }))}</button>`}
   </div>`;
 
@@ -4186,6 +4276,7 @@ function renderCalendar(view) {
     const hour = Math.max(0, Math.min(23, (state.calRange ? state.calRange[0] : 0) + Math.floor(y / H)));
     openEventForm({ day: new Date(Number(col.dataset.colday)), hour });
   }));
+  $('#cal-alarm', view).onclick = () => openEventForm({ kind: 'alarm', day: state.calDay });
   const addBtn = $('#cal-add', view);
   if (addBtn) addBtn.addEventListener('click', () => openEventForm({ day: state.calDay }));
   view.querySelectorAll('[data-event]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); openEventDetail(b.dataset.event, b.dataset.occ || null); }));
@@ -4250,9 +4341,12 @@ function repeatFieldHtml(rec) {
   const p = repeatPreset(rec);
   return `<div class="field rep-field"><span>Wiederholen</span>
     <select name="rep" class="rem-sel">
-      ${[['none', 'Nie'], ['daily', 'Täglich'], ['weekly', 'Wöchentlich'], ['biweekly', 'Alle 14 Tage'], ['monthly', 'Monatlich'], ['custom', 'Benutzerdefiniert …']]
+      ${[['none', 'Nie'], ['daily', 'Täglich'], ['weekly', 'Wöchentlich'], ['weekdays', 'An ausgewählten Wochentagen'], ['biweekly', 'Alle 14 Tage'], ['monthly', 'Monatlich'], ['custom', 'Benutzerdefiniert …']]
         .map(([k, l]) => `<option value="${k}"${k === p ? ' selected' : ''}>${l}</option>`).join('')}
     </select>
+    <fieldset class="rep-days"${p === 'weekdays' ? '' : ' hidden'}><legend>Wochentage</legend>
+      ${WEEKDAYS.map((label, i) => `<label><input type="checkbox" name="weekday" value="${i + 1}"${rec?.weekdays?.includes(i + 1) ? ' checked' : ''}>${label}</label>`).join('')}
+    </fieldset>
     <div class="rep-custom"${p === 'custom' ? '' : ' hidden'}>alle
       <input type="number" name="repN" min="1" max="365" value="${rec && p === 'custom' ? rec.n : 2}" inputmode="numeric">
       <select name="repU" class="rem-sel">${[['day', 'Tage'], ['week', 'Wochen'], ['month', 'Monate']].map(([k, l]) => `<option value="${k}"${rec && rec.u === k ? ' selected' : ''}>${l}</option>`).join('')}</select>
@@ -4300,6 +4394,8 @@ async function editEventFlow(inst, before) {
 function openEventForm({ day = null, event = null, kind = null, hour = null, scope = 'all', fromInfo = null } = {}) {
   const ev = event;
   const todo = (ev ? ev.kind : kind) === 'todo';
+  const tone = ev?.reminders.find(r => Object.hasOwn(ALARM_TONES, r.tone))?.tone;
+  const alarm = kind === 'alarm' || Boolean(tone);
   const now = new Date();
   // Aus einer Info: Titel, Text, Zeitpunkt und Personen übernehmen
   const info = !ev && fromInfo ? fromInfo : null;
@@ -4330,23 +4426,26 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
   const rems = ev && ev.reminders.length ? ev.reminders : [todo ? { k: 'day', d: 0, h: '09:00' } : null];
   // „Nur dieser“: aus der Serie lösen → ohne Wiederholung
   const rec = ev && scope !== 'one' ? ev.recurrence : null;
-  const noun = todo ? 'Erinnerung' : 'Termin';
+  const noun = alarm ? 'Wecker' : todo ? 'Erinnerung' : 'Termin';
 
   openModal(
-    `<div class="modal-head ev-form-head"><h2>${ev ? `${noun} bearbeiten` : todo ? 'Neue Erinnerung' : 'Neuer Termin'}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+    `<div class="modal-head ev-form-head"><h2>${ev ? `${noun} bearbeiten` : alarm ? 'Pokégear-Wecker stellen' : todo ? 'Neue Erinnerung' : 'Neuer Termin'}</h2><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
      ${info ? `<div class="ds-say static from-info"><span class="ds-say-name">Aus Info</span><p class="ds-say-text">Titel, Text${infoStart ? ', Zeit' : ''} und Personen habe ich aus „${esc(info.title)}“ übernommen. Prüfe kurz alles und tippe auf „Anlegen“.</p></div>` : ''}
      ${ev && ev.recurrence ? `<p class="hint scope-hint">🔁 ${scope === 'one' ? 'Du änderst nur diesen einen Termin – er wird aus der Serie gelöst.' : 'Du änderst diesen und alle folgenden Termine der Serie.'}</p>` : ''}
      <form class="form" id="ev-form" novalidate>
        ${todo ? assigneePickerHtml('Für wen?', ev ? ev.assignees : [state.me.id]) : ''}
-       <label class="field"><span>Titel</span><input name="title" maxlength="120" required placeholder="${todo ? 'z. B. Blumen gießen' : 'z. B. Zahnarzt'}" value="${esc(ev ? ev.title : info ? info.title : '')}"></label>
+       ${alarm ? `<label class="field"><span>Weckmelodie</span><select name="tone" class="rem-sel">${Object.entries(ALARM_TONES).map(([id, t]) => `<option value="${id}"${tone === id ? ' selected' : ''}>${t.name}</option>`).join('')}</select></label>
+       <button type="button" class="btn small" id="alarm-preview">♫ Anhören</button>
+       <p class="hint">Die Melodie spielt in der geöffneten App nach dem ersten Antippen. Bei geschlossener App erhältst du mit aktivierten Push-Mitteilungen den Benachrichtigungston deines Geräts.</p>` : ''}
+       <label class="field"><span>Titel</span><input name="title" maxlength="120" required placeholder="${todo ? 'z. B. Blumen gießen' : 'z. B. Zahnarzt'}" value="${esc(ev ? ev.title : info ? info.title : alarm ? 'Pokégear-Wecker' : '')}"></label>
        ${todo ? '' : `<label class="field"><span>Ort</span><input name="location" maxlength="200" placeholder="optional" value="${esc(ev ? ev.location : '')}"></label>`}
        <label class="field"><span>Beschreibung</span><textarea name="description" maxlength="4000" placeholder="optional">${esc(ev ? ev.description : infoDesc)}</textarea></label>
        ${photoPickerHtml()}
-       <div class="toggle-row"${todo ? ' hidden' : ''}><span>Ganztägig</span>${switchToggle('allDay', allDay)}</div>
+       <div class="toggle-row"${todo || alarm ? ' hidden' : ''}><span>Ganztägig</span>${switchToggle('allDay', allDay)}</div>
        ${todo ? '<p class="hint tight">🔔 Erinnerungen gelten für den ganzen Tag. Wann du erinnert wirst, stellst du unten beim Hinweis ein – eine Uhrzeit kannst du auch in Titel oder Beschreibung schreiben.</p>' : ''}
        <div class="ev-times">
-         <label class="field"><span>${todo ? 'Am / ab' : 'Beginn'}</span><input name="start" class="dt" type="${allDay ? 'date' : 'datetime-local'}" value="${allDay ? toDateInput(start) : toLocalInput(start)}"></label>
-         <label class="field"><span>${todo ? 'Bis' : 'Ende'}</span><input name="end" class="dt" type="${allDay ? 'date' : 'datetime-local'}" value="${allDay ? toDateInput(end) : toLocalInput(end)}"></label>
+         <label class="field"><span>${alarm ? 'Weckzeit' : todo ? 'Am / ab' : 'Beginn'}</span><input name="start" class="dt" type="${allDay ? 'date' : 'datetime-local'}" value="${allDay ? toDateInput(start) : toLocalInput(start)}"></label>
+         <label class="field"${alarm ? ' hidden' : ''}><span>${todo ? 'Bis' : 'Ende'}</span><input name="end" class="dt" type="${allDay ? 'date' : 'datetime-local'}" value="${allDay ? toDateInput(end) : toLocalInput(end)}"></label>
        </div>
        ${repeatFieldHtml(rec)}
        ${!todo && others.length ? `<div class="field"><span>Einladen</span>
@@ -4355,7 +4454,7 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
            <span>${figureImg(u, 'head')}${esc(u.firstName)}</span></label>`).join('')}</div>
          <p class="hint">Eingeladene bekommen die Einladung auf ihren Start-Bildschirm. Nach der Zusage gelten die Hinweise auch für sie.</p>
        </div>` : ''}
-       <div class="field"><span>Hinweise</span>
+       <div class="field"${alarm ? ' hidden' : ''}><span>Hinweise</span>
          <div class="rem-list" id="rem-list">${rems.map((r) => reminderRowHtml(allDay, r)).join('')}</div>
          <button type="button" class="btn small rem-add" id="rem-add">＋ Hinweis</button>
          <p class="hint">${todo ? 'Hinweise kommen als Benachrichtigung an alle, für die die Erinnerung ist.' : 'Hinweise kommen als Benachrichtigung der App – für dich und alle, die zugesagt haben.'}</p>
@@ -4372,6 +4471,7 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
         const form = $('#ev-form', modal);
         const photos = mountPhotoPicker(form, ev?.hasPhotos ? readCardPhotos('event', ev.id) :
           info?.hasPhotos ? readCardPhotos('message', info.id) : []);
+        if (alarm) $('#alarm-preview', modal).onclick = () => playAlarm(form.elements.tone.value);
         const remList = $('#rem-list', modal);
         const isAllDay = () => form.elements.allDay.checked;
         const readStart = () => {
@@ -4395,6 +4495,7 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
         // Wiederholen
         const syncRepeat = () => {
           const v = form.elements.rep.value;
+          $('.rep-days', modal).hidden = v !== 'weekdays';
           $('.rep-custom', modal).hidden = v !== 'custom';
           $('.rep-end', modal).hidden = v === 'none';
           form.elements.repUntil.hidden = form.elements.repEnd.value !== 'until';
@@ -4480,7 +4581,7 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
           const sv = form.elements.start.value, evv = form.elements.end.value;
           if (!sv || !evv) { err.textContent = 'Bitte Beginn und Ende angeben.'; return; }
           const s = ad ? new Date(`${sv}T00:00:00`) : new Date(sv);
-          const en = ad ? new Date(`${evv}T23:59:59`) : new Date(evv);
+          const en = alarm ? new Date(s) : ad ? new Date(`${evv}T23:59:59`) : new Date(evv);
           if (en < s) { err.textContent = 'Das Ende liegt vor dem Beginn.'; return; }
           // Wiederholung
           let recurrence = null;
@@ -4489,6 +4590,15 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
             recurrence = rv === 'custom'
               ? { u: form.elements.repU.value, n: Math.max(1, Math.min(365, Number(form.elements.repN.value) || 1)) }
               : { ...REPEAT_PRESETS[rv] };
+            if (rv === 'weekdays') {
+              const weekdays = [...form.querySelectorAll('[name=weekday]:checked')].map(input => Number(input.value));
+              if (!weekdays.length) { err.textContent = 'Wähle mindestens einen Wochentag.'; return; }
+              recurrence = { u: 'week', n: 1, weekdays };
+              let offset = 0;
+              while (!weekdays.includes(((s.getDay() + offset) % 7) || 7)) offset++;
+              en.setDate(en.getDate() + offset);
+              s.setDate(s.getDate() + offset);
+            }
             if (form.elements.repEnd.value === 'until') {
               if (!form.elements.repUntil.value) { err.textContent = 'Bitte angeben, wann die Wiederholung endet.'; return; }
               if (new Date(`${form.elements.repUntil.value}T23:59:59`) < s) { err.textContent = 'Das Ende der Wiederholung liegt vor dem Beginn.'; return; }
@@ -4507,6 +4617,10 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
               reminders.push({ k: 'custom', at: atD.toISOString() });
             } else if (v.startsWith('o:')) reminders.push({ k: 'offset', m: Number(v.slice(2)) });
             else if (v.startsWith('d:')) reminders.push({ k: 'day', d: Number(v.slice(2)), h: (row.querySelector('.rem-h').value || '09:00').slice(0, 5) });
+          }
+          if (alarm) {
+            if (s <= new Date() && !recurrence) { err.textContent = 'Wähle eine Weckzeit in der Zukunft.'; return; }
+            reminders.splice(0, reminders.length, { k: 'offset', m: 0, tone: form.elements.tone.value });
           }
           const unique = [...new Map(reminders.map((r) => [JSON.stringify(r), r])).values()];
           const invitees = [...form.querySelectorAll('[name=invite]:checked')].map((i) => i.value);
@@ -4535,7 +4649,7 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
             state.calMonth = new Date(s.getFullYear(), s.getMonth(), 1);
             render();
             if (ev) toast(todo ? '🔔 Erinnerung gespeichert.' : '📅 Termin gespeichert.');
-            else catchAnimation(todo ? 'Erinnerung gesetzt!' : fresh.length ? 'Termin & Einladung raus!' : 'Termin eingetragen!');
+            else catchAnimation(alarm ? 'Wecker gestellt!' : todo ? 'Erinnerung gesetzt!' : fresh.length ? 'Termin & Einladung raus!' : 'Termin eingetragen!');
           } catch (ex) {
             err.textContent = ex.message;
             btn.disabled = false;
@@ -4563,7 +4677,7 @@ function eventDetailHtml(ev) {
     <div class="ev-banner">
       <div class="ev-banner-sprites">${eventSprites(ev)}</div>
       <div class="ev-banner-text">
-        <span class="ev-tag">${todo ? '🔔 ERINNERUNG' : '📅 TERMIN'} · ${esc(gname)}</span>
+        <span class="ev-tag">${ev.reminders.some(r => Object.hasOwn(ALARM_TONES, r.tone)) ? '⏰ POKÉGEAR-WECKER' : todo ? '🔔 ERINNERUNG' : '📅 TERMIN'} · ${esc(gname)}</span>
         <h2>${done ? '✓ ' : ''}${esc(ev.title)}</h2>
       </div>
       <button class="icon-btn" data-close aria-label="Schließen">✕</button>
@@ -6554,8 +6668,14 @@ function openDossier(userId) {
  *  blau für Trainer, rosa für Trainerinnen
  * ---------------------------------------------------------------------- */
 
-const APP_VERSION = '1.2.7';
+const APP_VERSION = '1.2.8';
 const CHANGELOG = [
+  { version: '1.2.8', date: '2026-11-24', title: 'Dein Pokégear gibt den Weckruf!',
+    intro: 'Montags früh auf die Route, samstags ausschlafen? Dein Pokégear kennt jetzt deine Trainingstage.',
+    items: ['Wähle aus sechs Weckmelodien, vom Klang des Pokémon-Centers bis zum Viso-Caster aus Schwarz und Weiß. Im Kalender kannst du jeden Ton vorhören.',
+      'Termine, Erinnerungen und Wecker lassen sich an mehreren frei gewählten Wochentagen wiederholen.',
+      'Der ursprüngliche Ei-Pass ist im zugehörigen Familien-Team und in der Party wieder da.'],
+  },
   { version: '1.2.7', date: '2026-11-22', title: 'Tierpässe wachsen mit!',
     intro: 'Ein neues Foto vom Familienliebling? Öffne seinen Pass in der Teamübersicht oder in der Party und tippe auf „Haustier bearbeiten“.',
     items: ['Familienmitglieder können Name, Geburtstag und Foto ihrer Tiere ändern. Beim Speichern ohne neues Foto bleibt das bisherige Bild erhalten.',

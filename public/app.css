@@ -2537,3 +2537,9 @@ html[data-privacy-pending] #privacy-screen {
 .privacy-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 1rem; }
 .privacy-actions .btn { flex: 1 1 15rem; white-space: normal; }
 [data-photo-tools] canvas { display: block; max-width: 100%; height: auto; margin: .5rem auto; cursor: crosshair; background: repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0 / 16px 16px; }
+
+.rep-days { display: flex; flex-wrap: wrap; gap: .4rem; margin: .5rem 0; border: 1px solid var(--border); border-radius: 10px; }
+.rep-days label { display: inline-flex; align-items: center; gap: .3rem; min-height: 40px; cursor: pointer; }
+.rep-days input { width: auto; }
+.rep-days[hidden], #ev-form [hidden] { display: none; }
+#ringing-alarm { position: fixed; top: calc(env(safe-area-inset-top) + 12px); left: 50%; transform: translateX(-50%); z-index: 10000; width: max-content; max-width: 90vw; }
