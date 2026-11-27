@@ -66,7 +66,7 @@ jobs:
             ];
             const matches = checks.filter(([pattern]) => pattern.test(log)).map(([, text]) => text);
             console.log('::error::' + (matches.join(' ') || 'Verbindungsaufbau fehlgeschlagen. Details stehen im geschützten Job-Protokoll.'));
-            JS
+          JS
             exit 1
           fi
       # Familienzugriffe in Push und Kalender begrenzen, bevor neue Codes zugelassen werden.
