@@ -1,5 +1,5 @@
 /* Service Worker: Offline-Hülle + Push-Benachrichtigungen */
-const CACHE = 'familie-1.2.8';
+const CACHE = 'familie-1.2.9';
 // Zähler am App-Symbol: Stand liegt in einem eigenen Speicher, den auch die App lesen/schreiben kann
 const BADGE_CACHE = 'familie-badge';
 
@@ -95,7 +95,7 @@ self.addEventListener('notificationclick', (e) => {
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((wins) => {
       const win = wins.find((w) => w.url.startsWith(self.registration.scope));
       if (win) {
-        win.postMessage({ type: 'open-message', id });
+        win.postMessage({ type: 'open-message', id, url });
         return win.focus();
       }
       return self.clients.openWindow(url || self.registration.scope);

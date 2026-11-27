@@ -2543,3 +2543,7 @@ html[data-privacy-pending] #privacy-screen {
 .rep-days input { width: auto; }
 .rep-days[hidden], #ev-form [hidden] { display: none; }
 #ringing-alarm { position: fixed; top: calc(env(safe-area-inset-top) + 12px); left: 50%; transform: translateX(-50%); z-index: 10000; width: max-content; max-width: 90vw; }
+
+.rem-row .rem-days, .rem-row .rem-h { grid-column: 1; }
+.rem-days { display: flex; align-items: center; gap: 8px; }
+.rem-days input { width: 85px; }

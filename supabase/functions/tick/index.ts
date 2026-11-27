@@ -134,7 +134,7 @@ Deno.serve(async (req) => {
       title: `${alarm ? '⏰ Pokégear-Wecker: ' : ev.kind === 'todo' ? '🔔 Erinnerung: ' : '📅 '}${ev.title} – ${when}`,
       body: [time, ev.location ? `📍 ${ev.location}` : ''].filter(Boolean).join(' · '),
       tag: `event-${ev.id}`,
-      url: ev.kind === 'todo' ? '?tab=start' : `?tab=kalender&event=${ev.id}`,
+      url: `?tab=${ev.kind === 'todo' ? 'start' : 'kalender'}&event=${ev.id}&occ=${encodeURIComponent(occStart)}`,
       urgency: 'wichtig',
     }, { toUsers, high: true });
     sent += r.sent; termine++;

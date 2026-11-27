@@ -33,7 +33,8 @@ const state = {
   notes: [],            // Notizen (eigene + gemeinsame)
   events: [],           // Kalendertermine
   invites: [],          // Einladungen zu Terminen
-  eventComments: [],    // Kommentare zu Terminen
+  eventComments: [],
+  eventNoteChecks: [],    // Kommentare zu Terminen
   strikes: [],          // Board der Schande: alle Striche (neueste zuerst)
   rules: [],            // Strafkatalog inkl. Vorschläge
   fines: [],            // Strafen (10 € je 10 Striche)
@@ -616,7 +617,7 @@ function openFromPush(d) {
   let u;
   try { u = new URL(d.url || '', location.href); } catch { return; }
   const p = u.searchParams;
-  if (p.get('event')) { openEventById(p.get('event')); return; }
+  if (p.get('event')) { openEventById(p.get('event'), p.get('occ')); return; }
   if (p.get('note')) { setTab('notizen'); openNoteById(p.get('note')); return; }
   if (p.get('msg')) { state.highlight = p.get('msg'); setTab('start'); return; }
   if (p.get('tab')) setTab(p.get('tab'));
@@ -3520,16 +3521,21 @@ document.addEventListener('visibilitychange', checkAlarms);
 const REMINDERS_TIMED = [
   ['none', 'Ohne'], ['o:0', 'Zum Zeitpunkt des Ereignisses'], ['o:5', '5 Minuten vorher'], ['o:10', '10 Minuten vorher'],
   ['o:15', '15 Minuten vorher'], ['o:30', '30 Minuten vorher'], ['o:60', '1 Stunde vorher'], ['o:120', '2 Stunden vorher'],
-  ['o:1440', '1 Tag vorher'], ['o:2880', '2 Tage vorher'], ['o:10080', '1 Woche vorher'], ['custom', 'Benutzerdefiniert …'],
+  ['o:1440', '1 Tag vorher'], ['o:2880', '2 Tage vorher'], ['o:10080', '1 Woche vorher'], ['d:0', 'Am Tag selbst'], ['d:1', '1 Tag vorher'],
+  ['d:2', '2 Tage vorher'], ['d:7', '1 Woche vorher'], ['d:custom', 'Tage vorher zur Uhrzeit …'], ['custom', 'Datum und Uhrzeit …'],
 ];
 const REMINDERS_ALLDAY = [
   ['none', 'Ohne'], ['d:0', 'Am Tag selbst'], ['d:1', '1 Tag vorher'], ['d:2', '2 Tage vorher'],
-  ['d:7', '1 Woche vorher'], ['custom', 'Benutzerdefiniert …'],
+  ['d:7', '1 Woche vorher'], ['d:custom', 'Tage vorher zur Uhrzeit …'], ['custom', 'Datum und Uhrzeit …'],
 ];
-const specToValue = (r) => (r.k === 'offset' ? `o:${r.m}` : r.k === 'day' ? `d:${r.d}` : 'custom');
+const specToValue = (r) => (r.k === 'offset' ? `o:${r.m}` : r.k === 'day' ? ([0, 1, 2, 7].includes(Number(r.d)) ? `d:${r.d}` : 'd:custom') : 'custom');
 function reminderLabel(r, allDay) {
   if (Object.hasOwn(ALARM_TONES, r.tone)) return ALARM_TONES[r.tone].name;
   if (r.k === 'custom') return `Am ${formatDateTime(r.at)} Uhr`;
+  if (r.k === 'day') {
+    const days = Number(r.d);
+    return `${days === 0 ? 'Am Tag selbst' : days === 1 ? '1 Tag vorher' : days > 0 ? days + ' Tage vorher' : Math.abs(days) + ' Tage danach'} um ${r.h || '09:00'} Uhr`;
+  }
   const v = specToValue(r);
   const hit = (allDay ? REMINDERS_ALLDAY : REMINDERS_TIMED).find(([k]) => k === v)
     || REMINDERS_TIMED.find(([k]) => k === v) || REMINDERS_ALLDAY.find(([k]) => k === v);
@@ -3548,19 +3554,32 @@ function mapEvent(r) {
     kind: r.kind || 'event', assignees: r.assignees || [], recurrence: r.recurrence || null,
     exdates: (r.exdates || []).map((x) => Date.parse(x)),
     needsDone: r.needs_done !== false,
+    attachedNotes: r.attached_notes || [], notesRevision: r.notes_revision || 0,
   };
 }
+async function loadEventNoteChecks() {
+  const checks = [];
+  const pageSize = 500;
+  for (let offset = 0; ; offset += pageSize) {
+    const rows = must(await sb.from('event_note_checks').select('*').eq('checked', true)
+      .order('event_id').order('occ').order('note_id').order('item_index').range(offset, offset + pageSize - 1));
+    checks.push(...rows);
+    if (rows.length < pageSize) return checks;
+  }
+}
 async function loadEvents() {
-  const [ev, inv, com, done] = await Promise.all([
+  const [ev, inv, com, done, checks] = await Promise.all([
     sb.from('events').select('*').order('start_at', { ascending: true }),
     sb.from('event_invites').select('*'),
     sb.from('event_comments').select('*').order('created_at', { ascending: true }),
     sb.from('event_done').select('*'),
+    loadEventNoteChecks(),
   ]);
   state.events = must(ev).map(mapEvent);
   state.invites = must(inv).map((r) => ({ eventId: r.event_id, userId: r.user_id, status: r.status, respondedAt: r.responded_at, createdAt: r.created_at }));
   state.eventComments = must(com).map((r) => ({ id: r.id, eventId: r.event_id, authorId: r.author_id, body: r.body, createdAt: r.created_at }));
   state.eventDone = new Map(must(done).map((r) => [`${r.event_id}|${Date.parse(r.occ)}`, { by: r.done_by, at: r.done_at }]));
+  state.eventNoteChecks = checks;
   state.eventsLoaded = true;
 }
 const invitesOf = (ev) => state.invites.filter((i) => i.eventId === ev.id);
@@ -4331,7 +4350,10 @@ function reminderRowHtml(allDay, spec = null) {
   const v = spec ? specToValue(spec) : 'none';
   return `<div class="rem-row">
     <select class="rem-sel" aria-label="Hinweis">${opts.map(([k, l]) => `<option value="${k}"${k === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
-    <input type="time" class="rem-h dt" value="${esc(spec && spec.k === 'day' && spec.h ? spec.h : '09:00')}"${allDay && v.startsWith('d:') ? '' : ' hidden'} aria-label="Uhrzeit des Hinweises">
+    <label class="rem-days"${v === 'd:custom' ? '' : ' hidden'}>Tage vorher
+      <input type="number" class="rem-d dt" min="-365" max="365" step="1" value="${Number(spec?.d) || 0}" aria-label="Tage vor dem jeweiligen Vorkommen">
+    </label>
+    <input type="time" class="rem-h dt" value="${esc(spec && spec.k === 'day' && spec.h ? spec.h : '09:00')}"${v.startsWith('d:') ? '' : ' hidden'} aria-label="Uhrzeit des Hinweises">
     <input type="datetime-local" class="rem-at dt"${spec && spec.k === 'custom' ? ` value="${toLocalInput(new Date(spec.at))}"` : ' hidden'} aria-label="Hinweis am">
     <button type="button" class="rem-del" aria-label="Hinweis entfernen">✕</button>
   </div>`;
@@ -4448,6 +4470,13 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
          <label class="field"${alarm ? ' hidden' : ''}><span>${todo ? 'Bis' : 'Ende'}</span><input name="end" class="dt" type="${allDay ? 'date' : 'datetime-local'}" value="${allDay ? toDateInput(end) : toLocalInput(end)}"></label>
        </div>
        ${repeatFieldHtml(rec)}
+       ${todo ? `<details class="attachment-picker">
+         <summary>Notizen einbetten</summary>
+         <p class="hint">Die Notizen werden samt Bildern in die Erinnerung kopiert und für deine Familie sichtbar. Bei jeder Wiederholung beginnt eine neue Checkliste.</p>
+         ${(ev?.attachedNotes || []).map(n => attachmentChoice('keepEventNote', n.id, n.title || 'Ohne Überschrift', true)).join('')}
+         ${state.notes.map(n => attachmentChoice('eventNote', n.id, n.title || 'Ohne Überschrift')).join('')}
+         ${!state.notes.length && !ev?.attachedNotes.length ? '<p class="hint">Lege zuerst unter Notizen eine Liste an.</p>' : ''}
+       </details>` : ''}
        ${!todo && others.length ? `<div class="field"><span>Einladen</span>
          <div class="ev-invite">${others.map((u) => `<label class="ev-inv" style="--c:${GENDER_COLORS[u.gender] || GENDER_COLORS.both}">
            <input type="checkbox" name="invite" value="${esc(u.id)}"${invited.includes(u.id) ? ' checked' : ''}>
@@ -4459,6 +4488,8 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
          <button type="button" class="btn small rem-add" id="rem-add">＋ Hinweis</button>
          <p class="hint">${todo ? 'Hinweise kommen als Benachrichtigung an alle, für die die Erinnerung ist.' : 'Hinweise kommen als Benachrichtigung der App – für dich und alle, die zugesagt haben.'}</p>
        </div>
+       <p class="hint" id="repeat-reminder-hint"${rec ? '' : ' hidden'}>Die Hinweise gelten bei jeder Wiederholung. Ein frei gewähltes Datum wird als Abstand zum ersten Tag übernommen und bei jedem weiteren Vorkommen zur gleichen Uhrzeit erinnert.</p>
+       <button type="button" class="btn small" id="ev-push">🔔 Handy-Benachrichtigungen aktivieren</button>
        <p class="error" id="ev-error"></p>
        <div class="modal-actions">
          ${ev ? '<button type="button" class="btn danger" id="ev-delete">Löschen</button>' : ''}
@@ -4472,6 +4503,7 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
         const photos = mountPhotoPicker(form, ev?.hasPhotos ? readCardPhotos('event', ev.id) :
           info?.hasPhotos ? readCardPhotos('message', info.id) : []);
         if (alarm) $('#alarm-preview', modal).onclick = () => playAlarm(form.elements.tone.value);
+        $('#ev-push', modal).onclick = enablePush;
         const remList = $('#rem-list', modal);
         const isAllDay = () => form.elements.allDay.checked;
         const readStart = () => {
@@ -4486,7 +4518,8 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
         const syncRows = () => {
           remList.querySelectorAll('.rem-row').forEach((row) => {
             row.querySelector('.rem-at').hidden = row.querySelector('.rem-sel').value !== 'custom';
-            row.querySelector('.rem-h').hidden = !(isAllDay() && row.querySelector('.rem-sel').value.startsWith('d:'));
+            row.querySelector('.rem-h').hidden = !row.querySelector('.rem-sel').value.startsWith('d:');
+            row.querySelector('.rem-days').hidden = row.querySelector('.rem-sel').value !== 'd:custom';
             row.querySelector('.rem-del').hidden = remList.children.length <= 1;
           });
           $('#rem-add', modal).hidden = remList.children.length >= 6;
@@ -4495,6 +4528,7 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
         // Wiederholen
         const syncRepeat = () => {
           const v = form.elements.rep.value;
+          $('#repeat-reminder-hint', modal).hidden = v === 'none';
           $('.rep-days', modal).hidden = v !== 'weekdays';
           $('.rep-custom', modal).hidden = v !== 'custom';
           $('.rep-end', modal).hidden = v === 'none';
@@ -4583,6 +4617,7 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
           const s = ad ? new Date(`${sv}T00:00:00`) : new Date(sv);
           const en = alarm ? new Date(s) : ad ? new Date(`${evv}T23:59:59`) : new Date(evv);
           if (en < s) { err.textContent = 'Das Ende liegt vor dem Beginn.'; return; }
+          const selectedStart = new Date(s);
           // Wiederholung
           let recurrence = null;
           const rv = form.elements.rep.value;
@@ -4614,9 +4649,16 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
               if (!at) { err.textContent = 'Bitte für den benutzerdefinierten Hinweis Datum und Uhrzeit wählen.'; return; }
               const atD = new Date(at);
               if (atD > (ad ? en : s)) { err.textContent = ad ? 'Ein Hinweis darf nicht nach dem Tag liegen.' : 'Ein Hinweis darf nicht nach dem Beginn liegen.'; return; }
-              reminders.push({ k: 'custom', at: atD.toISOString() });
+              if (recurrence) {
+                const dayNumber = d => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000;
+                reminders.push({ k: 'day', d: dayNumber(selectedStart) - dayNumber(atD), h: at.slice(11, 16) });
+              } else reminders.push({ k: 'custom', at: atD.toISOString() });
             } else if (v.startsWith('o:')) reminders.push({ k: 'offset', m: Number(v.slice(2)) });
-            else if (v.startsWith('d:')) reminders.push({ k: 'day', d: Number(v.slice(2)), h: (row.querySelector('.rem-h').value || '09:00').slice(0, 5) });
+            else if (v.startsWith('d:')) {
+              const days = v === 'd:custom' ? Number(row.querySelector('.rem-d').value) : Number(v.slice(2));
+              if (!Number.isInteger(days) || Math.abs(days) > 365) { err.textContent = 'Bitte einen gültigen Tagesabstand bis 365 Tage eingeben.'; return; }
+              reminders.push({ k: 'day', d: days, h: (row.querySelector('.rem-h').value || '09:00').slice(0, 5) });
+            }
           }
           if (alarm) {
             if (s <= new Date() && !recurrence) { err.textContent = 'Wähle eine Weckzeit in der Zukunft.'; return; }
@@ -4632,7 +4674,15 @@ function openEventForm({ day = null, event = null, kind = null, hour = null, sco
             // Serie: „nur dieser“ → Vorkommen ausnehmen + Einzeltermin; „dieser und folgende“ (nicht der erste) → Serie teilen + neue Serie
             const split = ev?.recurrence && (scope === 'one' || (scope === 'following' && Date.parse(ev.occ) > Date.parse(ev.seriesStart)));
             const targetId = split ? null : ev?.id || null;
-            const row = must(await sb.rpc('save_event_with_photos', {
+            const row = must(await sb.rpc('save_event_with_notes', {
+              p_notes_revision: ev?.notesRevision || 0,
+              p_notes: todo ? [
+                ...[...form.querySelectorAll('[name=keepEventNote]:checked')].map(input => ({ keep: input.value })),
+                ...[...form.querySelectorAll('[name=eventNote]:checked')].map(input => {
+                  const note = state.notes.find(n => n.id === input.value);
+                  return { note_id: note.id, updated_at: note.updatedAt, check_count: snapshotNote(note).note_checks.length };
+                }),
+              ] : (ev?.attachedNotes || []).map(note => ({ keep: note.id })),
               p_photos: await photos.read(), p_split_id: split ? ev.id : null, p_split_occ: split ? ev.occ : null, p_single: scope === 'one',
               p_id: targetId, p_title: title, p_location: todo ? '' : form.elements.location.value,
               p_description: form.elements.description.value.trim(), p_all_day: ad,
@@ -4695,10 +4745,11 @@ function eventDetailHtml(ev) {
       </div></div>
       ${done ? `<div class="ev-row"><span>✅</span><b>Erledigt von ${esc(nameOf(done.by, 'jemandem'))} · ${esc(formatDateTime(done.at))} Uhr</b></div>` : ''}
       ${ev.reminders.length ? `<div class="ev-row"><span>🔔</span><div class="ev-people">${ev.reminders.map((r) => `<div>${esc(reminderLabel(r, ev.allDay))}</div>`).join('')}
-        <small class="hint">${todo ? 'Gilt für alle, für die die Erinnerung ist.' : mine || (inv && inv.status === 'accepted') ? 'Gilt auch für dich.' : 'Gilt nur für den Ersteller und alle, die zugesagt haben.'}</small></div></div>` : ''}
+        <small class="hint">${ev.recurrence ? 'Gilt bei jeder Wiederholung. ' : ''}${todo ? 'Gilt für alle, für die die Erinnerung ist.' : mine || (inv && inv.status === 'accepted') ? 'Gilt auch für dich.' : 'Gilt nur für den Ersteller und alle, die zugesagt haben.'}</small></div></div>` : ''}
     </div>
-    ${todo && ev.needsDone && todoResponsible(ev) ? `<div class="ev-answer"><span>${done ? 'Schon erledigt.' : 'Noch offen.'}</span>
-      <div class="ev-answer-btns"><button type="button" class="btn ${done ? '' : 'primary'}" data-todo-toggle="${done ? '0' : '1'}">${done ? '↩️ Wieder öffnen' : '✓ Erledigt'}</button></div></div>` : ''}
+    ${ev.attachedNotes.map((note, i) => attachedNoteHtml(ev, note, i, 'event')).join('')}
+    ${todo && ev.needsDone && todoResponsible(ev) ? `<div class="ev-answer"><span>${done ? 'Schon erledigt.' : eventNotesIncomplete(ev) ? 'Erst alle Listenpunkte abhaken.' : 'Noch offen.'}</span>
+      <div class="ev-answer-btns"><button type="button" class="btn ${done ? '' : 'primary'}" data-todo-toggle="${done ? '0' : '1'}"${!done && eventNotesIncomplete(ev) ? ' disabled' : ''}>${done ? '↩️ Wieder öffnen' : '✓ Erledigt'}</button></div></div>` : ''}
     ${inv ? `<div class="ev-answer">
       ${inv.status === 'pending' ? '<span>Du bist eingeladen:</span>' : `<span>${INVITE_STATUS[inv.status]}</span>`}
       <div class="ev-answer-btns">
@@ -4720,11 +4771,20 @@ function eventDetailHtml(ev) {
   </div>`;
 }
 
-function openEventById(id) {
-  const go = () => (state.events.some((e) => e.id === id) ? openEventDetail(id) : toast('Diesen Eintrag gibt es nicht mehr.'));
+function openEventById(id, occ = null) {
+  const go = () => (state.events.some((e) => e.id === id) ? openEventDetail(id, occ) : toast('Diesen Eintrag gibt es nicht mehr.'));
   if (state.eventsLoaded) go(); else loadEvents().then(go).catch((e) => toast(e.message));
 }
 
+function eventNoteChecks(ev, note) {
+  const occ = Date.parse(ev.occ || ev.startAt);
+  const rows = state.eventNoteChecks.filter(c => c.event_id === ev.id && Date.parse(c.occ) === occ && c.note_id === note.id);
+  const checked = new Set(rows.filter(c => c.checked).map(c => c.item_index));
+  return Array.from({ length: note.checkCount }, (_, i) => checked.has(i));
+}
+function eventNotesIncomplete(ev) {
+  return ev.attachedNotes.some(note => eventNoteChecks(ev, note).includes(false));
+}
 async function toggleTodoDone(inst, done) {
   if (!(await confirmStep(done ? `„${inst.title}“ als erledigt abhaken?` : `„${inst.title}“ wieder öffnen?`, done ? 'Ja, erledigt' : 'Ja, öffnen'))) return false;
   try {
@@ -4748,6 +4808,16 @@ function openEventDetail(id, occ = null) {
       const bind = () => {
         const cur = current();
         if (!cur) { close(); return; }
+        modal.querySelectorAll('.task-note').forEach((el, i) => {
+          const note = cur.attachedNotes[i];
+          bindAttachedNote(el, { checks: eventNoteChecks(cur, note) }, note, 0, async (index, checked) => {
+            must(await sb.rpc('check_event_note_item', {
+              p_event: cur.id, p_occ: cur.occ || cur.startAt, p_note: note.id, p_index: index, p_checked: checked,
+            }));
+            await loadEvents();
+            refresh();
+          }, todoResponsible(cur) && !doneInfo(cur));
+        });
         const edit = $('#ev-edit', modal);
         if (edit) edit.addEventListener('click', () => editEventFlow(cur, close));
         const del = $('#ev-del', modal);
@@ -4782,7 +4852,9 @@ function openEventDetail(id, occ = null) {
         const cur = current();
         if (!cur) { close(); return; }
         markEvCommentsSeen(id);
+        const expanded = [...modal.querySelectorAll('[data-attachment][open]')].map(el => el.dataset.attachment);
         modal.innerHTML = eventDetailHtml(cur);
+        modal.querySelectorAll('[data-attachment]').forEach(el => { el.open = expanded.includes(el.dataset.attachment); });
         bind();
       };
       modal.addEventListener('event-remote', refresh);
@@ -5079,16 +5151,16 @@ function snapshotNote(note) {
   };
 }
 
-function attachedNoteHtml(m, note, index) {
+function attachedNoteHtml(m, note, index, kind = 'message') {
   return `<details class="guide-entry task-attachment" data-attachment="note-${index}">
     <summary>${ballSvg('poke', 16)}<span>${esc(note.title || 'Notiz')}</span></summary>
     <section class="note-paper task-note" style="${esc(paperStyle(note.paper))}"><div class="note-sheet">
       <div class="note-text">${sanitizeNoteHtml(note.content)}</div>
       <canvas class="note-canvas" aria-hidden="true"></canvas>
-    </div></section>${cardPhotosHtml('message', { id: m.id, hasPhotos: note.photoSource }, index + 1)}</details>`;
+    </div></section>${cardPhotosHtml(kind, { id: m.id, hasPhotos: note.photoSource }, note.slot || index + 1)}</details>`;
 }
 
-function bindAttachedNote(el, m, note, offset) {
+function bindAttachedNote(el, m, note, offset, saveCheck = null, canCheck = null) {
   const canvas = el.querySelector('canvas');
   if (Array.isArray(note.drawing) && note.drawing.length) {
     const strokes = note.drawing.filter((s) => Array.isArray(s?.p) && s.p.every((pt) => Array.isArray(pt) && pt.every(Number.isFinite)));
@@ -5108,12 +5180,16 @@ function bindAttachedNote(el, m, note, offset) {
     li.dataset.checked = String(checked);
     check.setAttribute('aria-checked', String(checked));
     check.setAttribute('aria-label', li.textContent.trim() || 'Listenpunkt');
-    check.disabled = !isResponsible(m) || Boolean(m.closedAt || m.doneBy);
+    check.disabled = canCheck === null ? !isResponsible(m) || Boolean(m.closedAt || m.doneBy) : !canCheck;
     li.prepend(check);
     li.addEventListener('click', async (event) => {
       if (event.target.closest(CHECK_ITEM) !== li || check.disabled) return;
       check.disabled = true;
       try {
+        if (saveCheck) {
+          await saveCheck(position, !checked);
+          return;
+        }
         must(await sb.rpc('check_card_item', { p_message: m.id, p_revision: m.editRevision, p_index: index, p_checked: !checked }));
         const row = must(await sb.from('messages').select('*').eq('id', m.id).single());
         upsertMessage(mapMessage(row));
@@ -6668,8 +6744,15 @@ function openDossier(userId) {
  *  blau für Trainer, rosa für Trainerinnen
  * ---------------------------------------------------------------------- */
 
-const APP_VERSION = '1.2.8';
+const APP_VERSION = '1.2.9';
 const CHANGELOG = [
+  { version: '1.2.9', date: '2026-11-27', title: 'Deine Checkliste geht wieder auf Tour!',
+    intro: 'Pack deine Notizen direkt in eine Erinnerung und schicke dein Team an den passenden Wochentagen los.',
+    items: ['Mehrere Notizen mit Checklisten, Zeichnungen und Bildern lassen sich in Erinnerungen einbetten. Deine eigene Beschreibung hat weiterhin Platz.',
+      'Hake die Listenpunkte gemeinsam ab. Jede Wiederholung erhält ihre eigene offene Liste, während die vorherigen Häkchen gespeichert bleiben.',
+      'Hinweise beziehen sich auf jedes Vorkommen der Serie. Auch bisher fest eingestellte Datums-Hinweise wiederholen sich zur passenden Uhrzeit.',
+      'Über die Handy-Benachrichtigung öffnest du die zugehörige Erinnerung mit der Checkliste dieses Tages.'],
+  },
   { version: '1.2.8', date: '2026-11-24', title: 'Dein Pokégear gibt den Weckruf!',
     intro: 'Montags früh auf die Route, samstags ausschlafen? Dein Pokégear kennt jetzt deine Trainingstage.',
     items: ['Wähle aus sechs Weckmelodien, vom Klang des Pokémon-Centers bis zum Viso-Caster aus Schwarz und Weiß. Im Kalender kannst du jeden Ton vorhören.',
@@ -7350,6 +7433,7 @@ function startRealtime() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'event_invites' }, () => refreshEvents())
     .on('postgres_changes', { event: '*', schema: 'public', table: 'event_comments' }, () => refreshEvents())
     .on('postgres_changes', { event: '*', schema: 'public', table: 'event_done' }, () => refreshEvents())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'event_note_checks' }, () => refreshEvents())
     .on('postgres_changes', { event: '*', schema: 'public', table: 'notes' }, async () => {
       await loadNotes().catch(() => {});
       const ed = document.querySelector('.modal.note-modal');
@@ -7426,7 +7510,10 @@ async function startApp() {
   renderProfileButton();
   await Promise.all([loadUsers(), loadMessages(), loadFamilyCode(), loadFamilyTeam(), loadBoard(), loadNotes(), loadEvents()]).catch((e) => toast(e.message));
   if (state.openNote) { const id = state.openNote; state.openNote = null; openNoteById(id); }
-  if (state.openEvent) { const id = state.openEvent; state.openEvent = null; openEventById(id); }
+  if (state.openEvent) {
+    const id = state.openEvent; state.openEvent = null;
+    openEventById(id, new URLSearchParams(location.search).get('occ'));
+  }
   renderProfileButton();
   render();
   checkVerdicts();
@@ -7475,7 +7562,10 @@ async function init() {
       if (e.data && e.data.type === 'open-message') {
         const id = String(e.data.id || '');
         if (id.startsWith('note-')) { setTab('notizen'); openNoteById(id.slice(5)); return; }
-        if (id.startsWith('event-')) { openEventById(id.slice(6)); return; }
+        if (id.startsWith('event-')) {
+          const target = new URL(e.data.url || location.href, location.href);
+          openEventById(id.slice(6), target.searchParams.get('occ')); return;
+        }
         if (/^(strike|board)-/.test(id)) { setTab('schande'); return; }
         state.highlight = id.replace(/^(done|resp|comment|review|start|frist)-/, '').slice(0, 36);
         setTab('start');
