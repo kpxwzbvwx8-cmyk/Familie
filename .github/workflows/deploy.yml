@@ -46,7 +46,29 @@ jobs:
           if [ -n "$missing" ]; then echo "::error::Es fehlen:$missing – siehe README"; exit 1; fi
       - run: npm ci
       - name: Mit Supabase-Projekt verbinden
-        run: npx supabase link --project-ref "$PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+        run: |
+          if ! npx supabase link --project-ref "$PROJECT_REF" --password "$SUPABASE_DB_PASSWORD" 2>&1 | tee "$RUNNER_TEMP/familie-link.log"; then
+            node <<'JS'
+            const fs = require('node:fs');
+            const log = fs.readFileSync(process.env.RUNNER_TEMP + '/familie-link.log', 'utf8');
+            const checks = [
+              [/password authentication failed|SASL auth|Wrong password/i, 'Datenbank lehnt das hinterlegte Passwort ab.'],
+              [/access token.*invalid|invalid.*access token|Unauthorized|\b401\b/i, 'Supabase-Zugriffstoken wird abgelehnt.'],
+              [/Forbidden|\b403\b/i, 'Supabase-Zugriff wird verweigert.'],
+              [/timed out|timeout|context deadline/i, 'Zeitüberschreitung beim Supabase-Verbindungsaufbau.'],
+              [/no such host|ENOTFOUND|name resolution/i, 'Supabase-Hostname kann nicht aufgelöst werden.'],
+              [/connection refused|network is unreachable|connection reset/i, 'Netzwerkverbindung zu Supabase fehlgeschlagen.'],
+              [/project.*paused|project.*inactive/i, 'Supabase-Projekt ist pausiert oder inaktiv.'],
+              [/Tenant or user not found/i, 'Supabase-Pooler findet Projekt oder Datenbankbenutzer nicht.'],
+              [/Unexpected error retrieving remote database version/i, 'Remote-Datenbankversion konnte nicht abgefragt werden.'],
+              [/Too Many Requests|\b429\b/i, 'Supabase-Anfragelimit erreicht.'],
+              [/\b50[0234]\b|Service Unavailable|Internal Server Error/i, 'Supabase-Dienst vorübergehend nicht verfügbar.'],
+            ];
+            const matches = checks.filter(([pattern]) => pattern.test(log)).map(([, text]) => text);
+            console.log('::error::' + (matches.join(' ') || 'Verbindungsaufbau fehlgeschlagen. Details stehen im geschützten Job-Protokoll.'));
+            JS
+            exit 1
+          fi
       # Familienzugriffe in Push und Kalender begrenzen, bevor neue Codes zugelassen werden.
       - name: Edge Functions veröffentlichen
         run: npx supabase functions deploy push ics tick hsv pair --project-ref "$PROJECT_REF" --use-api
